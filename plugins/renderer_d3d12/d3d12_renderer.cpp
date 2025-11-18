@@ -1,4 +1,4 @@
-﻿#define RENDERER_BUILD
+#define RENDERER_BUILD
 #include "renderer_api.h"
 
 #include <windows.h>
@@ -484,6 +484,25 @@ namespace {
         // RTV handle for current buffer
         UINT idx = g.swap.current_index;
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = g.swap.backbuffers[idx].rtv;
+
+        // Viewport & Scissor must be set before drawing
+        D3D12_RESOURCE_DESC texDesc = res->GetDesc();
+        D3D12_VIEWPORT      vp{};
+        vp.TopLeftX = 0.0f;
+        vp.TopLeftY = 0.0f;
+        vp.Width    = static_cast<float>(texDesc.Width);
+        vp.Height   = static_cast<float>(texDesc.Height);
+        vp.MinDepth = 0.0f;
+        vp.MaxDepth = 1.0f;
+
+        D3D12_RECT sc{};
+        sc.left   = 0;
+        sc.top    = 0;
+        sc.right  = static_cast<LONG>(texDesc.Width);
+        sc.bottom = static_cast<LONG>(texDesc.Height);
+
+        g.cmdList->RSSetViewports(1, &vp);
+        g.cmdList->RSSetScissorRects(1, &sc);
 
         g.cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         g.cmdList->ClearRenderTargetView(rtv, clear_rgba, 0, nullptr);
