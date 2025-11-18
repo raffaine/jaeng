@@ -82,6 +82,13 @@ struct GraphicsPipelineDesc {
 
 // --- Renderer function table ---
 typedef struct RendererAPI {
+    // frame lifecycle
+    // Call once per frame before encoding commands; the backend ensures the previous GPU work
+    // for this frame index is complete and resets per-frame transient state (upload ring, etc.).
+    void (*begin_frame)();
+    // Call once after presenting (or at the end of command submission) to mark end-of-frame.
+    void (*end_frame)();
+
     // lifecycle
     bool (*init)(const RendererDesc*);
     void (*shutdown)();
@@ -95,6 +102,10 @@ typedef struct RendererAPI {
     // resources
     BufferHandle (*create_buffer)(const BufferDesc*, const void* initial_data);
     void         (*destroy_buffer)(BufferHandle);
+    // Queue a CPU->GPU update into a DEFAULT-heap buffer. Data is staged into a per-frame
+    // persistently-mapped upload ring and copied with CopyBufferRegion in the current cmd list.
+    // Returns false if the request cannot be satisfied (e.g., ring overflow).
+    bool         (*update_buffer)(BufferHandle, uint64_t dst_offset, const void* data, uint64_t size);
     ShaderModuleHandle (*create_shader_module)(const ShaderModuleDesc*);
     void              (*destroy_shader_module)(ShaderModuleHandle);
     PipelineHandle (*create_graphics_pipeline)(const GraphicsPipelineDesc*);

@@ -74,8 +74,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         {  0.5f, -0.5f, 0.0f, 0,1,0 },
         { -0.5f, -0.5f, 0.0f, 0,0,1 },
     };
-    BufferDesc vbDesc{ sizeof(tri), BufferUsage_Vertex | BufferUsage_Upload };
-    BufferHandle vb = renderer.gfx.create_buffer(&vbDesc, tri);
+    // Step 3: create DEFAULT-heap VB and upload via update_buffer (staged in per-frame ring)
+    BufferDesc vbDesc{ sizeof(tri), BufferUsage_Vertex };
+    BufferHandle vb = renderer.gfx.create_buffer(&vbDesc, nullptr);
 
     // Compile HLSL and create shader modules
     ComPtr<ID3DBlob> vsBlob, psBlob;
@@ -112,6 +113,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
         if (!running) break;
 
+        // Frame lifecycle
+        renderer.gfx.begin_frame();
+        // Stage vertex data into DEFAULT heap (ring upload -> CopyBufferRegion)
+        renderer.gfx.update_buffer(vb, 0, tri, sizeof(tri));
+
         auto cmd = renderer.gfx.begin_commands();
 
         float clear[4] = {0.07f, 0.08f, 0.12f, 1.0f};
@@ -126,7 +132,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         renderer.gfx.end_commands(cmd);
         renderer.gfx.submit(&cmd, 1);
         renderer.gfx.present(swap);
-
+        renderer.gfx.end_frame();
     }
 
     // Optional cleanup
