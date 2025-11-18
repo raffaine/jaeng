@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <mutex>
 
 using Microsoft::WRL::ComPtr;
@@ -23,14 +24,37 @@ namespace {
         uint32_t usage = 0;
     };
 
-    struct ShaderBlob {
-      std::vector<uint8_t> bytes;
+    struct Texture {
+        ComPtr<ID3D12Resource>      res;
+        D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
+        D3D12_RESOURCE_STATES       state = D3D12_RESOURCE_STATE_COMMON;
+        uint32_t                    width = 0, height = 0;
     };
-    
+
+    struct Sampler {
+        D3D12_CPU_DESCRIPTOR_HANDLE sampCpu{};
+    };
+
+    struct ShaderBlob {
+        std::vector<uint8_t> bytes;
+    };
+
     struct Pipeline {
       ComPtr<ID3D12PipelineState> pso;
       ComPtr<ID3D12RootSignature> root;
       D3D12_PRIMITIVE_TOPOLOGY topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+      uint32_t vertex_stride = 0;   // Store Input Layout Stride for this PSO
+    };
+
+    struct BindGroupLayout {
+        std::vector<BindGroupLayoutEntry> entries;
+    };
+
+    struct BindGroup {
+        BindGroupLayoutHandle layout{};
+        // Minimal: one SRV at binding 0, one Sampler at binding 1
+        TextureHandle texture{};
+        SamplerHandle sampler{};
     };
 
     struct FrameResources {
@@ -40,6 +64,11 @@ namespace {
         uint8_t* uploadPtr = nullptr;
         uint64_t uploadSize = 8ull * 1024ull * 1024ull; // 8 MB ring
         uint64_t uploadOffset = 0;
+        // Step 4: per-frame GPU-visible descriptor heaps & cursors
+        ComPtr<ID3D12DescriptorHeap> srvHeapGpu;      // CBV/SRV/UAV
+        ComPtr<ID3D12DescriptorHeap> samplerHeapGpu;  // Sampler
+        uint32_t srvGpuOffset = 0;
+        uint32_t samplerGpuOffset = 0;
     };
 
     struct Backbuffer {
@@ -69,6 +98,14 @@ namespace {
         ComPtr<ID3D12DescriptorHeap> rtvHeap;
         UINT rtvDescriptorSize = 0;
 
+        // CPU descriptor heaps for permanent SRVs and Samplers
+        ComPtr<ID3D12DescriptorHeap> srvHeapCpu;
+        ComPtr<ID3D12DescriptorHeap> samplerHeapCpu;
+        UINT                         srvDescSize     = 0;
+        UINT                         samplerDescSize = 0;
+        uint32_t                     srvCpuCount     = 0;
+        uint32_t                     samplerCpuCount = 0;
+
         std::vector<FrameResources> frames; // size = frame_count
 
         ComPtr<ID3D12GraphicsCommandList> cmdList; // reused
@@ -76,14 +113,16 @@ namespace {
         SwapchainState swap{};
         UINT current_frame = 0;   // swapchain's backbuffer index as frame index
         bool frameBegun = false;
+        int32_t current_vertex_stride = 0; // Caches stride of currently bound pipeline
 
-        // Simple handle mapping for textures (only swapchain backbuffers here)
-        std::vector<ComPtr<ID3D12Resource>> textures; // index = handle-1
-        
         // New: generic resources for triangle sample
-        std::vector<Buffer> buffers;         // handle = index+1
-        std::vector<ShaderBlob> shaders;     // handle = index+1
-        std::vector<Pipeline> pipelines;     // handle = index+1
+        std::vector<Buffer>          buffers;
+        std::vector<Texture>         textures;
+        std::vector<Sampler>         samplers;
+        std::vector<ShaderBlob>      shaders;
+        std::vector<BindGroupLayout> bgls;
+        std::vector<BindGroup>       bgs;
+        std::vector<Pipeline>        pipelines;
 
         std::mutex mtx;        
     } g;
@@ -133,6 +172,20 @@ namespace {
         g.frame_count = 0;
     }
 
+    // Wait for the GPU to finish work that uses this frame index
+    static void wait_for_frame(UINT frameIndex) {
+        // g.frameFenceValues[frameIndex] should store the fence value signaled
+        // after presenting that frame; if non-zero and not yet completed, wait.
+        if (!g.fence) return;
+        const UINT64 fv = (frameIndex < g.frameFenceValues.size())
+            ? g.frameFenceValues[frameIndex]
+            : 0ull;
+        if (fv != 0 && g.fence->GetCompletedValue() < fv) {
+            g.fence->SetEventOnCompletion(fv, g.fenceEvent);
+            WaitForSingleObject(g.fenceEvent, INFINITE);
+        }
+    }
+
     static void Barrier(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                         D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
         if (before == after) return;
@@ -143,6 +196,30 @@ namespace {
         b.Transition.StateAfter  = after;
         b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         cl->ResourceBarrier(1, &b);
+    }
+
+    // Execute a tiny command lambda immediately and wait for completion.
+    // Used when resource creation needs GPU work before any frame has begun.
+    static void ExecuteNow(std::function<void(ID3D12GraphicsCommandList*)> record)
+    {
+        ComPtr<ID3D12CommandAllocator> alloc;
+        if (FAILED(g.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) return;
+
+        ComPtr<ID3D12GraphicsCommandList> list;
+        if (FAILED(g.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)))) return;
+
+        record(list.Get());
+        list->Close();
+
+        ID3D12CommandList* lists[] = { list.Get() };
+        g.gfxQueue->ExecuteCommandLists(1, lists);
+
+        // Signal & wait
+        if (g.fence) {
+            g.gfxQueue->Signal(g.fence.Get(), ++g.fenceValue);
+            g.fence->SetEventOnCompletion(g.fenceValue, g.fenceEvent);
+            WaitForSingleObject(g.fenceEvent, INFINITE);
+        }
     }
 
     static inline uint64_t AlignUp(uint64_t v, uint64_t align) {
@@ -158,7 +235,42 @@ namespace {
             default: return DXGI_FORMAT_B8G8R8A8_UNORM;
         }
     }
- 
+
+    static void CreatePerFrameDescriptorHeaps() {
+        // Per-frame GPU-visible heaps for binding
+        for (uint32_t i = 0; i < g.frame_count; ++i) {
+            D3D12_DESCRIPTOR_HEAP_DESC dh{};
+            dh.NumDescriptors = 1024;
+            dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.frames[i].srvHeapGpu));
+            dh.NumDescriptors = 64;
+            dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+            dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.frames[i].samplerHeapGpu));
+            g.frames[i].srvGpuOffset     = 0;
+            g.frames[i].samplerGpuOffset = 0;
+        }
+    }
+
+    static void CreateCpuDescriptorHeaps() {
+        // Permanent CPU heaps (not shader visible) to store resource descriptors
+        D3D12_DESCRIPTOR_HEAP_DESC dh{};
+        dh.NumDescriptors = 2048;
+        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.srvHeapCpu));
+        dh.NumDescriptors = 256;
+        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.samplerHeapCpu));
+        g.srvDescSize     = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        g.samplerDescSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        g.srvCpuCount     = 0;
+        g.samplerCpuCount = 0;
+    }
+
+
     // ---------- New: resources ----------
     template <typename T>
     static RendererHandle PushHandle(std::vector<T>& vec, T&& v) {
@@ -179,15 +291,14 @@ namespace {
         // Determine frame index from swapchain (or 0 if not created yet)
         g.current_frame = g.swap.swapchain ? g.swap.swapchain->GetCurrentBackBufferIndex() : 0;
         // Wait if the GPU is still using this frame's resources
-        if (g.frameFenceValues[g.current_frame] != 0 &&
-            g.fence->GetCompletedValue() < g.frameFenceValues[g.current_frame]) {
-            g.fence->SetEventOnCompletion(g.frameFenceValues[g.current_frame], g.fenceEvent);
-            WaitForSingleObject(g.fenceEvent, INFINITE);
-        }
-        // Reset per-frame things
-        g.frames[g.current_frame].uploadOffset = 0;
-        g.frames[g.current_frame].cmdAlloc->Reset();
-        g.cmdList->Reset(g.frames[g.current_frame].cmdAlloc.Get(), nullptr);
+        wait_for_frame(g.current_frame);
+        // Reset per-frame state
+        auto& fr = g.frames[g.current_frame];
+        fr.uploadOffset = 0;
+        fr.srvGpuOffset = 0;         // <-- IMPORTANT: reset GPU-visible SRV heap cursor
+        fr.samplerGpuOffset = 0;     // <-- IMPORTANT: reset GPU-visible sampler heap cursor
+        fr.cmdAlloc->Reset();
+        g.cmdList->Reset(fr.cmdAlloc.Get(), nullptr);
         g.frameBegun = true;
     }
 
@@ -259,6 +370,132 @@ namespace {
         return true;
     }
 
+    TextureHandle create_texture(const TextureDesc* td, const void* initial_data) {
+        if (!td || td->mip_levels == 0 || td->layers == 0) return 0;
+        Texture t{};
+        t.width = td->width; t.height = td->height;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Alignment = 0;
+        rd.Width = td->width;
+        rd.Height = td->height;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = (UINT16)td->mip_levels;
+        rd.Format = ToDxgiFormat(td->format);
+        rd.SampleDesc.Count = 1;
+        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        if (FAILED(g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)))) return 0;
+        t.state = D3D12_RESOURCE_STATE_COPY_DEST;
+
+        if (initial_data) {
+            // Build an upload buffer with row-aligned footprints
+            UINT64 totalBytes = 0; D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+            UINT rows = 0; UINT64 rowSizeInBytes = 0;
+            g.device->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSizeInBytes, &totalBytes);
+
+            D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+            D3D12_RESOURCE_DESC upDesc{};
+            upDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            upDesc.Width = totalBytes; upDesc.Height = 1; upDesc.DepthOrArraySize = 1; upDesc.MipLevels = 1;
+            upDesc.SampleDesc.Count = 1; upDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            ComPtr<ID3D12Resource> upload;
+            if (FAILED(g.device->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)))) return 0;
+
+            // Fill upload
+            uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
+            upload->Map(0, &r, reinterpret_cast<void**>(&upPtr));
+            const uint8_t* src = static_cast<const uint8_t*>(initial_data);
+            size_t srcPitch = size_t(td->width) * 4; // RGBA8
+            for (UINT y = 0; y < rows; ++y) {
+                std::memcpy(upPtr + fp.Offset + y * fp.Footprint.RowPitch, src + y * srcPitch, srcPitch);
+            }
+            upload->Unmap(0, nullptr);
+
+            auto doCopy = [&](ID3D12GraphicsCommandList* cl) {
+                // Transition and copy
+                Barrier(cl, t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
+                D3D12_TEXTURE_COPY_LOCATION dstLoc{}; dstLoc.pResource = t.res.Get();
+                dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dstLoc.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION srcLoc{}; srcLoc.pResource = upload.Get();
+                srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; srcLoc.PlacedFootprint = fp;
+                cl->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+                Barrier(cl, t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            };
+
+            if (g.frameBegun) {
+                // We are already recording into g.cmdList this frame
+                doCopy(g.cmdList.Get());
+            } else {
+                // No frame yet -> execute a tiny one-shot list and wait
+                ExecuteNow(doCopy);
+            }
+            t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        }
+
+        // Create SRV in CPU descriptor heap
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = rd.Format;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = td->mip_levels;
+        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
+        D3D12_CPU_DESCRIPTOR_HANDLE h{}; h.ptr = base.ptr + SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
+        g.device->CreateShaderResourceView(t.res.Get(), &srv, h);
+        t.srvCpu = h; g.srvCpuCount++;
+        return (TextureHandle) (g.textures.emplace_back(std::move(t)), g.textures.size());
+    }
+
+    void destroy_texture(TextureHandle h) {
+        if (h == 0) return;
+        size_t idx = size_t(h - 1);
+        if (idx < g.textures.size()) {
+            g.textures[idx].res.Reset();
+            // CPU descriptors are not freed (simple linear heap); OK for starter
+        }
+    }
+
+    static D3D12_FILTER ToD3DFilter(SamplerFilter f) {
+        switch (f) {
+            case SamplerFilter::Nearest: return D3D12_FILTER_MIN_MAG_MIP_POINT;
+            default: return D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        }
+    }
+    static D3D12_TEXTURE_ADDRESS_MODE ToD3DAddress(AddressMode a) {
+        switch (a) {
+            case AddressMode::Repeat:      return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+            case AddressMode::ClampToEdge: return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            case AddressMode::Mirror:      return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
+            default:                       return D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+        }
+    }
+
+    SamplerHandle create_sampler(const SamplerDesc* sd) {
+        if (!sd) return 0;
+        D3D12_SAMPLER_DESC d{};
+        d.Filter = ToD3DFilter(sd->filter);
+        d.AddressU = ToD3DAddress(sd->address_u);
+        d.AddressV = ToD3DAddress(sd->address_v);
+        d.AddressW = ToD3DAddress(sd->address_w);
+        d.MinLOD = sd->min_lod; d.MaxLOD = sd->max_lod; d.MipLODBias = sd->mip_lod_bias;
+        d.MaxAnisotropy = 1;
+        d.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+        d.BorderColor[0]=sd->border_color[0]; d.BorderColor[1]=sd->border_color[1];
+        d.BorderColor[2]=sd->border_color[2]; d.BorderColor[3]=sd->border_color[3];
+        D3D12_CPU_DESCRIPTOR_HANDLE base = g.samplerHeapCpu->GetCPUDescriptorHandleForHeapStart();
+        D3D12_CPU_DESCRIPTOR_HANDLE h{}; h.ptr = base.ptr + SIZE_T(g.samplerCpuCount) * SIZE_T(g.samplerDescSize);
+        g.device->CreateSampler(&d, h);
+        Sampler s{}; s.sampCpu = h; g.samplerCpuCount++;
+        return (SamplerHandle) (g.samplers.emplace_back(s), g.samplers.size());
+    }
+
+    void destroy_sampler(SamplerHandle) {
+        // no-op in linear CPU heap
+    }
+
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc* d) {
         ShaderBlob sb{};
         sb.bytes.resize(d->size);
@@ -294,7 +531,41 @@ namespace {
 
     PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc* d) {
         Pipeline p{};
-        if (!CreateEmptyRootSignature(g.device, p.root)) return 0;
+
+         // Step 4: Root signature with SRV(t0) + Sampler(s0) in PS
+        D3D12_DESCRIPTOR_RANGE ranges[2]{};
+        ranges[0].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        ranges[0].NumDescriptors                    = 1;
+        ranges[0].BaseShaderRegister                = 0;
+        ranges[0].RegisterSpace                     = 0;
+        ranges[0].OffsetInDescriptorsFromTableStart = 0;
+        ranges[1].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+        ranges[1].NumDescriptors                    = 1;
+        ranges[1].BaseShaderRegister                = 0;
+        ranges[1].RegisterSpace                     = 0;
+        ranges[1].OffsetInDescriptorsFromTableStart = 0;
+        D3D12_ROOT_PARAMETER params[2]{};
+        params[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        params[0].DescriptorTable  = {1, &ranges[0]};
+        params[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        params[1].DescriptorTable  = {1, &ranges[1]};
+        D3D12_ROOT_SIGNATURE_DESC rs{};
+        rs.NumParameters      = 2;
+        rs.pParameters        = params;
+        rs.NumStaticSamplers  = 0;
+        rs.pStaticSamplers    = nullptr;
+        rs.Flags              = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+                                D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+                                D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+                                D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+        ComPtr<ID3DBlob> sig, err;
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) return 0;
+        if (FAILED(g.device->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+                                                  IID_PPV_ARGS(&p.root)))) return 0;
+
+
         auto* vsb = GetByHandle(g.shaders, d->vs);
         auto* psb = GetByHandle(g.shaders, d->fs);
         if (!vsb) return 0;
@@ -305,9 +576,16 @@ namespace {
         for (uint32_t i=0; i<d->vertex_layout.attribute_count; ++i) {
             const auto& a = d->vertex_layout.attributes[i];
             D3D12_INPUT_ELEMENT_DESC e{};
-            e.SemanticName = (a.location == 0) ? "POSITION" : "COLOR";
+
+            if (a.location == 0) e.SemanticName      = "POSITION";
+            else if (a.location == 1) e.SemanticName = "COLOR";
+            else e.SemanticName                      = "TEXCOORD";
+
             e.SemanticIndex = 0;
-            e.Format = DXGI_FORMAT_R32G32B32_FLOAT;
+
+            if (a.location == 2) e.Format = DXGI_FORMAT_R32G32_FLOAT;
+            else e.Format                 = DXGI_FORMAT_R32G32B32_FLOAT;
+
             e.InputSlot = 0;
             e.AlignedByteOffset = a.offset;
             e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
@@ -326,7 +604,7 @@ namespace {
 
         D3D12_RASTERIZER_DESC rast{};
         rast.FillMode = D3D12_FILL_MODE_SOLID;
-        rast.CullMode = D3D12_CULL_MODE_BACK;
+        rast.CullMode = D3D12_CULL_MODE_NONE;
         rast.FrontCounterClockwise = FALSE;
         rast.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
         rast.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
@@ -357,11 +635,84 @@ namespace {
 
         if (FAILED(g.device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&p.pso)))) return 0;
         p.topo = ToD3DTopology(d->topology);
+        p.vertex_stride = d->vertex_layout.stride;
         return PushHandle(g.pipelines, std::move(p));
     }
     
     void destroy_pipeline(PipelineHandle h) {
         if (auto* p = GetByHandle(g.pipelines, h)) { p->pso.Reset(); p->root.Reset(); }
+    }
+
+    BindGroupLayoutHandle create_bind_group_layout(const BindGroupLayoutDesc* d) {
+        BindGroupLayout bgl{};
+        bgl.entries.assign(d->entries, d->entries + d->entry_count);
+        return (BindGroupLayoutHandle) (g.bgls.emplace_back(std::move(bgl)), g.bgls.size());
+    }
+
+    void destroy_bind_group_layout(BindGroupLayoutHandle) { /* no-op */ }
+
+    BindGroupHandle create_bind_group(const BindGroupDesc* d) {
+        BindGroup bg{};
+        bg.layout = d->layout;
+        // Minimal: expect binding 0 = texture, binding 1 = sampler
+        for (uint32_t i=0; i<d->entry_count; ++i) {
+            const auto& e = d->entries[i];
+            if (e.binding == 0 && e.texture) bg.texture = e.texture;
+            if (e.binding == 1 && e.sampler) bg.sampler = e.sampler;
+        }
+        return (BindGroupHandle) (g.bgs.emplace_back(bg), g.bgs.size());
+    }
+
+    void destroy_bind_group(BindGroupHandle) { /* no-op */ }
+
+    static void EnsureDescriptorHeapsBound() {
+        ID3D12DescriptorHeap* heaps[2] = {
+            g.frames[g.current_frame].srvHeapGpu.Get(),
+            g.frames[g.current_frame].samplerHeapGpu.Get()
+        };
+        g.cmdList->SetDescriptorHeaps(2, heaps);
+    }
+
+    void cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h) {
+        if (set_index != 0) return; // minimal: only set 0
+        auto* bg = GetByHandle(g.bgs, h); if (!bg) return;
+        auto* tex = GetByHandle(g.textures, bg->texture);
+        auto* smp = GetByHandle(g.samplers, bg->sampler);
+        if (!tex || !smp) return;
+
+        // Sanity: heaps must exist
+        FrameResources& fr = g.frames[g.current_frame];
+        if (!fr.srvHeapGpu || !fr.samplerHeapGpu) return;
+
+        // Simple capacity clamp (shouldn’t happen if you reset offsets in begin_frame)
+        // SRV heap was created with 1024 descriptors; sampler with 64 in earlier code.
+        // If you changed sizes, adjust these numbers or store capacities.
+        const uint32_t kSrvCap = 1024;
+        const uint32_t kSampCap = 64;
+        if (fr.srvGpuOffset >= kSrvCap) fr.srvGpuOffset = 0;
+        if (fr.samplerGpuOffset >= kSampCap) fr.samplerGpuOffset = 0;
+
+        EnsureDescriptorHeapsBound();
+
+        // Allocate one SRV in the current frame GPU-visible heap and copy
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuSrvCpu = fr.srvHeapGpu->GetCPUDescriptorHandleForHeapStart();
+        gpuSrvCpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
+        g.device->CopyDescriptorsSimple(1, gpuSrvCpu, tex->srvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        D3D12_GPU_DESCRIPTOR_HANDLE gpuSrvGpu = fr.srvHeapGpu->GetGPUDescriptorHandleForHeapStart();
+        gpuSrvGpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
+        fr.srvGpuOffset += 1;
+
+        // Allocate one Sampler in the current frame GPU-visible heap and copy
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuSampCpu = fr.samplerHeapGpu->GetCPUDescriptorHandleForHeapStart();
+        gpuSampCpu.ptr += SIZE_T(fr.samplerGpuOffset) * SIZE_T(g.samplerDescSize);
+        g.device->CopyDescriptorsSimple(1, gpuSampCpu, smp->sampCpu, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        D3D12_GPU_DESCRIPTOR_HANDLE gpuSampGpu = fr.samplerHeapGpu->GetGPUDescriptorHandleForHeapStart();
+        gpuSampGpu.ptr += SIZE_T(fr.samplerGpuOffset) * SIZE_T(g.samplerDescSize);
+        fr.samplerGpuOffset += 1;
+    
+        // Set root descriptor tables: 0 = SRV table, 1 = Sampler table
+        g.cmdList->SetGraphicsRootDescriptorTable(0, gpuSrvGpu);
+        g.cmdList->SetGraphicsRootDescriptorTable(1, gpuSampGpu);
     }
 
     void cmd_set_pipeline(CommandListHandle, PipelineHandle h) {
@@ -370,12 +721,17 @@ namespace {
         g.cmdList->SetGraphicsRootSignature(p->root.Get());
         g.cmdList->IASetPrimitiveTopology(p->topo);
         g.cmdList->SetPipelineState(p->pso.Get());
+        g.current_vertex_stride = p->vertex_stride;
     }
 
     void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle b, uint64_t offset) {
         auto* buf = GetByHandle(g.buffers, b);
         if (!buf) return;
-        // Transition to VERTEX if needed
+        // Match the pipeline’s input layout (e.g., 32 bytes for pos+color+uv)
+        if (g.current_vertex_stride != 0) {
+            buf->vbv.StrideInBytes = g.current_vertex_stride;
+        }
+
         D3D12_RESOURCE_STATES desired = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
         Barrier(g.cmdList.Get(), buf->res.Get(), buf->state, desired);
         buf->state = desired;
@@ -461,6 +817,9 @@ namespace {
             g.frames[i].uploadOffset = 0;
         }
 
+        CreateCpuDescriptorHeaps();
+        CreatePerFrameDescriptorHeaps();
+
         if (FAILED(g.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g.frames[0].cmdAlloc.Get(), nullptr, IID_PPV_ARGS(&g.cmdList)))) return false;
         g.cmdList->Close();
 
@@ -512,7 +871,7 @@ namespace {
         // Allocate texture handles for backbuffers (1-based handles)
         g.textures.assign(g.frame_count, {});
         for (UINT i = 0; i < g.frame_count; ++i) {
-            g.textures[i] = g.swap.backbuffers[i].resource; // store
+            g.textures[i].res = g.swap.backbuffers[i].resource; // store
         }
 
         return 1; // single swapchain id in this starter
@@ -546,7 +905,7 @@ namespace {
         if (h == 0) return nullptr;
         uint32_t idx = h - 1;
         if (idx >= g.textures.size()) return nullptr;
-        return g.textures[idx].Get();
+        return g.textures[idx].res.Get();
     }
 
     void cmd_begin_rendering(CommandListHandle, TextureHandle* color_rt, uint32_t rt_count, float clear_rgba[4]) {
@@ -644,13 +1003,22 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
         &create_buffer,
         &destroy_buffer,
         &update_buffer,
+        &create_texture,
+        &destroy_texture,
+        &create_sampler,
+        &destroy_sampler,
         &create_shader_module,
         &destroy_shader_module,
         &create_graphics_pipeline,
         &destroy_pipeline,
+        &create_bind_group_layout,
+        &destroy_bind_group_layout,
+        &create_bind_group,
+        &destroy_bind_group,
         &begin_commands,
         &cmd_begin_rendering,
         &cmd_end_rendering,
+        &cmd_set_bind_group,
         &cmd_set_pipeline,
         &cmd_set_vertex_buffer,
         &cmd_draw,

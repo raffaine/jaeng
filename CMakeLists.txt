@@ -46,8 +46,20 @@ target_link_libraries(sandbox PRIVATE renderer_api)
 add_dependencies(sandbox renderer_d3d12)
 
 if(WIN32)
-  target_link_libraries(sandbox PRIVATE d3dcompiler)
+  # vcpkg provides a config package for WinPixEventRuntime
+  find_package(winpixevent CONFIG REQUIRED)
+
+  find_path(PIX_INCLUDE_DIRS "pix3.h")
+  target_include_directories(sandbox PRIVATE ${PIX_INCLUDE_DIRS})
+
+  target_link_libraries(sandbox PRIVATE d3dcompiler Microsoft::WinPixEventRuntime)
   target_compile_definitions(sandbox PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+  add_custom_command(TARGET sandbox POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          $<TARGET_RUNTIME_DLLS:sandbox> $<TARGET_FILE_DIR:sandbox>
+      COMMAND_EXPAND_LISTS
+  )
 endif()
 
 # Copy the plugin DLL next to the sandbox exe after build

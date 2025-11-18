@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <stdint.h>
 
 #if defined(_WIN32)
@@ -33,6 +33,9 @@ enum class TextureFormat : uint32_t { RGBA8_UNORM=0, BGRA8_UNORM=1, D24S8=2, D32
 enum class PresentMode : uint32_t { Fifo=0, Mailbox=1, Immediate=2 };
 enum class ShaderStage : uint32_t { Vertex=1, Fragment=2, Compute=4 };
 enum class PrimitiveTopology : uint32_t { TriangleList=0, TriangleStrip=1, LineList=2 };
+enum class SamplerFilter : uint32_t { Nearest = 0, Linear = 1 };
+enum class AddressMode:uint32_t { Repeat = 0, ClampToEdge = 1, Mirror = 2, Border = 3 };
+
 
 struct Extent2D { uint32_t width, height; };
 
@@ -51,7 +54,29 @@ struct SwapchainDesc {
 
 // --- New: buffers, shaders, pipelines ---
 enum BufferUsage : uint32_t { BufferUsage_Vertex=1, BufferUsage_Index=2, BufferUsage_Uniform=4, BufferUsage_Upload=16 };
-struct BufferDesc { uint64_t size_bytes; uint32_t usage; };
+
+struct BufferDesc {
+    uint64_t size_bytes;
+    uint32_t usage;
+};
+
+// Textures & samplers (Step 4)
+struct TextureDesc {
+    TextureFormat format;
+    uint32_t      width, height;
+    uint32_t      mip_levels; // use 1 for now
+    uint32_t      layers;     // use 1 for now
+    uint32_t      usage;      // reserved for future (rt, sample, storage)
+};
+
+struct SamplerDesc {
+    SamplerFilter filter;
+    AddressMode   address_u, address_v, address_w;
+    float         mip_lod_bias;
+    float         min_lod;
+    float         max_lod;
+    float         border_color[4]; // used if AddressMode::Border
+};
 
 // 0 = D3D blob (DXBC/DXIL) for this sample
 struct ShaderModuleDesc {
@@ -80,6 +105,34 @@ struct GraphicsPipelineDesc {
   TextureFormat      color_format; // single RT
 };
 
+// Bind groups (minimal set 0: SRV + Sampler)
+// type: 0=CBV, 1=SRV/Texture, 2=Sampler, 3=UAV (reserved)
+struct BindGroupLayoutEntry {
+    uint32_t binding; // 0=t0, 1=s0 in our minimal example
+    uint32_t type;    // see above
+    uint32_t stages;  // ShaderStage bitmask
+};
+
+struct BindGroupLayoutDesc {
+    const BindGroupLayoutEntry* entries;
+    uint32_t                    entry_count;
+};
+
+struct BindGroupEntry {
+    uint32_t      binding;
+    BufferHandle  buffer;
+    uint64_t      offset;
+    uint64_t      size;   // for CBV/SSBO (reserved)
+    TextureHandle texture;
+    SamplerHandle sampler;
+};
+
+struct BindGroupDesc {
+    BindGroupLayoutHandle layout;
+    const BindGroupEntry* entries;
+    uint32_t              entry_count;
+};
+
 // --- Renderer function table ---
 typedef struct RendererAPI {
     // frame lifecycle
@@ -106,15 +159,29 @@ typedef struct RendererAPI {
     // persistently-mapped upload ring and copied with CopyBufferRegion in the current cmd list.
     // Returns false if the request cannot be satisfied (e.g., ring overflow).
     bool         (*update_buffer)(BufferHandle, uint64_t dst_offset, const void* data, uint64_t size);
+
+    // Step 4: textures & samplers
+    TextureHandle (*create_texture)(const TextureDesc*, const void* initial_data);
+    void (*destroy_texture)(TextureHandle);
+    SamplerHandle (*create_sampler)(const SamplerDesc*);
+    void (*destroy_sampler)(SamplerHandle);
+
     ShaderModuleHandle (*create_shader_module)(const ShaderModuleDesc*);
     void              (*destroy_shader_module)(ShaderModuleHandle);
     PipelineHandle (*create_graphics_pipeline)(const GraphicsPipelineDesc*);
     void           (*destroy_pipeline)(PipelineHandle);
 
+    // Step 4: bind groups
+    BindGroupLayoutHandle (*create_bind_group_layout)(const BindGroupLayoutDesc*);
+    void (*destroy_bind_group_layout)(BindGroupLayoutHandle);
+    BindGroupHandle (*create_bind_group)(const BindGroupDesc*);
+    void (*destroy_bind_group)(BindGroupHandle);
+
     // command encoding (subset sufficient to clear)
     CommandListHandle (*begin_commands)();
     void (*cmd_begin_rendering)(CommandListHandle, TextureHandle* color_rt, uint32_t rt_count, float clear_rgba[4]);
     void (*cmd_end_rendering)(CommandListHandle);
+    void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
     void (*cmd_draw)(CommandListHandle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance);
