@@ -4,6 +4,7 @@ project(PluggableRenderer CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
 # Output directories for all targets (DLLs/EXEs in one bin dir)
 foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
@@ -45,6 +46,7 @@ target_link_libraries(sandbox PRIVATE renderer_api)
 add_dependencies(sandbox renderer_d3d12)
 
 if(WIN32)
+  target_link_libraries(sandbox PRIVATE d3dcompiler)
   target_compile_definitions(sandbox PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 

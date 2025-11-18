@@ -5,14 +5,32 @@
 #include <wrl.h>
 #include <dxgi1_6.h>
 #include <d3d12.h>
+#include <d3d12shader.h>
 #include <vector>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 
 using Microsoft::WRL::ComPtr;
 
 namespace {
+    struct Buffer {
+      ComPtr<ID3D12Resource> res;
+      D3D12_VERTEX_BUFFER_VIEW vbv{};
+      uint64_t size = 0;
+    };
+
+    struct ShaderBlob {
+      std::vector<uint8_t> bytes;
+    };
+    
+    struct Pipeline {
+      ComPtr<ID3D12PipelineState> pso;
+      ComPtr<ID3D12RootSignature> root;
+      D3D12_PRIMITIVE_TOPOLOGY topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    };
+
     struct FrameResources {
         ComPtr<ID3D12CommandAllocator> cmdAlloc;
     };
@@ -52,6 +70,11 @@ namespace {
 
         // Simple handle mapping for textures (only swapchain backbuffers here)
         std::vector<ComPtr<ID3D12Resource>> textures; // index = handle-1
+        
+        // New: generic resources for triangle sample
+        std::vector<Buffer> buffers;         // handle = index+1
+        std::vector<ShaderBlob> shaders;     // handle = index+1
+        std::vector<Pipeline> pipelines;     // handle = index+1
 
         std::mutex mtx;        
     } g;
@@ -107,6 +130,186 @@ namespace {
             case TextureFormat::D32F: return DXGI_FORMAT_D32_FLOAT;
             default: return DXGI_FORMAT_B8G8R8A8_UNORM;
         }
+    }
+ 
+    // ---------- New: resources ----------
+    template <typename T>
+    static RendererHandle PushHandle(std::vector<T>& vec, T&& v) {
+        vec.push_back(std::move(v));
+        return (RendererHandle)vec.size();
+    }
+
+    template <typename T>
+    static T* GetByHandle(std::vector<T>& vec, RendererHandle h) {
+        if (h == 0) return nullptr;
+        size_t idx = size_t(h - 1);
+        if (idx >= vec.size()) return nullptr;
+        return &vec[idx];
+    }
+
+    BufferHandle create_buffer(const BufferDesc* d, const void* initial_data) {
+        Buffer buf{};
+        buf.size = d->size_bytes;
+
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_UPLOAD; // simple path for sample
+        D3D12_RESOURCE_DESC rdesc{};
+        rdesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rdesc.Width = d->size_bytes;
+        rdesc.Height = 1;
+        rdesc.DepthOrArraySize = 1;
+        rdesc.MipLevels = 1;
+        rdesc.SampleDesc.Count = 1;
+        rdesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        if (FAILED(g.device->CreateCommittedResource(
+            &heap, D3D12_HEAP_FLAG_NONE, &rdesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&buf.res)))) return 0;
+
+        if (initial_data) {
+            void* mapped = nullptr;
+            D3D12_RANGE r{0,0};
+            buf.res->Map(0, &r, &mapped);
+            std::memcpy(mapped, initial_data, size_t(d->size_bytes));
+            buf.res->Unmap(0, nullptr);
+        }
+        if (d->usage & BufferUsage_Vertex) {
+            // Sample: pos.xyz + col.xyz = 24 bytes
+            buf.vbv.BufferLocation = buf.res->GetGPUVirtualAddress();
+            buf.vbv.StrideInBytes = 24;
+            buf.vbv.SizeInBytes = (UINT)d->size_bytes;
+        }
+        return PushHandle(g.buffers, std::move(buf));
+    }
+
+    void destroy_buffer(BufferHandle h) {
+        if (auto* b = GetByHandle(g.buffers, h)) { b->res.Reset(); }
+    }
+
+    ShaderModuleHandle create_shader_module(const ShaderModuleDesc* d) {
+        ShaderBlob sb{};
+        sb.bytes.resize(d->size);
+        std::memcpy(sb.bytes.data(), d->data, d->size);
+        return PushHandle(g.shaders, std::move(sb));
+    }
+    
+    void destroy_shader_module(ShaderModuleHandle h) {
+        if (auto* s = GetByHandle(g.shaders, h)) { s->bytes.clear(); s->bytes.shrink_to_fit(); }
+    }
+
+    static D3D12_PRIMITIVE_TOPOLOGY ToD3DTopology(PrimitiveTopology t) {
+        switch (t) {
+            case PrimitiveTopology::TriangleStrip: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+            case PrimitiveTopology::LineList:      return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+            default:                               return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+        }
+    }
+
+    static bool CreateEmptyRootSignature(ComPtr<ID3D12Device>& dev, ComPtr<ID3D12RootSignature>& out) {
+        D3D12_ROOT_SIGNATURE_DESC rs{};
+        rs.Flags =
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+        ComPtr<ID3DBlob> sig, err;
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) return false;
+        if (FAILED(dev->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&out)))) return false;
+        return true;
+    }
+
+    PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc* d) {
+        Pipeline p{};
+        if (!CreateEmptyRootSignature(g.device, p.root)) return 0;
+        auto* vsb = GetByHandle(g.shaders, d->vs);
+        auto* psb = GetByHandle(g.shaders, d->fs);
+        if (!vsb) return 0;
+
+        // Input layout for POSITION (loc 0) and COLOR (loc 1), both R32G32B32_FLOAT
+        std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
+        ils.reserve(d->vertex_layout.attribute_count);
+        for (uint32_t i=0; i<d->vertex_layout.attribute_count; ++i) {
+            const auto& a = d->vertex_layout.attributes[i];
+            D3D12_INPUT_ELEMENT_DESC e{};
+            e.SemanticName = (a.location == 0) ? "POSITION" : "COLOR";
+            e.SemanticIndex = 0;
+            e.Format = DXGI_FORMAT_R32G32B32_FLOAT;
+            e.InputSlot = 0;
+            e.AlignedByteOffset = a.offset;
+            e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+            ils.push_back(e);
+        }
+
+        // Default states (no d3dx12)
+        D3D12_BLEND_DESC blend{};
+        blend.AlphaToCoverageEnable = FALSE;
+        blend.IndependentBlendEnable = FALSE;
+        auto &rt0 = blend.RenderTarget[0];
+        rt0.BlendEnable = FALSE; rt0.LogicOpEnable = FALSE;
+        rt0.SrcBlend = D3D12_BLEND_ONE; rt0.DestBlend = D3D12_BLEND_ZERO; rt0.BlendOp = D3D12_BLEND_OP_ADD;
+        rt0.SrcBlendAlpha = D3D12_BLEND_ONE; rt0.DestBlendAlpha = D3D12_BLEND_ZERO; rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        rt0.LogicOp = D3D12_LOGIC_OP_NOOP; rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+        D3D12_RASTERIZER_DESC rast{};
+        rast.FillMode = D3D12_FILL_MODE_SOLID;
+        rast.CullMode = D3D12_CULL_MODE_BACK;
+        rast.FrontCounterClockwise = FALSE;
+        rast.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+        rast.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+        rast.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+        rast.DepthClipEnable = TRUE;
+        rast.MultisampleEnable = FALSE;
+        rast.AntialiasedLineEnable = FALSE;
+        rast.ForcedSampleCount = 0;
+        rast.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+        D3D12_DEPTH_STENCIL_DESC depth{};
+        depth.DepthEnable = FALSE;
+        depth.StencilEnable = FALSE;
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = p.root.Get();
+        pso.VS = { vsb->bytes.data(), vsb->bytes.size() };
+        if (psb) pso.PS = { psb->bytes.data(), psb->bytes.size() };
+        pso.BlendState = blend;
+        pso.SampleMask = UINT_MAX;
+        pso.RasterizerState = rast;
+        pso.DepthStencilState = depth;
+        pso.InputLayout = { ils.data(), (UINT)ils.size() };
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.NumRenderTargets = 1;
+        pso.RTVFormats[0] = ToDxgiFormat(d->color_format);
+        pso.SampleDesc.Count = 1;
+
+        if (FAILED(g.device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&p.pso)))) return 0;
+        p.topo = ToD3DTopology(d->topology);
+        return PushHandle(g.pipelines, std::move(p));
+    }
+    
+    void destroy_pipeline(PipelineHandle h) {
+        if (auto* p = GetByHandle(g.pipelines, h)) { p->pso.Reset(); p->root.Reset(); }
+    }
+
+    void cmd_set_pipeline(CommandListHandle, PipelineHandle h) {
+        auto* p = GetByHandle(g.pipelines, h);
+        if (!p) return;
+        g.cmdList->SetGraphicsRootSignature(p->root.Get());
+        g.cmdList->IASetPrimitiveTopology(p->topo);
+        g.cmdList->SetPipelineState(p->pso.Get());
+    }
+
+    void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle b, uint64_t offset) {
+        auto* buf = GetByHandle(g.buffers, b);
+        if (!buf) return;
+        D3D12_VERTEX_BUFFER_VIEW vbv = buf->vbv;
+        vbv.BufferLocation += offset;
+        g.cmdList->IASetVertexBuffers(slot, 1, &vbv);
+    }
+    
+    void cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance) {
+        g.cmdList->DrawInstanced(vtx_count, instance_count, first_vtx, first_instance);
     }
 
     bool init(const RendererDesc* desc) {
@@ -329,19 +532,28 @@ namespace {
 extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     if (!out_api) return false;
     *out_api = RendererAPI{
-    &init,
-    &shutdown,
-    &create_swapchain,
-    &resize_swapchain,
-    &destroy_swapchain,
-    &get_current_backbuffer,
-    &begin_commands,
-    &cmd_begin_rendering,
-    &cmd_end_rendering,
-    &end_commands,
-    &submit,
-    &present,
-    &wait_idle
-};
-return true;
+        &init,
+        &shutdown,
+        &create_swapchain,
+        &resize_swapchain,
+        &destroy_swapchain,
+        &get_current_backbuffer,
+        &create_buffer,
+        &destroy_buffer,
+        &create_shader_module,
+        &destroy_shader_module,
+        &create_graphics_pipeline,
+        &destroy_pipeline,
+        &begin_commands,
+        &cmd_begin_rendering,
+        &cmd_end_rendering,
+        &cmd_set_pipeline,
+        &cmd_set_vertex_buffer,
+        &cmd_draw,
+        &end_commands,
+        &submit,
+        &present,
+        &wait_idle
+    };    
+    return true;
 }
