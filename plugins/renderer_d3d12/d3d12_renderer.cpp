@@ -56,6 +56,14 @@ namespace {
         // Minimal: one SRV at binding 0, one Sampler at binding 1
         TextureHandle texture{};
         SamplerHandle sampler{};
+        struct {
+            BufferHandle buffer{};
+            uint64_t offset{};
+            uint64_t size{};
+            bool present{false};
+            D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle{}; //persistent CPU CBV
+            bool cpuHandleValid{false};
+        } cb; // b0
     };
 
     struct FrameResources {
@@ -115,6 +123,11 @@ namespace {
         UINT                         samplerDescSize = 0;
         uint32_t                     srvCpuCount     = 0;
         uint32_t                     samplerCpuCount = 0;
+        uint32_t                     srvCpuCapacity  = 0;
+        
+        ComPtr<ID3D12Resource> fallbackCb;
+        D3D12_CPU_DESCRIPTOR_HANDLE fallbackCbvCpu{};
+        bool fallbackCbReady = false;
 
         std::vector<FrameResources> frames; // size = frame_count
         ComPtr<ID3D12GraphicsCommandList> cmdList; // reused
@@ -137,6 +150,45 @@ namespace {
 
         std::mutex mtx;        
     } g;
+    
+    static bool CreateFallbackCBV() {
+        if (g.fallbackCbReady) return true;
+
+        // 256-byte upload buffer
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = 256; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        if (FAILED(g.device->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&g.fallbackCb)))) return false;
+
+        // Zero defaults (or write white tint if you prefer)
+        void* p = nullptr; D3D12_RANGE r{0,0};
+        if (SUCCEEDED(g.fallbackCb->Map(0, &r, &p)) && p) {
+            memset(p, 0, 256);
+            g.fallbackCb->Unmap(0, nullptr);
+        }
+
+        // Reserve one CPU CBV slot (VALID in CBV/SRV/UAV heap)
+        if (g.srvCpuCount >= g.srvCpuCapacity) return false;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
+        g.fallbackCbvCpu = base;
+        g.fallbackCbvCpu.ptr += SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
+
+        D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{};
+        cbv.BufferLocation = g.fallbackCb->GetGPUVirtualAddress();
+        cbv.SizeInBytes    = 256;
+        g.device->CreateConstantBufferView(&cbv, g.fallbackCbvCpu);
+
+        g.srvCpuCount += 1;
+        g.fallbackCbReady = true;
+        return true;
+    }
 
     void wait_idle();
 
@@ -279,6 +331,7 @@ namespace {
         g.samplerDescSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
         g.srvCpuCount     = 0;
         g.samplerCpuCount = 0;
+        g.srvCpuCapacity  = dh.NumDescriptors;
     }
 
     // ---------- resources ----------
@@ -542,27 +595,35 @@ namespace {
     PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc* d) {
         Pipeline p{};
 
-         // Step 4: Root signature with SRV(t0) + Sampler(s0) in PS
-        D3D12_DESCRIPTOR_RANGE ranges[2]{};
-        ranges[0].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+         // Root signature with CBV(b0), SRV(t0) + Sampler(s0) in PS
+        D3D12_DESCRIPTOR_RANGE ranges[3]{};
+        ranges[0].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
         ranges[0].NumDescriptors                    = 1;
         ranges[0].BaseShaderRegister                = 0;
         ranges[0].RegisterSpace                     = 0;
         ranges[0].OffsetInDescriptorsFromTableStart = 0;
-        ranges[1].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+        ranges[1].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         ranges[1].NumDescriptors                    = 1;
         ranges[1].BaseShaderRegister                = 0;
         ranges[1].RegisterSpace                     = 0;
         ranges[1].OffsetInDescriptorsFromTableStart = 0;
-        D3D12_ROOT_PARAMETER params[2]{};
+        ranges[2].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+        ranges[2].NumDescriptors                    = 1;
+        ranges[2].BaseShaderRegister                = 0;
+        ranges[2].RegisterSpace                     = 0;
+        ranges[2].OffsetInDescriptorsFromTableStart = 0;
+        D3D12_ROOT_PARAMETER params[3]{};
         params[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         params[0].DescriptorTable  = {1, &ranges[0]};
         params[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[1].DescriptorTable  = {1, &ranges[1]};
+        params[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        params[2].DescriptorTable  = {1, &ranges[2]};
         D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.NumParameters      = 2;
+        rs.NumParameters      = 3;
         rs.pParameters        = params;
         rs.NumStaticSamplers  = 0;
         rs.pStaticSamplers    = nullptr;
@@ -669,6 +730,27 @@ namespace {
             const auto& e = d->entries[i];
             if (e.binding == 0 && e.texture) bg.texture = e.texture;
             if (e.binding == 1 && e.sampler) bg.sampler = e.sampler;
+            if (e.binding == 2 && e.buffer) {
+                bg.cb = {e.buffer, e.offset, e.size, true};
+                
+                // Build one CPU CBV descriptor now (guard capacity)
+                if (g.srvCpuCount < g.srvCpuCapacity) {
+                    if (auto* buf = GetByHandle(g.buffers, e.buffer)) {
+                        D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{};
+                        cbv.BufferLocation = buf->res->GetGPUVirtualAddress() + e.offset;
+                        cbv.SizeInBytes    = (UINT)((e.size + 255ull) & ~255ull);
+                        if (cbv.SizeInBytes == 0) cbv.SizeInBytes = 256;
+
+                        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
+                        bg.cb.cpuHandle = base;
+                        bg.cb.cpuHandle.ptr += SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
+                        g.device->CreateConstantBufferView(&cbv, bg.cb.cpuHandle);
+
+                        g.srvCpuCount += 1;
+                        bg.cb.cpuHandleValid = true;
+                    }
+                }
+            }
         }
         return (BindGroupHandle) (g.bgs.emplace_back(bg), g.bgs.size());
     }
@@ -704,6 +786,25 @@ namespace {
 
         EnsureDescriptorHeapsBound();
 
+        // --- CBV b0 ---
+        D3D12_CPU_DESCRIPTOR_HANDLE cbvCpu{};
+        if (bg->cb.present && bg->cb.cpuHandleValid) {
+            cbvCpu = bg->cb.cpuHandle;                 // re-use persistent CPU descriptor
+        } else {
+            if (!g.fallbackCbReady) CreateFallbackCBV();
+            cbvCpu = g.fallbackCbvCpu;                 // safe fallback
+        }
+
+        // Copy to this frame's GPU-visible heap
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuCpu = fr.srvHeapGpu->GetCPUDescriptorHandleForHeapStart();
+        gpuCpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
+        g.device->CopyDescriptorsSimple(1, gpuCpu, cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+        D3D12_GPU_DESCRIPTOR_HANDLE gpuGpu = fr.srvHeapGpu->GetGPUDescriptorHandleForHeapStart();
+        gpuGpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
+        g.cmdList->SetGraphicsRootDescriptorTable(0, gpuGpu);
+        fr.srvGpuOffset += 1;
+
         // Allocate one SRV in the current frame GPU-visible heap and copy
         D3D12_CPU_DESCRIPTOR_HANDLE gpuSrvCpu = fr.srvHeapGpu->GetCPUDescriptorHandleForHeapStart();
         gpuSrvCpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
@@ -721,8 +822,8 @@ namespace {
         fr.samplerGpuOffset += 1;
     
         // Set root descriptor tables: 0 = SRV table, 1 = Sampler table
-        g.cmdList->SetGraphicsRootDescriptorTable(0, gpuSrvGpu);
-        g.cmdList->SetGraphicsRootDescriptorTable(1, gpuSampGpu);
+        g.cmdList->SetGraphicsRootDescriptorTable(1, gpuSrvGpu);
+        g.cmdList->SetGraphicsRootDescriptorTable(2, gpuSampGpu);
     }
 
     void cmd_set_pipeline(CommandListHandle, PipelineHandle h) {

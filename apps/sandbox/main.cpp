@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <vector>
@@ -131,6 +131,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     };
     PipelineHandle pso = renderer.gfx.create_graphics_pipeline(&pdesc);
 
+    // Constant Buffer for VS/PS
+    struct TintCB {
+        float color[4];
+    }; // 16 bytes, we’ll allocate 256
+    TintCB       cbData{1.0f, 1.0f, 1.0f, 1.0f}; // white
+    BufferDesc   cbDesc{256, BufferUsage_Uniform};
+    BufferHandle cb = renderer.gfx.create_buffer(&cbDesc, nullptr);
+
     // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
     const uint32_t W = 256, H = 256, CS = 32;
     std::vector<uint32_t> pixels(W * H);
@@ -151,16 +159,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     SamplerHandle samp = renderer.gfx.create_sampler(&sd);
 
     // Bind-group layout (binding 0: texture SRV @ PS; binding 1: sampler @ PS)
-    BindGroupLayoutEntry le[2] = {
+    BindGroupLayoutEntry le[3] = {
         { 0u, 1u, (uint32_t)ShaderStage::Fragment }, // SRV
-        { 1u, 2u, (uint32_t)ShaderStage::Fragment }  // Sampler
+        { 1u, 2u, (uint32_t)ShaderStage::Fragment },  // Sampler
+        { 2u, 0u, (uint32_t)ShaderStage::Vertex | (uint32_t)ShaderStage::Fragment} // CBV
     };
-    BindGroupLayoutDesc ldesc{ le, 2 };
+    BindGroupLayoutDesc ldesc{ le, 3 };
     BindGroupLayoutHandle bgl = renderer.gfx.create_bind_group_layout(&ldesc);
-    BindGroupEntry be[2]{};
+    BindGroupEntry be[3]{};
     be[0].binding = 0; be[0].texture = tex;
     be[1].binding = 1; be[1].sampler = samp;
-    BindGroupDesc bgd{ bgl, be, 2 };
+    be[2].binding = 2;
+    be[2].buffer = cb;
+    be[2].offset = 0;
+    be[2].size = 256;
+    BindGroupDesc bgd{ bgl, be, 3 };
     BindGroupHandle bg = renderer.gfx.create_bind_group(&bgd);
 
     bool uploaded = false;
@@ -205,6 +218,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         graph.compile();
         graph.execute(renderer.gfx, swap, 0, [&](RendererAPI& gfx) {
             if (!uploaded) {
+                gfx.update_buffer(cb, 0, &cbData, sizeof(cbData));
                 gfx.update_buffer(vb, 0, quad, sizeof(quad));
                 uploaded = true;
             }

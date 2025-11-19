@@ -105,10 +105,10 @@ struct GraphicsPipelineDesc {
   TextureFormat      color_format; // single RT
 };
 
-// Bind groups (minimal set 0: SRV + Sampler)
+// Bind groups
 // type: 0=CBV, 1=SRV/Texture, 2=Sampler, 3=UAV (reserved)
 struct BindGroupLayoutEntry {
-    uint32_t binding; // 0=t0, 1=s0 in our minimal example
+    uint32_t binding; // 0..3
     uint32_t type;    // see above
     uint32_t stages;  // ShaderStage bitmask
 };
