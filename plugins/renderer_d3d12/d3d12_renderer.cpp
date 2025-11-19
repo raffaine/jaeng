@@ -908,9 +908,9 @@ namespace {
         return g.textures[idx].res.Get();
     }
 
-    void cmd_begin_rendering(CommandListHandle, TextureHandle* color_rt, uint32_t rt_count, float clear_rgba[4]) {
-        assert(rt_count >= 1);
-        ID3D12Resource* res = TexFromHandle(color_rt[0]);
+    void cmd_begin_rendering_ops(CommandListHandle, const ColorAttachmentDesc* atts, uint32_t rt_count) {
+        assert(rt_count >= 1 && atts != nullptr);
+        ID3D12Resource* res = (atts[0].tex)? TexFromHandle(atts[0].tex) : nullptr;
 
         // Transition PRESENT -> RENDER_TARGET
         D3D12_RESOURCE_BARRIER barrier{};
@@ -946,7 +946,9 @@ namespace {
         g.cmdList->RSSetScissorRects(1, &sc);
 
         g.cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-        g.cmdList->ClearRenderTargetView(rtv, clear_rgba, 0, nullptr);
+        if (atts[0].load == LoadOp::Clear) {
+            g.cmdList->ClearRenderTargetView(rtv, atts[0].clear_rgba, 0, nullptr);
+        }
     }
 
     void cmd_end_rendering(CommandListHandle) {
@@ -1016,7 +1018,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
         &create_bind_group,
         &destroy_bind_group,
         &begin_commands,
-        &cmd_begin_rendering,
+        &cmd_begin_rendering_ops,
         &cmd_end_rendering,
         &cmd_set_bind_group,
         &cmd_set_pipeline,

@@ -5,6 +5,7 @@
 #include <wrl.h>
 #include <d3dcompiler.h>
 #include "render/frontend/renderer.h"
+#include "render/graph/render_graph.h"
 
 #define USE_PIX    // or _DEBUG / PROFILE / PROFILE_BUILD
 #include "pix3.h"  // provided by winpixevent package
@@ -163,31 +164,41 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
         if (!running) break;
 
-        // Frame lifecycle
-        renderer.gfx.begin_frame();
+        // Build a small render graph: Clear -> Forward
+        rg::RenderGraph graph;
 
-        if (!uploaded) {
-            renderer.gfx.update_buffer(vb, 0, quad, sizeof(quad));
-            uploaded = true;
+        // 1) Clear pass
+        {
+            rg::RGColorTarget ct{};
+            ct.tex = renderer.gfx.get_current_backbuffer(swap);
+            ct.clear_rgba[0] = 0.07f;
+            ct.clear_rgba[1] = 0.08f;
+            ct.clear_rgba[2] = 0.12f;
+            ct.clear_rgba[3] = 1.0f;
+            graph.add_pass("Clear", { ct }, rg::RGDepthTarget{}, nullptr);
+        }
+        // 2) Forward pass
+        {
+            rg::RGColorTarget ct{};
+            ct.tex = renderer.gfx.get_current_backbuffer(swap);
+            graph.add_pass("Forward", { ct }, rg::RGDepthTarget{},
+                [&](const rg::RGPassContext& ctx) {
+                    ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
+                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
+                    ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
+                    ctx.gfx->cmd_draw(ctx.cmd, 6, 1, 0, 0);
+                }
+            );
         }
 
-        auto cmd = renderer.gfx.begin_commands();
-
-        float clear[4] = {0.07f, 0.08f, 0.12f, 1.0f};
-        TextureHandle rt = renderer.gfx.get_current_backbuffer(swap);
-        renderer.gfx.cmd_begin_rendering(cmd, &rt, 1, clear);
-
-        // Draw
-        renderer.gfx.cmd_set_pipeline(cmd, pso);
-        renderer.gfx.cmd_set_bind_group(cmd, 0, bg);
-        renderer.gfx.cmd_set_vertex_buffer(cmd, 0, vb, 0);
-        renderer.gfx.cmd_draw(cmd, 6, 1, 0, 0);
-        renderer.gfx.cmd_end_rendering(cmd);
-
-        renderer.gfx.end_commands(cmd);
-        renderer.gfx.submit(&cmd, 1);
-        renderer.gfx.present(swap);
-        renderer.gfx.end_frame();
+        // Execute
+        graph.compile();
+        graph.execute(renderer.gfx, swap, [&](RendererAPI& gfx) {
+            if (!uploaded) {
+                gfx.update_buffer(vb, 0, quad, sizeof(quad));
+                uploaded = true;
+            }
+        });
     }
 
     // Optional cleanup

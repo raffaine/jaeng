@@ -39,6 +39,7 @@ target_include_directories(renderer_d3d12 PRIVATE ${ENGINE_ROOT}/render/public)
 add_executable(sandbox WIN32
   apps/sandbox/main.cpp
   engine/render/frontend/renderer.h
+  engine/render/graph/render_graph.h
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})

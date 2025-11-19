@@ -133,6 +133,13 @@ struct BindGroupDesc {
     uint32_t              entry_count;
 };
 
+enum class LoadOp : uint32_t { Load, Clear, DontCare };
+struct ColorAttachmentDesc {
+    TextureHandle tex;
+    LoadOp load;
+    float clear_rgba[4];
+};
+
 // --- Renderer function table ---
 typedef struct RendererAPI {
     // frame lifecycle
@@ -179,7 +186,7 @@ typedef struct RendererAPI {
 
     // command encoding (subset sufficient to clear)
     CommandListHandle (*begin_commands)();
-    void (*cmd_begin_rendering)(CommandListHandle, TextureHandle* color_rt, uint32_t rt_count, float clear_rgba[4]);
+    void (*cmd_begin_rendering_ops)(CommandListHandle, const ColorAttachmentDesc* att, uint32_t rt_count);
     void (*cmd_end_rendering)(CommandListHandle);
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
