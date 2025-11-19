@@ -77,7 +77,7 @@ public:
 
     // Execute the graph for the current frame.
     // NOTE: Color-only begin; depth is ignored in v0.
-    void execute(RendererAPI& gfx, SwapchainHandle swap, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
+    void execute(RendererAPI& gfx, SwapchainHandle swap, TextureHandle defaultDepth = 0, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
         if (!gfx.begin_frame || !gfx.begin_commands || !gfx.cmd_begin_rendering_ops ||
             !gfx.cmd_end_rendering || !gfx.end_commands || !gfx.submit ||
             !gfx.present || !gfx.end_frame) {
@@ -94,6 +94,8 @@ public:
 
         for (size_t pi = 0; pi < passes_.size(); ++pi) {
             const auto& pass = passes_[pi];
+            // Clear on first pass, load on subsequent passes
+            auto load = (pi == 0)? LoadOp::Clear : LoadOp::Load;
 
             // Begin color-only rendering against provided RTs.
             std::vector<ColorAttachmentDesc> atts;
@@ -101,14 +103,22 @@ public:
             for (const auto& ct : pass.colorTargets) {
                 ColorAttachmentDesc att{0};
                 att.tex = ct.tex;                
-                att.load =(pi == 0)?LoadOp::Clear : LoadOp::Load; // Clear on first pass, load on subsequent passes                
+                att.load = load;
                 att.clear_rgba[0] = ct.clear_rgba[0]; att.clear_rgba[1] = ct.clear_rgba[1];
                 att.clear_rgba[2] = ct.clear_rgba[2]; att.clear_rgba[3] = ct.clear_rgba[3];
                 atts.push_back(std::move(att));
             }
 
-            // Begin color-only rendering against provided RTs.
-            gfx.cmd_begin_rendering_ops(cmd, atts.data(), static_cast<uint32_t>(atts.size()));
+            DepthAttachmentDesc depthOps{};
+            bool useDepth = (pass.depthTarget.tex != 0) || (defaultDepth != 0);
+            if (useDepth) {
+                depthOps.tex = pass.depthTarget.tex ? pass.depthTarget.tex : defaultDepth;
+                depthOps.load = load;
+                depthOps.clear_d = pass.depthTarget.clear_depth;
+            }
+
+            // Begin color and depth rendering against provided RTs.
+            gfx.cmd_begin_rendering_ops(cmd, atts.data(), static_cast<uint32_t>(atts.size()), useDepth ? &depthOps : nullptr);
 
             if (pass.record) {
                 RGPassContext ctx;
@@ -116,7 +126,7 @@ public:
                 ctx.cmd = cmd;
                 ctx.colorTargets = pass.colorTargets.empty() ? nullptr : pass.colorTargets.data();
                 ctx.colorCount = static_cast<uint32_t>(pass.colorTargets.size());
-                ctx.depthTarget = &pass.depthTarget; // not used by v0
+                ctx.depthTarget = &pass.depthTarget;
                 pass.record(ctx);
             }
 

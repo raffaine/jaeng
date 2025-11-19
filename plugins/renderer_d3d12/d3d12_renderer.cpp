@@ -19,6 +19,7 @@ namespace {
     struct Buffer {
         ComPtr<ID3D12Resource> res;
         D3D12_VERTEX_BUFFER_VIEW vbv{};
+        D3D12_INDEX_BUFFER_VIEW  ibv{};
         uint64_t size = 0;
         D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
         uint32_t usage = 0;
@@ -83,6 +84,13 @@ namespace {
         UINT buffer_count = 0;
     };
 
+    struct DepthTarget {
+        ComPtr<ID3D12Resource> resource;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+        DXGI_FORMAT format = DXGI_FORMAT_D32_FLOAT;
+        uint32_t width = 0, height = 0;
+    };
+
     struct D3D12State {
         HWND hwnd = nullptr;
         uint32_t frame_count = 3;
@@ -97,6 +105,8 @@ namespace {
 
         ComPtr<ID3D12DescriptorHeap> rtvHeap;
         UINT rtvDescriptorSize = 0;
+        ComPtr<ID3D12DescriptorHeap> dsvHeap;    // depth DSV heap
+        UINT dsvDescriptorSize = 0;
 
         // CPU descriptor heaps for permanent SRVs and Samplers
         ComPtr<ID3D12DescriptorHeap> srvHeapCpu;
@@ -107,10 +117,11 @@ namespace {
         uint32_t                     samplerCpuCount = 0;
 
         std::vector<FrameResources> frames; // size = frame_count
-
         ComPtr<ID3D12GraphicsCommandList> cmdList; // reused
 
         SwapchainState swap{};
+        DepthTarget depth{};
+
         UINT current_frame = 0;   // swapchain's backbuffer index as frame index
         bool frameBegun = false;
         int32_t current_vertex_stride = 0; // Caches stride of currently bound pipeline
@@ -127,12 +138,12 @@ namespace {
         std::mutex mtx;        
     } g;
 
+    void wait_idle();
+
     static void cleanup_state() {
         // Ensure GPU idle before tearing down GPU objects
         if (g.gfxQueue && g.fence) {
-            g.gfxQueue->Signal(g.fence.Get(), ++g.fenceValue);
-            g.fence->SetEventOnCompletion(g.fenceValue, g.fenceEvent);
-            WaitForSingleObject(g.fenceEvent, INFINITE);
+            wait_idle();
         }
 
         // Close event
@@ -270,8 +281,7 @@ namespace {
         g.samplerCpuCount = 0;
     }
 
-
-    // ---------- New: resources ----------
+    // ---------- resources ----------
     template <typename T>
     static RendererHandle PushHandle(std::vector<T>& vec, T&& v) {
         vec.push_back(std::move(v));
@@ -797,6 +807,14 @@ namespace {
         if (FAILED(g.device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g.rtvHeap)))) return false;
         g.rtvDescriptorSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+        // DSV heap (1 descriptor is enough for default depth)
+        D3D12_DESCRIPTOR_HEAP_DESC dsvDesc{};
+        dsvDesc.NumDescriptors = 1;
+        dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dsvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        if (FAILED(g.device->CreateDescriptorHeap(&dsvDesc, IID_PPV_ARGS(&g.dsvHeap)))) return false;
+        g.dsvDescriptorSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
         // Frames
         g.frames.resize(g.frame_count);
         g.frameFenceValues.resize(g.frame_count, 0);
@@ -874,11 +892,85 @@ namespace {
             g.textures[i].res = g.swap.backbuffers[i].resource; // store
         }
 
+        // Create default depth that matches swapchain size
+        g.depth.width  = d->size.width;
+        g.depth.height = d->size.height;
+        g.depth.format = DXGI_FORMAT_D32_FLOAT; // align with your pipeline depth format
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Alignment = 0;
+        rd.Width = g.depth.width;
+        rd.Height = g.depth.height;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.Format = g.depth.format;
+        rd.SampleDesc.Count = 1;
+        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        rd.Flags  = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = g.depth.format;
+        clear.DepthStencil.Depth = 1.0f;
+        clear.DepthStencil.Stencil = 0;
+
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        if (FAILED(g.device->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
+            IID_PPV_ARGS(&g.depth.resource)))) return 0;
+
+        g.depth.dsv = g.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+        dsv.Format = g.depth.format;
+        dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        dsv.Flags = D3D12_DSV_FLAG_NONE;
+        g.device->CreateDepthStencilView(g.depth.resource.Get(), &dsv, g.depth.dsv);
+
         return 1; // single swapchain id in this starter
     }
 
-    void resize_swapchain(SwapchainHandle, Extent2D) {
-        // (Left as an exercise: destroy RTVs, ResizeBuffers, recreate RTVs)
+    void resize_swapchain(SwapchainHandle, Extent2D newSize) {
+        // Wait idle and release RTVs
+        wait_idle();
+        for (auto& bb : g.swap.backbuffers) { bb.resource.Reset(); }
+        g.swap.backbuffers.clear();
+
+        // Resize swapchain buffers
+        g.swap.swapchain->ResizeBuffers(g.swap.buffer_count, newSize.width, newSize.height, DXGI_FORMAT_UNKNOWN, 0);
+        g.swap.current_index = g.swap.swapchain->GetCurrentBackBufferIndex();
+
+        // Recreate RTVs
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = g.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        for (UINT i=0; i<g.swap.buffer_count; ++i) {
+            Backbuffer bb{};
+            g.swap.swapchain->GetBuffer(i, IID_PPV_ARGS(&bb.resource));
+            D3D12_CPU_DESCRIPTOR_HANDLE h;
+            h.ptr = rtvStart.ptr + SIZE_T(i) * SIZE_T(g.rtvDescriptorSize);
+            bb.rtv = h;
+            g.device->CreateRenderTargetView(bb.resource.Get(), nullptr, bb.rtv);
+            g.swap.backbuffers.push_back(bb);
+        }
+
+        // Recreate default depth
+        g.depth.resource.Reset();
+        g.depth.width = newSize.width; g.depth.height = newSize.height;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Alignment = 0;
+        rd.Width = g.depth.width; rd.Height = g.depth.height;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.Format = g.depth.format; rd.SampleDesc.Count = 1;
+        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        rd.Flags  = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = g.depth.format; clear.DepthStencil.Depth = 1.0f; clear.DepthStencil.Stencil = 0;
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&g.depth.resource));
+        g.depth.dsv = g.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+        dsv.Format = g.depth.format; dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        g.device->CreateDepthStencilView(g.depth.resource.Get(), &dsv, g.depth.dsv);
     }
 
     void destroy_swapchain(SwapchainHandle) {
@@ -908,7 +1000,7 @@ namespace {
         return g.textures[idx].res.Get();
     }
 
-    void cmd_begin_rendering_ops(CommandListHandle, const ColorAttachmentDesc* atts, uint32_t rt_count) {
+    void cmd_begin_rendering_ops(CommandListHandle, const ColorAttachmentDesc* atts, uint32_t rt_count, const DepthAttachmentDesc* depth) {
         assert(rt_count >= 1 && atts != nullptr);
         ID3D12Resource* res = (atts[0].tex)? TexFromHandle(atts[0].tex) : nullptr;
 
@@ -922,9 +1014,10 @@ namespace {
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         g.cmdList->ResourceBarrier(1, &barrier);
 
-        // RTV handle for current buffer
+        // RTV handle for current buffer and DSV handle for depth (if provided)
         UINT idx = g.swap.current_index;
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = g.swap.backbuffers[idx].rtv;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv = g.depth.dsv;
 
         // Viewport & Scissor must be set before drawing
         D3D12_RESOURCE_DESC texDesc = res->GetDesc();
@@ -945,9 +1038,13 @@ namespace {
         g.cmdList->RSSetViewports(1, &vp);
         g.cmdList->RSSetScissorRects(1, &sc);
 
-        g.cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        g.cmdList->OMSetRenderTargets(1, &rtv, FALSE, (depth)? &dsv : nullptr);
         if (atts[0].load == LoadOp::Clear) {
             g.cmdList->ClearRenderTargetView(rtv, atts[0].clear_rgba, 0, nullptr);
+            // Depth binding & clear if provided/available
+            if (depth) {
+                g.cmdList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, depth->clear_d, 0, 0, nullptr);
+            }
         }
     }
 

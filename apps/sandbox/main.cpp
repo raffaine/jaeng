@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <vector>
@@ -13,13 +13,6 @@
 using Microsoft::WRL::ComPtr;
 
 static const wchar_t* kWndClass = L"SandboxWindowClass";
-
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-        case WM_DESTROY: PostQuitMessage(0); return 0;
-        default: return DefWindowProc(hWnd, msg, wParam, lParam);
-    }
-}
 
 static const char* kVS = R"(
 struct VSIn { float3 pos: POSITION; float3 col: COLOR; float2 uv: TEXCOORD; };
@@ -51,6 +44,24 @@ static bool CompileHlsl(const char* src, const char* entry, const char* target, 
     return true;
 }
 
+Renderer renderer {};
+SwapchainHandle swap = 0;
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {        
+        case WM_SIZE: {
+            UINT w = LOWORD(lParam), h = HIWORD(lParam);
+            if (swap > 0 && w > 0 && h > 0) {
+                renderer.gfx.resize_swapchain(swap, { w, h });
+            }
+            return 0;
+        }
+
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+        default: return DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     HMODULE hGpuCap = PIXLoadLatestWinPixGpuCapturerLibrary();
     if (!hGpuCap) {
@@ -77,14 +88,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     if (!hwnd) return -1;
 
-    Renderer renderer;
     if (!renderer.initialize(GfxBackend::D3D12, hwnd, 3)) {
         MessageBox(hwnd, L"Failed to initialize renderer.", L"Error", MB_ICONERROR);
         return -2;
     }
 
     SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, PresentMode::Fifo };
-    SwapchainHandle swap = renderer.gfx.create_swapchain(&swapDesc);
+    swap = renderer.gfx.create_swapchain(&swapDesc);
 
     // Textured quad vertex buffer (pos.xyz, col.xyz, uv.xy) - 2 triangles
     struct Vtx { float px,py,pz, cx,cy,cz, u,v; };
@@ -193,7 +203,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // Execute
         graph.compile();
-        graph.execute(renderer.gfx, swap, [&](RendererAPI& gfx) {
+        graph.execute(renderer.gfx, swap, 0, [&](RendererAPI& gfx) {
             if (!uploaded) {
                 gfx.update_buffer(vb, 0, quad, sizeof(quad));
                 uploaded = true;

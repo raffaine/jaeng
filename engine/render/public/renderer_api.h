@@ -139,6 +139,12 @@ struct ColorAttachmentDesc {
     LoadOp load;
     float clear_rgba[4];
 };
+struct DepthAttachmentDesc {
+    TextureHandle tex;
+    LoadOp load;
+    float clear_d;
+    /* stencil optional */
+};
 
 // --- Renderer function table ---
 typedef struct RendererAPI {
@@ -186,7 +192,7 @@ typedef struct RendererAPI {
 
     // command encoding (subset sufficient to clear)
     CommandListHandle (*begin_commands)();
-    void (*cmd_begin_rendering_ops)(CommandListHandle, const ColorAttachmentDesc* att, uint32_t rt_count);
+    void (*cmd_begin_rendering_ops)(CommandListHandle, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
     void (*cmd_end_rendering)(CommandListHandle);
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
