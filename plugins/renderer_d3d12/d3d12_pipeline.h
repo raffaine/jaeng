@@ -4,6 +4,8 @@
 #include <d3d12.h>
 #include <vector>
 
+#include "render/public/renderer_api.h"
+
 struct ShaderBlob { std::vector<uint8_t> bytes; };
 
 struct PipelineRec {

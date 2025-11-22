@@ -2,12 +2,19 @@
 #pragma once
 #include <wrl.h>
 #include <d3d12.h>
+#include <optional>
+
+struct UploadSlice {
+    ID3D12Resource* resource;   // UPLOAD heap, caller treats as non-owning
+    UINT64          offset;     // byte offset into resource
+    void*           cpu;        // mapped CPU address (optional)
+};
 
 class UploadRing {
 public:
     bool  create(ID3D12Device* dev, UINT64 sizeBytes);
     void  reset(); // per-frame
-    bool  stage(const void* src, UINT64 size, UINT64 alignment, D3D12_GPU_VIRTUAL_ADDRESS* outGpu, ID3D12Resource** outRes, UINT64* outOffset, void** outCpu = nullptr);
+    std::optional<UploadSlice>  stage(const void* src, UINT64 size, UINT64 alignment);
 
 private:
     Microsoft::WRL::ComPtr<ID3D12Resource> buffer_;

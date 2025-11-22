@@ -1,7 +1,7 @@
 #include <wrl.h>
-#include <cassert>
 
 #include "d3d12_device.h"
+#include "d3d12_utils.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -38,17 +38,17 @@ bool D3D12Device::create(IDXGIFactory6* factory) {
 }
 
 UINT64 D3D12Device::signal() {
-    assert(gfxQueue_ && fence_);
+    JAENG_ASSERT(gfxQueue_ && fence_);
     // Increments the fence value and signals it on the queue
     const UINT64 v = ++fenceValue_;
-    gfxQueue_->Signal(fence_.Get(), v);
+    HR_CHECK(gfxQueue_->Signal(fence_.Get(), v));
     return v;
 }
 
 void D3D12Device::wait(UINT64 value) {
-    assert(fence_);
+    JAENG_ASSERT(fence_);
     if (fence_->GetCompletedValue() < value) {
-        fence_->SetEventOnCompletion(value, fenceEvent_);
+        HR_CHECK(fence_->SetEventOnCompletion(value, fenceEvent_));
         WaitForSingleObject(fenceEvent_, INFINITE);
     }
 }
@@ -56,8 +56,10 @@ void D3D12Device::wait(UINT64 value) {
 void D3D12Device::shutdown() {
     // Ensure GPU has finished all work we submitted
     if (gfxQueue_ && fence_) {
-        const UINT64 v = signal();
-        wait(v);
+        HR_CHECK(gfxQueue_->Signal(fence_.Get(), fenceValue_));
+        HR_CHECK(fence_->SetEventOnCompletion(fenceValue_, fenceEvent_));
+        WaitForSingleObject(fenceEvent_, INFINITE);
+        fenceValue_++;
     }
     if (fenceEvent_) {
         CloseHandle(fenceEvent_);

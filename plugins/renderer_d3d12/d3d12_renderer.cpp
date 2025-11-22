@@ -1,1231 +1,866 @@
 #define RENDERER_BUILD
-#include "renderer_api.h"
+#include "d3d12_renderer.h"
+#include "d3d12_device.h"
+#include "d3d12_swapchain.h"
+#include "d3d12_descriptors.h"
+#include "d3d12_upload.h"
+#include "d3d12_resources.h"
+#include "d3d12_pipeline.h"
+#include "d3d12_bind.h"
+#include "d3d12_commands.h"
+#include "d3d12_utils.h"
 
-#include <windows.h>
-#include <wrl.h>
-#include <dxgi1_6.h>
-#include <d3d12.h>
-#include <d3d12shader.h>
-#include <vector>
-#include <cassert>
-#include <cstdint>
-#include <cstring>
-#include <functional>
-#include <mutex>
+#include <dxgidebug.h>
 
 using Microsoft::WRL::ComPtr;
 
-namespace {
-    struct Buffer {
-        ComPtr<ID3D12Resource> res;
-        D3D12_VERTEX_BUFFER_VIEW vbv{};
-        D3D12_INDEX_BUFFER_VIEW  ibv{};
-        uint64_t size = 0;
-        D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
-        uint32_t usage = 0;
-    };
+static std::unique_ptr<RendererD3D12> g_renderer;
 
-    struct Texture {
-        ComPtr<ID3D12Resource>      res;
-        D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
-        D3D12_RESOURCE_STATES       state = D3D12_RESOURCE_STATE_COMMON;
-        uint32_t                    width = 0, height = 0;
-    };
+// Helpers
+static DXGI_FORMAT ToDxgiFormat(TextureFormat fmt) {
+    switch (fmt) {
+        case TextureFormat::BGRA8_UNORM: return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case TextureFormat::RGBA8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case TextureFormat::D24S8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
+        case TextureFormat::D32F: return DXGI_FORMAT_D32_FLOAT;
+        default: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    }
+}
 
-    struct Sampler {
-        D3D12_CPU_DESCRIPTOR_HANDLE sampCpu{};
-    };
+static void Barrier(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
+                    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+    if (before == after) return;
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = res;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter  = after;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    cl->ResourceBarrier(1, &b);
+}
 
-    struct ShaderBlob {
-        std::vector<uint8_t> bytes;
-    };
+RendererD3D12::RendererD3D12() = default;
+RendererD3D12::~RendererD3D12() = default;
 
-    struct Pipeline {
-      ComPtr<ID3D12PipelineState> pso;
-      ComPtr<ID3D12RootSignature> root;
-      D3D12_PRIMITIVE_TOPOLOGY topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-      uint32_t vertex_stride = 0;   // Store Input Layout Stride for this PSO
-    };
+FrameContext& RendererD3D12::curFrame()
+{
+    JAENG_ASSERT(frameIndex_ < frames_.size());
+    return *frames_[frameIndex_]; 
+}
 
-    struct BindGroupLayout {
-        std::vector<BindGroupLayoutEntry> entries;
-    };
+bool RendererD3D12::init(const RendererDesc* desc)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
 
-    struct BindGroup {
-        BindGroupLayoutHandle layout{};
-        // Minimal: one SRV at binding 0, one Sampler at binding 1
-        TextureHandle texture{};
-        SamplerHandle sampler{};
-        struct {
-            BufferHandle buffer{};
-            uint64_t offset{};
-            uint64_t size{};
-            bool present{false};
-            D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle{}; //persistent CPU CBV
-            bool cpuHandleValid{false};
-        } cb; // b0
-    };
+    hwnd_ = (HWND)desc->platform_window;
+    frameCount_ = desc->frame_count ? desc->frame_count : 3;
 
-    struct FrameResources {
-        ComPtr<ID3D12CommandAllocator> cmdAlloc;
-        // Step 3: per-frame upload ring (persistently mapped)
-        ComPtr<ID3D12Resource> upload;
-        uint8_t* uploadPtr = nullptr;
-        uint64_t uploadSize = 8ull * 1024ull * 1024ull; // 8 MB ring
-        uint64_t uploadOffset = 0;
-        // Step 4: per-frame GPU-visible descriptor heaps & cursors
-        ComPtr<ID3D12DescriptorHeap> srvHeapGpu;      // CBV/SRV/UAV
-        ComPtr<ID3D12DescriptorHeap> samplerHeapGpu;  // Sampler
-        uint32_t srvGpuOffset = 0;
-        uint32_t samplerGpuOffset = 0;
-    };
-
-    struct Backbuffer {
-        ComPtr<ID3D12Resource> resource;
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
-    };
-
-    struct SwapchainState {
-        ComPtr<IDXGISwapChain3> swapchain;
-        std::vector<Backbuffer> backbuffers;
-        UINT current_index = 0;
-        UINT buffer_count = 0;
-    };
-
-    struct DepthTarget {
-        ComPtr<ID3D12Resource> resource;
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
-        DXGI_FORMAT format = DXGI_FORMAT_D32_FLOAT;
-        uint32_t width = 0, height = 0;
-    };
-
-    struct D3D12State {
-        HWND hwnd = nullptr;
-        uint32_t frame_count = 3;
-
-        ComPtr<ID3D12Device> device;
-        ComPtr<IDXGIFactory6> factory;
-        ComPtr<ID3D12CommandQueue> gfxQueue;
-        ComPtr<ID3D12Fence> fence;
-        HANDLE fenceEvent = NULL;
-        UINT64 fenceValue = 0;
-        std::vector<UINT64> frameFenceValues; // size = frame_count
-
-        ComPtr<ID3D12DescriptorHeap> rtvHeap;
-        UINT rtvDescriptorSize = 0;
-        ComPtr<ID3D12DescriptorHeap> dsvHeap;    // depth DSV heap
-        UINT dsvDescriptorSize = 0;
-
-        // CPU descriptor heaps for permanent SRVs and Samplers
-        ComPtr<ID3D12DescriptorHeap> srvHeapCpu;
-        ComPtr<ID3D12DescriptorHeap> samplerHeapCpu;
-        UINT                         srvDescSize     = 0;
-        UINT                         samplerDescSize = 0;
-        uint32_t                     srvCpuCount     = 0;
-        uint32_t                     samplerCpuCount = 0;
-        uint32_t                     srvCpuCapacity  = 0;
-        
-        ComPtr<ID3D12Resource> fallbackCb;
-        D3D12_CPU_DESCRIPTOR_HANDLE fallbackCbvCpu{};
-        bool fallbackCbReady = false;
-
-        std::vector<FrameResources> frames; // size = frame_count
-        ComPtr<ID3D12GraphicsCommandList> cmdList; // reused
-
-        SwapchainState swap{};
-        DepthTarget depth{};
-
-        UINT current_frame = 0;   // swapchain's backbuffer index as frame index
-        bool frameBegun = false;
-        int32_t current_vertex_stride = 0; // Caches stride of currently bound pipeline
-
-        // New: generic resources for triangle sample
-        std::vector<Buffer>          buffers;
-        std::vector<Texture>         textures;
-        std::vector<Sampler>         samplers;
-        std::vector<ShaderBlob>      shaders;
-        std::vector<BindGroupLayout> bgls;
-        std::vector<BindGroup>       bgs;
-        std::vector<Pipeline>        pipelines;
-
-        std::mutex mtx;        
-    } g;
-    
-    static bool CreateFallbackCBV() {
-        if (g.fallbackCbReady) return true;
-
-        // 256-byte upload buffer
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        rd.Width = 256; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-        rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        if (FAILED(g.device->CreateCommittedResource(
-            &hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-            IID_PPV_ARGS(&g.fallbackCb)))) return false;
-
-        // Zero defaults (or write white tint if you prefer)
-        void* p = nullptr; D3D12_RANGE r{0,0};
-        if (SUCCEEDED(g.fallbackCb->Map(0, &r, &p)) && p) {
-            memset(p, 0, 256);
-            g.fallbackCb->Unmap(0, nullptr);
-        }
-
-        // Reserve one CPU CBV slot (VALID in CBV/SRV/UAV heap)
-        if (g.srvCpuCount >= g.srvCpuCapacity) return false;
-
-        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
-        g.fallbackCbvCpu = base;
-        g.fallbackCbvCpu.ptr += SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
-
-        D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{};
-        cbv.BufferLocation = g.fallbackCb->GetGPUVirtualAddress();
-        cbv.SizeInBytes    = 256;
-        g.device->CreateConstantBufferView(&cbv, g.fallbackCbvCpu);
-
-        g.srvCpuCount += 1;
-        g.fallbackCbReady = true;
-        return true;
+    UINT factoryFlags = 0;
+#if defined(_DEBUG)
+    // Enable D3D12 debug layer if available
+    ComPtr<ID3D12Debug> debug;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+        debug->EnableDebugLayer();
     }
 
-    void wait_idle();
-
-    static void cleanup_state() {
-        // Ensure GPU idle before tearing down GPU objects
-        if (g.gfxQueue && g.fence) {
-            wait_idle();
-        }
-
-        // Close event
-        if (g.fenceEvent) {
-            CloseHandle(g.fenceEvent);
-            g.fenceEvent = NULL;
-        }
-
-        // Release swapchain and RTVs
-        g.swap = {};  // Backbuffers ComPtrs release automatically
-
-        // Release command list and per-frame allocators
-        g.cmdList.Reset();
-        for (auto &f : g.frames) {
-            if (f.upload && f.uploadPtr) { f.upload->Unmap(0, nullptr); f.uploadPtr = nullptr; }
-            f.cmdAlloc.Reset();
-            f.upload.Reset();
-        }
-        g.frames.clear();
-        g.frameFenceValues.clear();
-
-        // Release descriptor heaps
-        g.rtvHeap.Reset();
-        g.rtvDescriptorSize = 0;
-
-        // Release textures handle table
-        g.textures.clear();
-
-        // Release core D3D objects
-        g.gfxQueue.Reset();
-        g.fence.Reset();
-        g.device.Reset();
-        g.factory.Reset();
-
-        // Reset simple POD members
-        g.hwnd = nullptr;
-        g.frame_count = 0;
+    // Break on errors/corruption from DXGI
+    ComPtr<IDXGIInfoQueue> infoq;
+    if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&infoq)))) {
+        infoq->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, TRUE);
+        infoq->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, TRUE);
     }
 
-    // Wait for the GPU to finish work that uses this frame index
-    static void wait_for_frame(UINT frameIndex) {
-        // g.frameFenceValues[frameIndex] should store the fence value signaled
-        // after presenting that frame; if non-zero and not yet completed, wait.
-        if (!g.fence) return;
-        const UINT64 fv = (frameIndex < g.frameFenceValues.size())
-            ? g.frameFenceValues[frameIndex]
-            : 0ull;
-        if (fv != 0 && g.fence->GetCompletedValue() < fv) {
-            g.fence->SetEventOnCompletion(fv, g.fenceEvent);
-            WaitForSingleObject(g.fenceEvent, INFINITE);
-        }
+    factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+#endif
+
+    if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)))) return false;
+
+    device_ = std::make_unique<D3D12Device>();
+    if(!device_->create(factory_.Get())) return false;
+
+    cpuDesc_ = std::make_unique<DescriptorAllocatorCPU>();
+    if(!cpuDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2048)) return false;
+
+    samplerHeapCpu_ = std::make_unique<DescriptorAllocatorCPU>();
+    if(!samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256)) return false;
+
+
+    resources_ = std::make_unique<ResourceTable>();
+    pipelines_ = std::make_unique<PipelineTable>();
+    binds_     = std::make_unique<BindSpace>();
+    if (!binds_->init(device_->dev(), cpuDesc_.get())) return false;
+
+    // Frames
+    frames_.resize(frameCount_);
+    uploadPerFrame_.resize(frameCount_);
+    gpuDescPerFrame_.resize(frameCount_);
+    for (uint32_t i = 0; i < frameCount_; ++i) {
+        gpuDescPerFrame_[i] = std::make_unique<DescriptorAllocatorGPU>();
+        if(!gpuDescPerFrame_[i]->create(device_->dev(), 1024 /*srv*/, 64 /*sampler*/)) return false;
+
+        uploadPerFrame_[i] = std::make_unique<UploadRing>();
+        if (!uploadPerFrame_[i]->create(device_->dev(), 8ull * 1024ull * 1024ull /*8 MB ring*/)) return false;
+
+        frames_[i] = std::make_unique<FrameContext>();
+        if (!frames_[i]->init(device_->dev())) return false;
+
+        frames_[i]->upload = uploadPerFrame_[i].get();
+        frames_[i]->gpuDescs = gpuDescPerFrame_[i].get();
     }
 
-    static void Barrier(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
-                        D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
-        if (before == after) return;
-        D3D12_RESOURCE_BARRIER b{};
-        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource = res;
-        b.Transition.StateBefore = before;
-        b.Transition.StateAfter  = after;
-        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        cl->ResourceBarrier(1, &b);
-    }
+    frameIndex_ = 0;
+    frameBegun_ = false;
 
-    // Execute a tiny command lambda immediately and wait for completion.
-    // Used when resource creation needs GPU work before any frame has begun.
-    static void ExecuteNow(std::function<void(ID3D12GraphicsCommandList*)> record)
+    return true;
+}
+
+void RendererD3D12::shutdown()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    // Ensure GPU is idle before tearing dow
+    wait_idle();
+
+    // Order: bind space, pipelines/resources, per-frame, swapchain, descriptors, device
+    if (binds_) binds_->shutdown();
+    pipelines_.reset();
+    resources_.reset();
+
+    for (auto& f : frames_) f.reset();
+    for (auto& g : gpuDescPerFrame_) g.reset();
+    for (auto& u : uploadPerFrame_) u.reset();
+
+    if (swapchain_) swapchain_->destroy();
+    samplerHeapCpu_.reset();
+    cpuDesc_.reset();
+
+    if (device_) device_->shutdown();
+
+    factory_.Reset();
+    hwnd_       = 0;
+    frameCount_ = 0;
+    frameIndex_ = 0;
+    frameBegun_ = false;
+
+}
+
+void RendererD3D12::begin_frame()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    // Determine frame index from swapchain (or keep 0 if not created yet
+    frameIndex_ = (swapchain_) ? swapchain_->current_index() : 0;
+
+    // If GPU hasn't completed the last submit for this frame, wait
+    auto& fr = curFrame();
+    device_->wait(fr.fenceValue);
+
+    // Reset frame-local systems (allocator/cmd list, GPU heaps, upload ring
+    fr.reset();             // resets allocator + cmd list for this frame
+    fr.gpuDescs->reset();   // resets shader-visible CBV/SRV/UAV & Sampler cursors
+    fr.upload->reset();     // resets ring head to 0
+
+    frameBegun_ = true;
+}
+
+void RendererD3D12::end_frame()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    frameBegun_ = false;
+}
+
+SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!hwnd_) return 0;
+
+    // Create & build RTVs internally
+    swapchain_ = std::make_unique<D3D12Swapchain>();
+    if(!swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(), ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_)) return false;
+
+    // Register backbuffers as textures in ResourceTable and cache handles for get_current_backbuffer()
+    backbufferHandles_.clear();
+    backbufferHandles_.reserve(frameCount_);
+    for (uint32_t i = 0; i < frameCount_; ++i)
     {
+        TextureRec t{};
+        t.res     = swapchain_->rtv_resource(i);     // backbuffer resource
+        t.state   = D3D12_RESOURCE_STATE_PRESENT;
+        t.width   = d->size.width;
+        t.height  = d->size.height;
+        // (No SRV for backbuffer; rendering targets use RTV via swapchain)
+        TextureHandle h = resources_->add_texture(std::move(t));
+        backbufferHandles_.push_back(h);
+    }
+
+    return 1; // Single id for this starter
+}
+
+void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    if(!swapchain_) return;
+
+    // Resize backbuffers & RTVs inside swapchain
+    swapchain_->resize(device_->dev(), newSize.width, newSize.height);
+
+    // Refresh resource table entries for backbuffers
+    for (uint32_t i = 0; i < frameCount_ && i < backbufferHandles_.size(); ++i)
+    {
+        if (auto* tex = resources_->get_tex(backbufferHandles_[i])) {
+            tex->res    = swapchain_->rtv_resource(i);
+            tex->width  = newSize.width;
+            tex->height = newSize.height;
+            tex->state  = D3D12_RESOURCE_STATE_PRESENT;
+        }
+    }
+
+}
+
+void RendererD3D12::destroy_swapchain(SwapchainHandle)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    backbufferHandles_.clear();
+    if (swapchain_) swapchain_->destroy();
+}
+
+TextureHandle RendererD3D12::get_current_backbuffer(SwapchainHandle)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    const uint32_t idx = swapchain_->current_index();
+    return (idx < backbufferHandles_.size()) ? backbufferHandles_[idx] : 0;
+
+}
+
+BufferHandle RendererD3D12::create_buffer(const BufferDesc* d, const void* initial)
+{
+    // Create DEFAULT-heap resource; if initial != null, stage via UploadRing and copy
+    BufferRec buf{};
+    buf.size = d->size_bytes;
+    buf.usage = d->usage;
+
+    // Create committed buffer resource (COMMON initially)
+    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rd.Width = d->size_bytes;
+    rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+    rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    // Start in COMMON; we'll transition as needed
+    if (FAILED(device_->dev()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&buf.res)))) return 0;
+    buf.state = D3D12_RESOURCE_STATE_COMMON;
+
+    // Convenience: set VBV/IBV if usage flags indicate it (stride will be overridden by pipeline)
+    if (d->usage & BufferUsage_Vertex) {
+        buf.vbv.BufferLocation = buf.res->GetGPUVirtualAddress();
+        buf.vbv.SizeInBytes    = (UINT)d->size_bytes;
+        buf.vbv.StrideInBytes  = 32; // default; refined by cmd_set_vertex_buffer
+    }
+
+    auto h = resources_->add_buffer(std::move(buf));
+
+    // Optional initial upload (record into current frame)
+    if (initial && d->size_bytes) {
+        if (!frameBegun_) begin_frame();
+        auto& fc = curFrame();
+        if (auto us = fc.upload->stage(initial, d->size_bytes, /*align*/256); us.has_value()) {
+            auto* br = resources_->get_buf(h);
+            // Transition COPY, copy region, leave in COPY; pipeline bind will transition to VERTEX/CONSTANT
+            Barrier(fc.cmd(), br->res.Get(), br->state, D3D12_RESOURCE_STATE_COPY_DEST);
+            br->state = D3D12_RESOURCE_STATE_COPY_DEST;
+            // Enqueue copy
+            fc.cmd()->CopyBufferRegion(br->res.Get(), 0, us->resource, us->offset, d->size_bytes);
+            // Leave in COPY_DEST; we'll transition to VERTEX at bind time
+        }
+    }
+
+    return h;
+}
+
+void RendererD3D12::destroy_buffer(BufferHandle h)
+{
+    if (BufferRec* buf = resources_->get_buf(h)) {
+        buf->res.Reset();
+    }
+}
+
+bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* data, uint64_t size)
+{
+    if (!data || size == 0) return true;
+    auto* b = resources_->get_buf(h);
+    if (!b) return false;
+
+    FrameContext& fr = curFrame();
+
+    if (frameBegun_) {
+        // ---- Fast path: record into the active frame's command list using the per-frame ring ----
+        if (auto us = fr.upload->stage(data, size, 256ull); us.has_value()) {
+            // Ensure COPY_DEST
+            Barrier(fr.cmd(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
+            b->state = D3D12_RESOURCE_STATE_COPY_DEST;
+            // Enqueue copy
+            fr.cmd()->CopyBufferRegion(b->res.Get(), dst_off, us->resource, us->offset, size);
+            // Leave in COPY_DEST; we'll transition to VERTEX at bind time
+            return true;
+        }
+    } else {
+        // ---- Robust path: no frame begun -> perform an immediate one-shot copy and wait ----
+        // Create a transient upload resource
+        D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC   upDesc{};
+        upDesc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        upDesc.Width            = size;
+        upDesc.Height           = 1;
+        upDesc.DepthOrArraySize = 1;
+        upDesc.MipLevels        = 1;
+        upDesc.SampleDesc.Count = 1;
+        upDesc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ComPtr<ID3D12Resource> upload;
+        if (FAILED(device_->dev()->CreateCommittedResource(
+                &hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload))))
+            return false;
+
+        // Fill upload
+        uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
+        if (FAILED(upload->Map(0, &r, reinterpret_cast<void**>(&upPtr)))) return false;
+        std::memcpy(upPtr, data, size);
+        upload->Unmap(0, nullptr);
+
+        // One-shot command list to do the copy now
         ComPtr<ID3D12CommandAllocator> alloc;
-        if (FAILED(g.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) return;
+        if (FAILED(device_->dev()->CreateCommandAllocator(
+                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) return false;
 
         ComPtr<ID3D12GraphicsCommandList> list;
-        if (FAILED(g.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)))) return;
-
-        record(list.Get());
-        list->Close();
-
-        ID3D12CommandList* lists[] = { list.Get() };
-        g.gfxQueue->ExecuteCommandLists(1, lists);
-
-        // Signal & wait
-        if (g.fence) {
-            g.gfxQueue->Signal(g.fence.Get(), ++g.fenceValue);
-            g.fence->SetEventOnCompletion(g.fenceValue, g.fenceEvent);
-            WaitForSingleObject(g.fenceEvent, INFINITE);
-        }
-    }
-
-    static inline uint64_t AlignUp(uint64_t v, uint64_t align) {
-        return (v + (align - 1)) & ~(align - 1);
-    }
-
-    static DXGI_FORMAT ToDxgiFormat(TextureFormat fmt) {
-        switch (fmt) {
-            case TextureFormat::BGRA8_UNORM: return DXGI_FORMAT_B8G8R8A8_UNORM;
-            case TextureFormat::RGBA8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
-            case TextureFormat::D24S8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
-            case TextureFormat::D32F: return DXGI_FORMAT_D32_FLOAT;
-            default: return DXGI_FORMAT_B8G8R8A8_UNORM;
-        }
-    }
-
-    static void CreatePerFrameDescriptorHeaps() {
-        // Per-frame GPU-visible heaps for binding
-        for (uint32_t i = 0; i < g.frame_count; ++i) {
-            D3D12_DESCRIPTOR_HEAP_DESC dh{};
-            dh.NumDescriptors = 1024;
-            dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.frames[i].srvHeapGpu));
-            dh.NumDescriptors = 64;
-            dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-            dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.frames[i].samplerHeapGpu));
-            g.frames[i].srvGpuOffset     = 0;
-            g.frames[i].samplerGpuOffset = 0;
-        }
-    }
-
-    static void CreateCpuDescriptorHeaps() {
-        // Permanent CPU heaps (not shader visible) to store resource descriptors
-        D3D12_DESCRIPTOR_HEAP_DESC dh{};
-        dh.NumDescriptors = 2048;
-        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.srvHeapCpu));
-        dh.NumDescriptors = 256;
-        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        g.device->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&g.samplerHeapCpu));
-        g.srvDescSize     = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        g.samplerDescSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-        g.srvCpuCount     = 0;
-        g.samplerCpuCount = 0;
-        g.srvCpuCapacity  = dh.NumDescriptors;
-    }
-
-    // ---------- resources ----------
-    template <typename T>
-    static RendererHandle PushHandle(std::vector<T>& vec, T&& v) {
-        vec.push_back(std::move(v));
-        return (RendererHandle)vec.size();
-    }
-
-    template <typename T>
-    static T* GetByHandle(std::vector<T>& vec, RendererHandle h) {
-        if (h == 0) return nullptr;
-        size_t idx = size_t(h - 1);
-        if (idx >= vec.size()) return nullptr;
-        return &vec[idx];
-    }
-
-    // ---------- Step 3: frame lifecycle ----------
-    void begin_frame_impl() {
-        // Determine frame index from swapchain (or 0 if not created yet)
-        g.current_frame = g.swap.swapchain ? g.swap.swapchain->GetCurrentBackBufferIndex() : 0;
-        // Wait if the GPU is still using this frame's resources
-        wait_for_frame(g.current_frame);
-        // Reset per-frame state
-        auto& fr = g.frames[g.current_frame];
-        fr.uploadOffset = 0;
-        fr.srvGpuOffset = 0;         // <-- IMPORTANT: reset GPU-visible SRV heap cursor
-        fr.samplerGpuOffset = 0;     // <-- IMPORTANT: reset GPU-visible sampler heap cursor
-        fr.cmdAlloc->Reset();
-        g.cmdList->Reset(fr.cmdAlloc.Get(), nullptr);
-        g.frameBegun = true;
-    }
-
-    void end_frame_impl() {
-        // Nothing special yet; fences are signaled in present()
-        g.frameBegun = false;
-    }
-
-    BufferHandle create_buffer(const BufferDesc* d, const void* initial_data) {
-        // Step 3: create DEFAULT-heap buffer; CPU writes go through upload ring
-        Buffer buf{};
-        buf.size = d->size_bytes;
-        buf.usage = d->usage;
-                   D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        rd.Width = d->size_bytes;
-        rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-        rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        // Start in COMMON; we'll transition as needed
-        if (FAILED(g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&buf.res)))) return 0;
-        buf.state = D3D12_RESOURCE_STATE_COMMON;
-        if (d->usage & BufferUsage_Vertex) {
-          buf.vbv.BufferLocation = buf.res->GetGPUVirtualAddress();
-          buf.vbv.StrideInBytes  = 24; // pos.xyz + col.xyz
-          buf.vbv.SizeInBytes    = (UINT)d->size_bytes;
-        }
-        auto h = PushHandle(g.buffers, std::move(buf));
-        // Optional convenience: if initial_data provided, perform update now
-        if (initial_data) {
-          // Make sure a frame is begun to have a valid command list and upload ring
-          if (!g.frameBegun) begin_frame_impl();
-          GetByHandle(g.buffers, h); // ensure handle valid
-          (void)h; // silence warning if not used further
-          // We'll call update_buffer through the function pointer later; here we use internal impl:
-          // (We expose update_buffer in API; sandbox will call it. Keeping this path simple.)
-        }
-        return h;
-    }
-
-    void destroy_buffer(BufferHandle h) {
-        if (auto* b = GetByHandle(g.buffers, h)) { b->res.Reset(); }
-    }
-
-    bool update_buffer(BufferHandle h, uint64_t dst_offset, const void* data, uint64_t size) {
-        if (!data || size == 0) return true;
-        auto* b = GetByHandle(g.buffers, h);
-        if (!b) return false;
-        if (!g.frameBegun) begin_frame_impl();
-        FrameResources& fr = g.frames[g.current_frame];
-        // Align uploads to 256 for good measure
-        const uint64_t alignment = 256ull;
-        uint64_t off = AlignUp(fr.uploadOffset, alignment);
-        if (off + size > fr.uploadSize) {
-            // Ring overflow within the same frame; try wrap to 0 (safe because we fence per frame)
-            off = 0;
-            if (size > fr.uploadSize) return false; // too large for the ring
-        }
-        std::memcpy(fr.uploadPtr + off, data, size);
-        fr.uploadOffset = off + size;
-
-        // Ensure COPY_DEST
-        Barrier(g.cmdList.Get(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
-        b->state = D3D12_RESOURCE_STATE_COPY_DEST;
-        // Enqueue copy
-        g.cmdList->CopyBufferRegion(b->res.Get(), dst_offset, fr.upload.Get(), off, size);
-        // Leave in COPY_DEST; we'll transition to VERTEX at bind time
-        return true;
-    }
-
-    TextureHandle create_texture(const TextureDesc* td, const void* initial_data) {
-        if (!td || td->mip_levels == 0 || td->layers == 0) return 0;
-        Texture t{};
-        t.width = td->width; t.height = td->height;
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rd.Alignment = 0;
-        rd.Width = td->width;
-        rd.Height = td->height;
-        rd.DepthOrArraySize = 1;
-        rd.MipLevels = (UINT16)td->mip_levels;
-        rd.Format = ToDxgiFormat(td->format);
-        rd.SampleDesc.Count = 1;
-        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-        if (FAILED(g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)))) return 0;
-        t.state = D3D12_RESOURCE_STATE_COPY_DEST;
-
-        if (initial_data) {
-            // Build an upload buffer with row-aligned footprints
-            UINT64 totalBytes = 0; D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
-            UINT rows = 0; UINT64 rowSizeInBytes = 0;
-            g.device->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSizeInBytes, &totalBytes);
-
-            D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
-            D3D12_RESOURCE_DESC upDesc{};
-            upDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            upDesc.Width = totalBytes; upDesc.Height = 1; upDesc.DepthOrArraySize = 1; upDesc.MipLevels = 1;
-            upDesc.SampleDesc.Count = 1; upDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            ComPtr<ID3D12Resource> upload;
-            if (FAILED(g.device->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
-                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)))) return 0;
-
-            // Fill upload
-            uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
-            upload->Map(0, &r, reinterpret_cast<void**>(&upPtr));
-            const uint8_t* src = static_cast<const uint8_t*>(initial_data);
-            size_t srcPitch = size_t(td->width) * 4; // RGBA8
-            for (UINT y = 0; y < rows; ++y) {
-                std::memcpy(upPtr + fp.Offset + y * fp.Footprint.RowPitch, src + y * srcPitch, srcPitch);
-            }
-            upload->Unmap(0, nullptr);
-
-            auto doCopy = [&](ID3D12GraphicsCommandList* cl) {
-                // Transition and copy
-                Barrier(cl, t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
-                D3D12_TEXTURE_COPY_LOCATION dstLoc{}; dstLoc.pResource = t.res.Get();
-                dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dstLoc.SubresourceIndex = 0;
-                D3D12_TEXTURE_COPY_LOCATION srcLoc{}; srcLoc.pResource = upload.Get();
-                srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; srcLoc.PlacedFootprint = fp;
-                cl->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
-                Barrier(cl, t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            };
-
-            if (g.frameBegun) {
-                // We are already recording into g.cmdList this frame
-                doCopy(g.cmdList.Get());
-            } else {
-                // No frame yet -> execute a tiny one-shot list and wait
-                ExecuteNow(doCopy);
-            }
-            t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        }
-
-        // Create SRV in CPU descriptor heap
-        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-        srv.Format = rd.Format;
-        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srv.Texture2D.MipLevels = td->mip_levels;
-        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
-        D3D12_CPU_DESCRIPTOR_HANDLE h{}; h.ptr = base.ptr + SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
-        g.device->CreateShaderResourceView(t.res.Get(), &srv, h);
-        t.srvCpu = h; g.srvCpuCount++;
-        return (TextureHandle) (g.textures.emplace_back(std::move(t)), g.textures.size());
-    }
-
-    void destroy_texture(TextureHandle h) {
-        if (h == 0) return;
-        size_t idx = size_t(h - 1);
-        if (idx < g.textures.size()) {
-            g.textures[idx].res.Reset();
-            // CPU descriptors are not freed (simple linear heap); OK for starter
-        }
-    }
-
-    static D3D12_FILTER ToD3DFilter(SamplerFilter f) {
-        switch (f) {
-            case SamplerFilter::Nearest: return D3D12_FILTER_MIN_MAG_MIP_POINT;
-            default: return D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-        }
-    }
-    static D3D12_TEXTURE_ADDRESS_MODE ToD3DAddress(AddressMode a) {
-        switch (a) {
-            case AddressMode::Repeat:      return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-            case AddressMode::ClampToEdge: return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            case AddressMode::Mirror:      return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
-            default:                       return D3D12_TEXTURE_ADDRESS_MODE_BORDER;
-        }
-    }
-
-    SamplerHandle create_sampler(const SamplerDesc* sd) {
-        if (!sd) return 0;
-        D3D12_SAMPLER_DESC d{};
-        d.Filter = ToD3DFilter(sd->filter);
-        d.AddressU = ToD3DAddress(sd->address_u);
-        d.AddressV = ToD3DAddress(sd->address_v);
-        d.AddressW = ToD3DAddress(sd->address_w);
-        d.MinLOD = sd->min_lod; d.MaxLOD = sd->max_lod; d.MipLODBias = sd->mip_lod_bias;
-        d.MaxAnisotropy = 1;
-        d.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-        d.BorderColor[0]=sd->border_color[0]; d.BorderColor[1]=sd->border_color[1];
-        d.BorderColor[2]=sd->border_color[2]; d.BorderColor[3]=sd->border_color[3];
-        D3D12_CPU_DESCRIPTOR_HANDLE base = g.samplerHeapCpu->GetCPUDescriptorHandleForHeapStart();
-        D3D12_CPU_DESCRIPTOR_HANDLE h{}; h.ptr = base.ptr + SIZE_T(g.samplerCpuCount) * SIZE_T(g.samplerDescSize);
-        g.device->CreateSampler(&d, h);
-        Sampler s{}; s.sampCpu = h; g.samplerCpuCount++;
-        return (SamplerHandle) (g.samplers.emplace_back(s), g.samplers.size());
-    }
-
-    void destroy_sampler(SamplerHandle) {
-        // no-op in linear CPU heap
-    }
-
-    ShaderModuleHandle create_shader_module(const ShaderModuleDesc* d) {
-        ShaderBlob sb{};
-        sb.bytes.resize(d->size);
-        std::memcpy(sb.bytes.data(), d->data, d->size);
-        return PushHandle(g.shaders, std::move(sb));
-    }
-    
-    void destroy_shader_module(ShaderModuleHandle h) {
-        if (auto* s = GetByHandle(g.shaders, h)) { s->bytes.clear(); s->bytes.shrink_to_fit(); }
-    }
-
-    static D3D12_PRIMITIVE_TOPOLOGY ToD3DTopology(PrimitiveTopology t) {
-        switch (t) {
-            case PrimitiveTopology::TriangleStrip: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
-            case PrimitiveTopology::LineList:      return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
-            default:                               return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-        }
-    }
-
-    static bool CreateEmptyRootSignature(ComPtr<ID3D12Device>& dev, ComPtr<ID3D12RootSignature>& out) {
-        D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.Flags =
-            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
-
-        ComPtr<ID3DBlob> sig, err;
-        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) return false;
-        if (FAILED(dev->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&out)))) return false;
-        return true;
-    }
-
-    PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc* d) {
-        Pipeline p{};
-
-         // Root signature with CBV(b0), SRV(t0) + Sampler(s0) in PS
-        D3D12_DESCRIPTOR_RANGE ranges[3]{};
-        ranges[0].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-        ranges[0].NumDescriptors                    = 1;
-        ranges[0].BaseShaderRegister                = 0;
-        ranges[0].RegisterSpace                     = 0;
-        ranges[0].OffsetInDescriptorsFromTableStart = 0;
-        ranges[1].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        ranges[1].NumDescriptors                    = 1;
-        ranges[1].BaseShaderRegister                = 0;
-        ranges[1].RegisterSpace                     = 0;
-        ranges[1].OffsetInDescriptorsFromTableStart = 0;
-        ranges[2].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
-        ranges[2].NumDescriptors                    = 1;
-        ranges[2].BaseShaderRegister                = 0;
-        ranges[2].RegisterSpace                     = 0;
-        ranges[2].OffsetInDescriptorsFromTableStart = 0;
-        D3D12_ROOT_PARAMETER params[3]{};
-        params[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        params[0].DescriptorTable  = {1, &ranges[0]};
-        params[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        params[1].DescriptorTable  = {1, &ranges[1]};
-        params[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        params[2].DescriptorTable  = {1, &ranges[2]};
-        D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.NumParameters      = 3;
-        rs.pParameters        = params;
-        rs.NumStaticSamplers  = 0;
-        rs.pStaticSamplers    = nullptr;
-        rs.Flags              = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
-                                D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-                                D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-                                D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
-        ComPtr<ID3DBlob> sig, err;
-        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) return 0;
-        if (FAILED(g.device->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
-                                                  IID_PPV_ARGS(&p.root)))) return 0;
-
-
-        auto* vsb = GetByHandle(g.shaders, d->vs);
-        auto* psb = GetByHandle(g.shaders, d->fs);
-        if (!vsb) return 0;
-
-        // Input layout for POSITION (loc 0) and COLOR (loc 1), both R32G32B32_FLOAT
-        std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
-        ils.reserve(d->vertex_layout.attribute_count);
-        for (uint32_t i=0; i<d->vertex_layout.attribute_count; ++i) {
-            const auto& a = d->vertex_layout.attributes[i];
-            D3D12_INPUT_ELEMENT_DESC e{};
-
-            if (a.location == 0) e.SemanticName      = "POSITION";
-            else if (a.location == 1) e.SemanticName = "COLOR";
-            else e.SemanticName                      = "TEXCOORD";
-
-            e.SemanticIndex = 0;
-
-            if (a.location == 2) e.Format = DXGI_FORMAT_R32G32_FLOAT;
-            else e.Format                 = DXGI_FORMAT_R32G32B32_FLOAT;
-
-            e.InputSlot = 0;
-            e.AlignedByteOffset = a.offset;
-            e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-            ils.push_back(e);
-        }
-
-        // Default states (no d3dx12)
-        D3D12_BLEND_DESC blend{};
-        blend.AlphaToCoverageEnable = FALSE;
-        blend.IndependentBlendEnable = FALSE;
-        auto &rt0 = blend.RenderTarget[0];
-        rt0.BlendEnable = FALSE; rt0.LogicOpEnable = FALSE;
-        rt0.SrcBlend = D3D12_BLEND_ONE; rt0.DestBlend = D3D12_BLEND_ZERO; rt0.BlendOp = D3D12_BLEND_OP_ADD;
-        rt0.SrcBlendAlpha = D3D12_BLEND_ONE; rt0.DestBlendAlpha = D3D12_BLEND_ZERO; rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-        rt0.LogicOp = D3D12_LOGIC_OP_NOOP; rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-        D3D12_RASTERIZER_DESC rast{};
-        rast.FillMode = D3D12_FILL_MODE_SOLID;
-        rast.CullMode = D3D12_CULL_MODE_NONE;
-        rast.FrontCounterClockwise = FALSE;
-        rast.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
-        rast.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
-        rast.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
-        rast.DepthClipEnable = TRUE;
-        rast.MultisampleEnable = FALSE;
-        rast.AntialiasedLineEnable = FALSE;
-        rast.ForcedSampleCount = 0;
-        rast.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
-
-        D3D12_DEPTH_STENCIL_DESC depth{};
-        depth.DepthEnable = FALSE;
-        depth.StencilEnable = FALSE;
-
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
-        pso.pRootSignature = p.root.Get();
-        pso.VS = { vsb->bytes.data(), vsb->bytes.size() };
-        if (psb) pso.PS = { psb->bytes.data(), psb->bytes.size() };
-        pso.BlendState = blend;
-        pso.SampleMask = UINT_MAX;
-        pso.RasterizerState = rast;
-        pso.DepthStencilState = depth;
-        pso.InputLayout = { ils.data(), (UINT)ils.size() };
-        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = ToDxgiFormat(d->color_format);
-        pso.SampleDesc.Count = 1;
-
-        if (FAILED(g.device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&p.pso)))) return 0;
-        p.topo = ToD3DTopology(d->topology);
-        p.vertex_stride = d->vertex_layout.stride;
-        return PushHandle(g.pipelines, std::move(p));
-    }
-    
-    void destroy_pipeline(PipelineHandle h) {
-        if (auto* p = GetByHandle(g.pipelines, h)) { p->pso.Reset(); p->root.Reset(); }
-    }
-
-    BindGroupLayoutHandle create_bind_group_layout(const BindGroupLayoutDesc* d) {
-        BindGroupLayout bgl{};
-        bgl.entries.assign(d->entries, d->entries + d->entry_count);
-        return (BindGroupLayoutHandle) (g.bgls.emplace_back(std::move(bgl)), g.bgls.size());
-    }
-
-    void destroy_bind_group_layout(BindGroupLayoutHandle) { /* no-op */ }
-
-    BindGroupHandle create_bind_group(const BindGroupDesc* d) {
-        BindGroup bg{};
-        bg.layout = d->layout;
-        // Minimal: expect binding 0 = texture, binding 1 = sampler
-        for (uint32_t i=0; i<d->entry_count; ++i) {
-            const auto& e = d->entries[i];
-            if (e.binding == 0 && e.texture) bg.texture = e.texture;
-            if (e.binding == 1 && e.sampler) bg.sampler = e.sampler;
-            if (e.binding == 2 && e.buffer) {
-                bg.cb = {e.buffer, e.offset, e.size, true};
-                
-                // Build one CPU CBV descriptor now (guard capacity)
-                if (g.srvCpuCount < g.srvCpuCapacity) {
-                    if (auto* buf = GetByHandle(g.buffers, e.buffer)) {
-                        D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{};
-                        cbv.BufferLocation = buf->res->GetGPUVirtualAddress() + e.offset;
-                        cbv.SizeInBytes    = (UINT)((e.size + 255ull) & ~255ull);
-                        if (cbv.SizeInBytes == 0) cbv.SizeInBytes = 256;
-
-                        D3D12_CPU_DESCRIPTOR_HANDLE base = g.srvHeapCpu->GetCPUDescriptorHandleForHeapStart();
-                        bg.cb.cpuHandle = base;
-                        bg.cb.cpuHandle.ptr += SIZE_T(g.srvCpuCount) * SIZE_T(g.srvDescSize);
-                        g.device->CreateConstantBufferView(&cbv, bg.cb.cpuHandle);
-
-                        g.srvCpuCount += 1;
-                        bg.cb.cpuHandleValid = true;
-                    }
-                }
-            }
-        }
-        return (BindGroupHandle) (g.bgs.emplace_back(bg), g.bgs.size());
-    }
-
-    void destroy_bind_group(BindGroupHandle) { /* no-op */ }
-
-    static void EnsureDescriptorHeapsBound() {
-        ID3D12DescriptorHeap* heaps[2] = {
-            g.frames[g.current_frame].srvHeapGpu.Get(),
-            g.frames[g.current_frame].samplerHeapGpu.Get()
-        };
-        g.cmdList->SetDescriptorHeaps(2, heaps);
-    }
-
-    void cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h) {
-        if (set_index != 0) return; // minimal: only set 0
-        auto* bg = GetByHandle(g.bgs, h); if (!bg) return;
-        auto* tex = GetByHandle(g.textures, bg->texture);
-        auto* smp = GetByHandle(g.samplers, bg->sampler);
-        if (!tex || !smp) return;
-
-        // Sanity: heaps must exist
-        FrameResources& fr = g.frames[g.current_frame];
-        if (!fr.srvHeapGpu || !fr.samplerHeapGpu) return;
-
-        // Simple capacity clamp (shouldn’t happen if you reset offsets in begin_frame)
-        // SRV heap was created with 1024 descriptors; sampler with 64 in earlier code.
-        // If you changed sizes, adjust these numbers or store capacities.
-        const uint32_t kSrvCap = 1024;
-        const uint32_t kSampCap = 64;
-        if (fr.srvGpuOffset >= kSrvCap) fr.srvGpuOffset = 0;
-        if (fr.samplerGpuOffset >= kSampCap) fr.samplerGpuOffset = 0;
-
-        EnsureDescriptorHeapsBound();
-
-        // --- CBV b0 ---
-        D3D12_CPU_DESCRIPTOR_HANDLE cbvCpu{};
-        if (bg->cb.present && bg->cb.cpuHandleValid) {
-            cbvCpu = bg->cb.cpuHandle;                 // re-use persistent CPU descriptor
-        } else {
-            if (!g.fallbackCbReady) CreateFallbackCBV();
-            cbvCpu = g.fallbackCbvCpu;                 // safe fallback
-        }
-
-        // Copy to this frame's GPU-visible heap
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuCpu = fr.srvHeapGpu->GetCPUDescriptorHandleForHeapStart();
-        gpuCpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
-        g.device->CopyDescriptorsSimple(1, gpuCpu, cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-        D3D12_GPU_DESCRIPTOR_HANDLE gpuGpu = fr.srvHeapGpu->GetGPUDescriptorHandleForHeapStart();
-        gpuGpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
-        g.cmdList->SetGraphicsRootDescriptorTable(0, gpuGpu);
-        fr.srvGpuOffset += 1;
-
-        // Allocate one SRV in the current frame GPU-visible heap and copy
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuSrvCpu = fr.srvHeapGpu->GetCPUDescriptorHandleForHeapStart();
-        gpuSrvCpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
-        g.device->CopyDescriptorsSimple(1, gpuSrvCpu, tex->srvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        D3D12_GPU_DESCRIPTOR_HANDLE gpuSrvGpu = fr.srvHeapGpu->GetGPUDescriptorHandleForHeapStart();
-        gpuSrvGpu.ptr += SIZE_T(fr.srvGpuOffset) * SIZE_T(g.srvDescSize);
-        fr.srvGpuOffset += 1;
-
-        // Allocate one Sampler in the current frame GPU-visible heap and copy
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuSampCpu = fr.samplerHeapGpu->GetCPUDescriptorHandleForHeapStart();
-        gpuSampCpu.ptr += SIZE_T(fr.samplerGpuOffset) * SIZE_T(g.samplerDescSize);
-        g.device->CopyDescriptorsSimple(1, gpuSampCpu, smp->sampCpu, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-        D3D12_GPU_DESCRIPTOR_HANDLE gpuSampGpu = fr.samplerHeapGpu->GetGPUDescriptorHandleForHeapStart();
-        gpuSampGpu.ptr += SIZE_T(fr.samplerGpuOffset) * SIZE_T(g.samplerDescSize);
-        fr.samplerGpuOffset += 1;
-    
-        // Set root descriptor tables: 0 = SRV table, 1 = Sampler table
-        g.cmdList->SetGraphicsRootDescriptorTable(1, gpuSrvGpu);
-        g.cmdList->SetGraphicsRootDescriptorTable(2, gpuSampGpu);
-    }
-
-    void cmd_set_pipeline(CommandListHandle, PipelineHandle h) {
-        auto* p = GetByHandle(g.pipelines, h);
-        if (!p) return;
-        g.cmdList->SetGraphicsRootSignature(p->root.Get());
-        g.cmdList->IASetPrimitiveTopology(p->topo);
-        g.cmdList->SetPipelineState(p->pso.Get());
-        g.current_vertex_stride = p->vertex_stride;
-    }
-
-    void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle b, uint64_t offset) {
-        auto* buf = GetByHandle(g.buffers, b);
-        if (!buf) return;
-        // Match the pipeline’s input layout (e.g., 32 bytes for pos+color+uv)
-        if (g.current_vertex_stride != 0) {
-            buf->vbv.StrideInBytes = g.current_vertex_stride;
-        }
-
-        D3D12_RESOURCE_STATES desired = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
-        Barrier(g.cmdList.Get(), buf->res.Get(), buf->state, desired);
-        buf->state = desired;
-        D3D12_VERTEX_BUFFER_VIEW vbv = buf->vbv;
-        vbv.BufferLocation += offset;
-        g.cmdList->IASetVertexBuffers(slot, 1, &vbv);
-    }
-    
-    void cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance) {
-        g.cmdList->DrawInstanced(vtx_count, instance_count, first_vtx, first_instance);
-    }
-
-    bool init(const RendererDesc* desc) {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        g.hwnd = (HWND)desc->platform_window;
-        g.frame_count = desc->frame_count ? desc->frame_count : 3;
-
-#if defined(_DEBUG)
-        // Enable D3D12 debug layer if available
-        ComPtr<ID3D12Debug> debug;
-        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
-            debug->EnableDebugLayer();
-        }
-#endif
-
-        UINT factoryFlags = 0;
-#if defined(_DEBUG)
-        factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
-#endif
-        if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&g.factory)))) {
+        if (FAILED(device_->dev()->CreateCommandList(
+                0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list))))
             return false;
-        }
 
-        ComPtr<IDXGIAdapter1> adapter;
-        for (UINT i = 0; g.factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-            DXGI_ADAPTER_DESC1 desc1{};
-            adapter->GetDesc1(&desc1);
-            if (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g.device)))) {
-                break;
-            }
-        }
-        if (!g.device) {
-            // fallback WARP
-            if (FAILED(g.factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)))) return false;
-            if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g.device)))) return false;
-        }
+        // Transition and copy
+        Barrier(list.Get(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
+        b->state = D3D12_RESOURCE_STATE_COPY_DEST;
+        list->CopyBufferRegion(b->res.Get(), dst_off, upload.Get(), 0, size);
 
-        // Command queue
-        D3D12_COMMAND_QUEUE_DESC qdesc{};
-        qdesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        if (FAILED(g.device->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&g.gfxQueue)))) return false;
+        // Close & execute immediately, then wait
+        list->Close();
+        ID3D12CommandList* lists[] = { list.Get() };
+        device_->queue()->ExecuteCommandLists(1, lists);
+        auto fv = device_->signal();
+        device_->wait(fv);
 
-        // Fence
-        if (FAILED(g.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g.fence)))) return false;
-        g.fenceValue = 1;
-        g.fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
-        // RTV heap (big enough for swapchain backbuffers)
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
-        rtvHeapDesc.NumDescriptors = 8; // plenty for starter
-        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        if (FAILED(g.device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g.rtvHeap)))) return false;
-        g.rtvDescriptorSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-        // DSV heap (1 descriptor is enough for default depth)
-        D3D12_DESCRIPTOR_HEAP_DESC dsvDesc{};
-        dsvDesc.NumDescriptors = 1;
-        dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-        dsvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        if (FAILED(g.device->CreateDescriptorHeap(&dsvDesc, IID_PPV_ARGS(&g.dsvHeap)))) return false;
-        g.dsvDescriptorSize = g.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-
-        // Frames
-        g.frames.resize(g.frame_count);
-        g.frameFenceValues.resize(g.frame_count, 0);
-        for (uint32_t i = 0; i < g.frame_count; ++i) {
-            if (FAILED(g.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g.frames[i].cmdAlloc)))) return false;
-
-            // Step 3: allocate per-frame upload ring and map it
-            D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-            D3D12_RESOURCE_DESC rd{};
-            rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            rd.Width = g.frames[i].uploadSize;
-            rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-            rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            if (FAILED(g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g.frames[i].upload)))) return false;
-            D3D12_RANGE r{0,0};
-            if (FAILED(g.frames[i].upload->Map(0, &r, reinterpret_cast<void**>(&g.frames[i].uploadPtr)))) return false;
-            g.frames[i].uploadOffset = 0;
-        }
-
-        CreateCpuDescriptorHeaps();
-        CreatePerFrameDescriptorHeaps();
-
-        if (FAILED(g.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g.frames[0].cmdAlloc.Get(), nullptr, IID_PPV_ARGS(&g.cmdList)))) return false;
-        g.cmdList->Close();
-
+        // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
         return true;
     }
+}
 
-    void shutdown() {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        cleanup_state();
-    }
+TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
+{
+    TextureRec t{};
+    t.width  = td->width;
+    t.height = td->height;
 
-    SwapchainHandle create_swapchain(const SwapchainDesc* d) {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        if (!g.hwnd) return 0;
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width              = td->width;
+    rd.Height             = td->height;
+    rd.DepthOrArraySize   = 1;
+    rd.MipLevels          = (UINT16)td->mip_levels;
+    rd.Format             = (td->format == TextureFormat::BGRA8_UNORM) ? DXGI_FORMAT_B8G8R8A8_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+    rd.SampleDesc.Count   = 1;
+    rd.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
-        DXGI_SWAP_CHAIN_DESC1 scd{};
-        scd.BufferCount = g.frame_count;
-        scd.Width = d->size.width;
-        scd.Height = d->size.height;
-        scd.Format = ToDxgiFormat(d->format);
-        scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        scd.SampleDesc.Count = 1;
-        scd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-        scd.Scaling = DXGI_SCALING_STRETCH;
+    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    if (FAILED(device_->dev()->CreateCommittedResource(
+        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)))) return 0;
+    t.state = D3D12_RESOURCE_STATE_COPY_DEST;
 
-        ComPtr<IDXGISwapChain1> swap1;
-        if (FAILED(g.factory->CreateSwapChainForHwnd(g.gfxQueue.Get(), g.hwnd, &scd, nullptr, nullptr, &swap1))) return 0;
-        ComPtr<IDXGISwapChain3> swap3;
-        swap1.As(&swap3);
+    // If initial data provided, do one-shot upload (either in-frame or immediate list)
+    if (initial) {
+        // Build an upload buffer with row-aligned footprints
+        UINT64 totalBytes = 0; D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT rows = 0; UINT64 rowSizeInBytes = 0;
+        device_->dev()->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSizeInBytes, &totalBytes);
 
-        g.swap.swapchain = swap3;
-        g.swap.buffer_count = g.frame_count;
-        g.swap.backbuffers.resize(g.frame_count);
+        D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC upDesc{};
+        upDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        upDesc.Width = totalBytes; upDesc.Height = 1; upDesc.DepthOrArraySize = 1; upDesc.MipLevels = 1;
+        upDesc.SampleDesc.Count = 1; upDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upload;
+        if (FAILED(device_->dev()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)))) return 0;
 
-        // Create RTVs (no CD3DX12 dependency)
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = g.rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        for (UINT i = 0; i < g.frame_count; ++i) {
-            Backbuffer bb{};
-            swap3->GetBuffer(i, IID_PPV_ARGS(&bb.resource));
-            D3D12_CPU_DESCRIPTOR_HANDLE handle;
-            handle.ptr = rtvStart.ptr + SIZE_T(i) * SIZE_T(g.rtvDescriptorSize);
-            bb.rtv = handle;
-            g.device->CreateRenderTargetView(bb.resource.Get(), nullptr, bb.rtv);
-            g.swap.backbuffers[i] = bb;
+        // Fill upload
+        uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
+        upload->Map(0, &r, reinterpret_cast<void**>(&upPtr));
+        const uint8_t* src = static_cast<const uint8_t*>(initial);
+        size_t srcPitch = size_t(td->width) * 4; // RGBA8
+        for (UINT y = 0; y < rows; ++y) {
+            std::memcpy(upPtr + fp.Offset + y * fp.Footprint.RowPitch, src + y * srcPitch, srcPitch);
         }
-        g.swap.current_index = swap3->GetCurrentBackBufferIndex();
+        upload->Unmap(0, nullptr);
 
-        // Allocate texture handles for backbuffers (1-based handles)
-        g.textures.assign(g.frame_count, {});
-        for (UINT i = 0; i < g.frame_count; ++i) {
-            g.textures[i].res = g.swap.backbuffers[i].resource; // store
+        auto doCopy = [&](ID3D12GraphicsCommandList* cl) {
+            // Transition and copy
+            Barrier(cl, t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
+            D3D12_TEXTURE_COPY_LOCATION dstLoc{}; dstLoc.pResource = t.res.Get();
+            dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dstLoc.SubresourceIndex = 0;
+            D3D12_TEXTURE_COPY_LOCATION srcLoc{}; srcLoc.pResource = upload.Get();
+            srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; srcLoc.PlacedFootprint = fp;
+            cl->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+            Barrier(cl, t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        };
+
+        if (frameBegun_) {
+            // We are already recording into g.cmdList this frame
+            doCopy(curFrame().cmd());
+        } else {
+            // No frame yet -> execute a tiny one-shot list and wait
+            //ExecuteNow(doCopy);
+            do { // TODO: This should move somewhere else, loop is just so I can break without returning
+                ComPtr<ID3D12CommandAllocator> alloc;
+                if (FAILED(device_->dev()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) break;
+
+                ComPtr<ID3D12GraphicsCommandList> list;
+                if (FAILED(device_->dev()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)))) break;
+
+                doCopy(list.Get());
+                list->Close();
+
+                ID3D12CommandList* lists[] = { list.Get() };
+                device_->queue()->ExecuteCommandLists(1, lists);
+
+                auto fv = device_->signal();
+                device_->wait(fv);
+            } while (false);
         }
-
-        // Create default depth that matches swapchain size
-        g.depth.width  = d->size.width;
-        g.depth.height = d->size.height;
-        g.depth.format = DXGI_FORMAT_D32_FLOAT; // align with your pipeline depth format
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rd.Alignment = 0;
-        rd.Width = g.depth.width;
-        rd.Height = g.depth.height;
-        rd.DepthOrArraySize = 1;
-        rd.MipLevels = 1;
-        rd.Format = g.depth.format;
-        rd.SampleDesc.Count = 1;
-        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        rd.Flags  = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-        D3D12_CLEAR_VALUE clear{};
-        clear.Format = g.depth.format;
-        clear.DepthStencil.Depth = 1.0f;
-        clear.DepthStencil.Stencil = 0;
-
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-        if (FAILED(g.device->CreateCommittedResource(
-            &hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
-            IID_PPV_ARGS(&g.depth.resource)))) return 0;
-
-        g.depth.dsv = g.dsvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
-        dsv.Format = g.depth.format;
-        dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-        dsv.Flags = D3D12_DSV_FLAG_NONE;
-        g.device->CreateDepthStencilView(g.depth.resource.Get(), &dsv, g.depth.dsv);
-
-        return 1; // single swapchain id in this starter
+        t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
 
-    void resize_swapchain(SwapchainHandle, Extent2D newSize) {
-        // Wait idle and release RTVs
-        wait_idle();
-        for (auto& bb : g.swap.backbuffers) { bb.resource.Reset(); }
-        g.swap.backbuffers.clear();
+    // Create SRV in CPU heap (permanent)
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = rd.Format;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = td->mip_levels;
 
-        // Resize swapchain buffers
-        g.swap.swapchain->ResizeBuffers(g.swap.buffer_count, newSize.width, newSize.height, DXGI_FORMAT_UNKNOWN, 0);
-        g.swap.current_index = g.swap.swapchain->GetCurrentBackBufferIndex();
+    UINT idx = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu = cpuDesc_->allocate(&idx);
+    device_->dev()->CreateShaderResourceView(t.res.Get(), &srv, cpu);
+    t.srvCpu = cpu;
 
-        // Recreate RTVs
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = g.rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        for (UINT i=0; i<g.swap.buffer_count; ++i) {
-            Backbuffer bb{};
-            g.swap.swapchain->GetBuffer(i, IID_PPV_ARGS(&bb.resource));
-            D3D12_CPU_DESCRIPTOR_HANDLE h;
-            h.ptr = rtvStart.ptr + SIZE_T(i) * SIZE_T(g.rtvDescriptorSize);
-            bb.rtv = h;
-            g.device->CreateRenderTargetView(bb.resource.Get(), nullptr, bb.rtv);
-            g.swap.backbuffers.push_back(bb);
+    return resources_->add_texture(std::move(t));
+}
+
+void RendererD3D12::destroy_texture(TextureHandle h)
+{
+    if (TextureRec* tex = resources_->get_tex(h)) {
+        tex->res.Reset();
+    }
+}
+
+SamplerHandle RendererD3D12::create_sampler(const SamplerDesc* sd)
+{
+    D3D12_SAMPLER_DESC d{};
+    d.Filter   = (sd->filter == SamplerFilter::Nearest) ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    d.AddressU = (sd->address_u == AddressMode::Repeat) ? D3D12_TEXTURE_ADDRESS_MODE_WRAP :
+                (sd->address_u == AddressMode::Mirror) ? D3D12_TEXTURE_ADDRESS_MODE_MIRROR : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    d.AddressV = d.AddressU;
+    d.AddressW = d.AddressU;
+    d.MinLOD   = sd->min_lod; d.MaxLOD = sd->max_lod; d.MipLODBias = sd->mip_lod_bias;
+    d.MaxAnisotropy = 1;
+    d.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    d.BorderColor[0] = sd->border_color[0];
+    d.BorderColor[1] = sd->border_color[1];
+    d.BorderColor[2] = sd->border_color[2];
+    d.BorderColor[3] = sd->border_color[3];
+
+    UINT idx = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu = samplerHeapCpu_->allocate(&idx);
+    device_->dev()->CreateSampler(&d, cpu);
+
+    SamplerRec s{};
+    s.cpu = cpu;
+    return resources_->add_sampler(std::move(s));
+}
+
+void RendererD3D12::destroy_sampler(SamplerHandle)
+{
+    // linear CPU heap => no free; TODO: resource table should release records
+}
+
+ShaderModuleHandle RendererD3D12::create_shader_module(const ShaderModuleDesc* d)
+{
+    ShaderBlob sb{};
+    sb.bytes.assign((const uint8_t*)d->data, (const uint8_t*)d->data + d->size);
+    return pipelines_->add_shader(std::move(sb));
+}
+
+void RendererD3D12::destroy_shader_module(ShaderModuleHandle h)
+{
+    pipelines_->del_shader(h);
+}
+
+PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDesc* gp)
+{
+    // Build root signature with tables (CBV b0 / SRV t0 / Sampler s0) via helper
+    D3D_ROOT_SIGNATURE_VERSION usedVer{};
+    ComPtr<ID3D12RootSignature> root = CreateRootSignature_BindTables(device_->dev(), &usedVer);
+    if (!root) return 0;
+
+    auto* vsb = pipelines_->get_shader(gp->vs);
+    auto* psb = pipelines_->get_shader(gp->fs);
+    if (!vsb) return 0;
+
+    // Input layout from GraphicsPipelineDesc
+    std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
+    ils.reserve(gp->vertex_layout.attribute_count);
+    for (uint32_t i = 0; i < gp->vertex_layout.attribute_count; ++i) {
+        const auto& a = gp->vertex_layout.attributes[i];
+        D3D12_INPUT_ELEMENT_DESC e{};
+        e.SemanticName = (a.location == 0) ? "POSITION" : (a.location == 1) ? "COLOR" : "TEXCOORD";
+        e.SemanticIndex = 0;
+        e.Format = (a.location == 2) ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
+        e.InputSlot = 0;
+        e.AlignedByteOffset = a.offset;
+        e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+        ils.push_back(e);
+    }
+
+    // PSO defaults
+    D3D12_BLEND_DESC blend{};
+    auto& rt0 = blend.RenderTarget[0];
+    rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    D3D12_RASTERIZER_DESC rast{};
+    rast.FillMode = D3D12_FILL_MODE_SOLID;
+    rast.CullMode = D3D12_CULL_MODE_NONE;
+    rast.DepthClipEnable = TRUE;
+
+    D3D12_DEPTH_STENCIL_DESC depth{};
+    depth.DepthEnable = FALSE;
+    depth.StencilEnable = FALSE;
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+    pso.pRootSignature   = root.Get();
+    pso.VS               = { vsb->bytes.data(), vsb->bytes.size() };
+    if (psb) pso.PS      = { psb->bytes.data(), psb->bytes.size() };
+    pso.BlendState       = blend;
+    pso.SampleMask       = UINT_MAX;
+    pso.RasterizerState  = rast;
+    pso.DepthStencilState= depth;
+    pso.InputLayout      = { ils.data(), (UINT)ils.size() };
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.NumRenderTargets = 1;
+    pso.RTVFormats[0]    = swapchain_ ? swapchain_->rtv_format() : DXGI_FORMAT_B8G8R8A8_UNORM;
+    pso.SampleDesc.Count = 1;
+
+    PipelineRec rec{};
+    rec.root = root;
+
+    if (FAILED(device_->dev()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&rec.pso)))) return 0;
+    rec.topo         = (gp->topology == PrimitiveTopology::TriangleStrip) ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP :
+                       (gp->topology == PrimitiveTopology::LineList)     ? D3D_PRIMITIVE_TOPOLOGY_LINELIST :
+                                                                           D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    rec.vertexStride = gp->vertex_layout.stride;
+
+    return pipelines_->add_pipeline(std::move(rec));
+}
+
+void RendererD3D12::destroy_pipeline(PipelineHandle h)
+{
+    pipelines_->del_pipeline(h);
+}
+
+BindGroupLayoutHandle RendererD3D12::create_bind_group_layout(const BindGroupLayoutDesc* d)
+{
+    return binds_->add_layout(d);
+}
+
+void RendererD3D12::destroy_bind_group_layout(BindGroupLayoutHandle h)
+{
+    binds_->del_layout(h);
+}
+
+BindGroupHandle RendererD3D12::create_bind_group(const BindGroupDesc* d)
+{
+    return binds_->add_group(d, device_->dev(), resources_.get(), cpuDesc_.get());
+}
+
+void RendererD3D12::destroy_bind_group(BindGroupHandle h)
+{
+    binds_->del_group(h);
+}
+
+CommandListHandle RendererD3D12::begin_commands()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!frameBegun_) begin_frame();
+    return 1; // single list in this backend (FrameContext::cmd())
+}
+
+void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle,
+                                            const ColorAttachmentDesc* colors, uint32_t count,
+                                            const DepthAttachmentDesc* depth)
+{
+    JAENG_ASSERT(count >= 1 && colors);
+    auto& fc = curFrame();
+    auto* cl = fc.cmd();
+    
+    // For now we only support rendering to the swapchain backbuffer.
+    // If the pass specifies a different texture, warn and still use the backbuffer.
+    {
+        auto bbHandle = get_current_backbuffer(/*swapchain*/1);
+        if (colors[0].tex && colors[0].tex != bbHandle) {
+            OutputDebugStringA("[jaeng:d3d12] cmd_begin_rendering_ops(): ColorAttachmentDesc.tex != backbuffer; "
+                               "rendering will target the swapchain backbuffer.\n");
         }
-
-        // Recreate default depth
-        g.depth.resource.Reset();
-        g.depth.width = newSize.width; g.depth.height = newSize.height;
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rd.Alignment = 0;
-        rd.Width = g.depth.width; rd.Height = g.depth.height;
-        rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-        rd.Format = g.depth.format; rd.SampleDesc.Count = 1;
-        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        rd.Flags  = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-        D3D12_CLEAR_VALUE clear{};
-        clear.Format = g.depth.format; clear.DepthStencil.Depth = 1.0f; clear.DepthStencil.Stencil = 0;
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-        g.device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&g.depth.resource));
-        g.depth.dsv = g.dsvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
-        dsv.Format = g.depth.format; dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-        g.device->CreateDepthStencilView(g.depth.resource.Get(), &dsv, g.depth.dsv);
     }
 
-    void destroy_swapchain(SwapchainHandle) {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        g.swap = SwapchainState{};
+    // Transition PRESENT -> RENDER_TARGET on current backbuffer
+    const uint32_t idx = swapchain_->current_index();
+    ID3D12Resource* res = swapchain_->rtv_resource(idx);
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = res;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    cl->ResourceBarrier(1, &b);
+
+    // Bind RTV (and optionally depth if you decide to add a DSV path later)
+    auto rtv = swapchain_->rtv_handle(idx);
+    cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+    // Viewport/scissor from backbuffer size
+    D3D12_RESOURCE_DESC texDesc = res->GetDesc();
+    D3D12_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f; vp.TopLeftY = 0.0f;
+    vp.Width    = float(texDesc.Width);
+    vp.Height   = float(texDesc.Height);
+    vp.MinDepth = 0.0f; vp.MaxDepth = 1.0f;
+
+    D3D12_RECT sc{0, 0, (LONG)texDesc.Width, (LONG)texDesc.Height};
+    cl->RSSetViewports(1, &vp);
+    cl->RSSetScissorRects(1, &sc);
+
+    // Clear if requested
+    if (colors[0].load == LoadOp::Clear) {
+        cl->ClearRenderTargetView(rtv, colors[0].clear_rgba, 0, nullptr);
     }
+}
 
-    TextureHandle get_current_backbuffer(SwapchainHandle) {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        g.swap.current_index = g.swap.swapchain->GetCurrentBackBufferIndex();
-        // Handle is index+1
-        return (TextureHandle)(g.swap.current_index + 1);
-    }
+void RendererD3D12::cmd_end_rendering(CommandListHandle)
+{
+    auto& fc = curFrame();
+    auto* cl = fc.cmd();
 
-    // We now prefer begin_frame() to perform waiting & resets.
-    // begin_commands() becomes a no-op handle fetch (but still ensures we have a live cmd list).
-    CommandListHandle begin_commands() {
-        std::lock_guard<std::mutex> lock(g.mtx);
-        if (!g.frameBegun) begin_frame_impl();
-        return 1;
-    }
+    // Transition RENDER_TARGET -> PRESENT
+    const uint32_t idx = swapchain_->current_index();
+    ID3D12Resource* res = swapchain_->rtv_resource(idx);
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = res;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+    cl->ResourceBarrier(1, &b);
+}
 
-    static ID3D12Resource* TexFromHandle(TextureHandle h) {
-        if (h == 0) return nullptr;
-        uint32_t idx = h - 1;
-        if (idx >= g.textures.size()) return nullptr;
-        return g.textures[idx].res.Get();
-    }
+void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h)
+{
+    // Minimal set 0: copy CBV/SRV to this frame's GPU-visible heaps and set root tables
+    if (set_index != 0) return;
+    auto& fc = curFrame();
+    auto* cl = fc.cmd();
 
-    void cmd_begin_rendering_ops(CommandListHandle, const ColorAttachmentDesc* atts, uint32_t rt_count, const DepthAttachmentDesc* depth) {
-        assert(rt_count >= 1 && atts != nullptr);
-        ID3D12Resource* res = (atts[0].tex)? TexFromHandle(atts[0].tex) : nullptr;
+    // Ensure heaps are bound for the current frame (SRV/CBV/UAV + Sampler)
+    ID3D12DescriptorHeap* heaps[2] = { fc.gpuDescs->srv_heap(), fc.gpuDescs->samp_heap() };
+    cl->SetDescriptorHeaps(2, heaps);
 
-        // Transition PRESENT -> RENDER_TARGET
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        barrier.Transition.pResource = res;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        g.cmdList->ResourceBarrier(1, &barrier);
+    // Let BindSpace perform CPU->GPU descriptor copies and set root descriptor tables:
+    // - b0 CBV (fallback if group has no CB)
+    // - t0 SRV and s0 Sampler
+    if (auto* bg = binds_->get_group(h)) {
+        // Copy persistent CPU CBV (or fallback) into frame heap and set root param 0
+        D3D12_CPU_DESCRIPTOR_HANDLE cbvCpu = (bg->cb.present && bg->cb.cpuValid)
+                                             ? bg->cb.cpuCbv
+                                             : binds_->fallback_cbv_cpu();
 
-        // RTV handle for current buffer and DSV handle for depth (if provided)
-        UINT idx = g.swap.current_index;
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = g.swap.backbuffers[idx].rtv;
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = g.depth.dsv;
+        // Allocate next slots & copy descriptors (1 CBV, 1 SRV, 1 Sampler)
+        D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{}, sampCpu{};
+        if (auto* tex = resources_->get_tex(bg->texture)) srvCpu = tex->srvCpu;
+        if (auto* smp = resources_->get_samp(bg->sampler)) sampCpu = smp->cpu;
 
-        // Viewport & Scissor must be set before drawing
-        D3D12_RESOURCE_DESC texDesc = res->GetDesc();
-        D3D12_VIEWPORT      vp{};
-        vp.TopLeftX = 0.0f;
-        vp.TopLeftY = 0.0f;
-        vp.Width    = static_cast<float>(texDesc.Width);
-        vp.Height   = static_cast<float>(texDesc.Height);
-        vp.MinDepth = 0.0f;
-        vp.MaxDepth = 1.0f;
+        // CBV table at root 0
+        D3D12_CPU_DESCRIPTOR_HANDLE cbvGpuCpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE cbvGpu{};
+        fc.gpuDescs->alloc_srv(&cbvGpuCpu, &cbvGpu); // slot for CBV
+        device_->dev()->CopyDescriptorsSimple(1, cbvGpuCpu, cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        cl->SetGraphicsRootDescriptorTable(0, cbvGpu);
 
-        D3D12_RECT sc{};
-        sc.left   = 0;
-        sc.top    = 0;
-        sc.right  = static_cast<LONG>(texDesc.Width);
-        sc.bottom = static_cast<LONG>(texDesc.Height);
-
-        g.cmdList->RSSetViewports(1, &vp);
-        g.cmdList->RSSetScissorRects(1, &sc);
-
-        g.cmdList->OMSetRenderTargets(1, &rtv, FALSE, (depth)? &dsv : nullptr);
-        if (atts[0].load == LoadOp::Clear) {
-            g.cmdList->ClearRenderTargetView(rtv, atts[0].clear_rgba, 0, nullptr);
-            // Depth binding & clear if provided/available
-            if (depth) {
-                g.cmdList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, depth->clear_d, 0, 0, nullptr);
-            }
+        // SRV at root 1
+        D3D12_CPU_DESCRIPTOR_HANDLE srvGpuCpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
+        fc.gpuDescs->alloc_srv(&srvGpuCpu, &srvGpu); // slot for SRV
+        if (srvCpu.ptr) {
+            device_->dev()->CopyDescriptorsSimple(1, srvGpuCpu, srvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         }
-    }
+        cl->SetGraphicsRootDescriptorTable(1, srvGpu); // t0
 
-    void cmd_end_rendering(CommandListHandle) {
-        // Transition RENDER_TARGET -> PRESENT
-        ID3D12Resource* res = g.swap.backbuffers[g.swap.current_index].resource.Get();
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = res;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        g.cmdList->ResourceBarrier(1, &barrier);
+        // Allocate Sampler slot
+        D3D12_CPU_DESCRIPTOR_HANDLE sampGpuCpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE sampGpu{};
+        fc.gpuDescs->alloc_samp(&sampGpuCpu, &sampGpu); // slot for Sampler
+        if (sampCpu.ptr) {
+            device_->dev()->CopyDescriptorsSimple(1, sampGpuCpu, sampCpu, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        }
+        cl->SetGraphicsRootDescriptorTable(2, sampGpu); // s0
     }
+}
 
-    void end_commands(CommandListHandle) {
-        g.cmdList->Close();
+void RendererD3D12::cmd_set_pipeline(CommandListHandle, PipelineHandle h)
+{
+    if (auto* p = pipelines_->get_pipeline(h)) {
+        auto* cl = curFrame().cmd();
+        cl->SetGraphicsRootSignature(p->root.Get());
+        cl->IASetPrimitiveTopology(p->topo);
+        cl->SetPipelineState(p->pso.Get());
+        currentVertexStride_ = p->vertexStride;
     }
+}
 
-    void submit(CommandListHandle* lists, uint32_t list_count) {
-        (void)lists; (void)list_count; // single list in this starter
-        ID3D12CommandList* submitLists[] = { g.cmdList.Get() };
-        g.gfxQueue->ExecuteCommandLists(1, submitLists);
-    }
+void RendererD3D12::cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle b, uint64_t offset)
+{
+    auto* buf = resources_->get_buf(b);
+    if (!buf) return;
 
-    void present(SwapchainHandle) {
-        UINT syncInterval = 1; // vsync on (Fifo)
-        UINT flags = 0;
-        g.swap.swapchain->Present(syncInterval, flags);
+    // Transition to VERTEX/CONSTANT and bind (stride refined by pipeline)
+    auto* cl = curFrame().cmd();
+    Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    buf->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
 
-        // Signal fence for this frame
-        UINT frame = g.swap.swapchain->GetCurrentBackBufferIndex();
-        g.gfxQueue->Signal(g.fence.Get(), ++g.fenceValue);
-        g.frameFenceValues[frame] = g.fenceValue;
-    }
+    D3D12_VERTEX_BUFFER_VIEW vbv = buf->vbv;
+    if (currentVertexStride_ != 0)
+        vbv.StrideInBytes = currentVertexStride_;
 
-    void wait_idle() {
-        g.gfxQueue->Signal(g.fence.Get(), ++g.fenceValue);
-        g.fence->SetEventOnCompletion(g.fenceValue, g.fenceEvent);
-        WaitForSingleObject(g.fenceEvent, INFINITE);
-    }
-} // namespace
+    vbv.BufferLocation += offset;
+    cl->IASetVertexBuffers(slot, 1, &vbv);
+}
+
+void RendererD3D12::cmd_set_index_buffer(CommandListHandle, BufferHandle, bool index32, uint64_t offset)
+{}
+
+void RendererD3D12::cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t inst_count,
+                             uint32_t first_vtx, uint32_t first_inst)
+{
+    curFrame().cmd()->DrawInstanced(vtx_count, inst_count, first_vtx, first_inst);
+}
+
+void RendererD3D12::cmd_draw_indexed(CommandListHandle, uint32_t idx_count, uint32_t inst_count,
+                                     uint32_t first_idx, int32_t vtx_offset, uint32_t first_inst)
+{}
+
+void RendererD3D12::end_commands(CommandListHandle) {
+    curFrame().cmd()->Close();
+
+    // Reflect implicit decay to COMMON for buffers after ExecuteCommandLists
+    // (We will submit right after, so the cache should match the runtime.)
+    // If you prefer finer control, track only buffers used in this list.
+    resources_->on_all_buffers([](BufferRec& b) {
+        if (b.res) {
+            // Most read-only buffer states will decay; COMMON is a safe cache reset
+            b.state = D3D12_RESOURCE_STATE_COMMON;
+        }
+    });
+}
+
+void RendererD3D12::submit(CommandListHandle* /*lists*/, uint32_t /*list_count*/)
+{
+    ID3D12CommandList* one[] = { curFrame().cmd() };
+    device_->queue()->ExecuteCommandLists(1, one);
+}
+
+void RendererD3D12::present(SwapchainHandle)
+{
+    // Present (vsync on by default; can add a flag in RendererDesc if desired)
+    swapchain_->swap()->Present(/*syncInterval*/1, /*flags*/0);
+
+    // Signal fence and store value for this frame, so begin_frame can wait next time
+    auto& fc = curFrame();
+    fc.fenceValue = device_->signal();
+}
+
+void RendererD3D12::wait_idle()
+{
+    const UINT64 v = device_->signal();
+    device_->wait(v);
+}
+
+// ... (implement methods by delegating to subsystems; examples further below)
 
 extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     if (!out_api) return false;
-    *out_api = RendererAPI{
-        &begin_frame_impl,
-        &end_frame_impl,
-        &init,
-        &shutdown,
-        &create_swapchain,
-        &resize_swapchain,
-        &destroy_swapchain,
-        &get_current_backbuffer,
-        &create_buffer,
-        &destroy_buffer,
-        &update_buffer,
-        &create_texture,
-        &destroy_texture,
-        &create_sampler,
-        &destroy_sampler,
-        &create_shader_module,
-        &destroy_shader_module,
-        &create_graphics_pipeline,
-        &destroy_pipeline,
-        &create_bind_group_layout,
-        &destroy_bind_group_layout,
-        &create_bind_group,
-        &destroy_bind_group,
-        &begin_commands,
-        &cmd_begin_rendering_ops,
-        &cmd_end_rendering,
-        &cmd_set_bind_group,
-        &cmd_set_pipeline,
-        &cmd_set_vertex_buffer,
-        &cmd_draw,
-        &end_commands,
-        &submit,
-        &present,
-        &wait_idle
-    };    
+    g_renderer = std::make_unique<RendererD3D12>();
+
+    // Fill function table with static lambdas forwarding to instance
+    static RendererAPI api = {};
+
+    api.init       = [](const RendererDesc* d) { return g_renderer->init(d); };
+    api.shutdown   = []{ g_renderer->shutdown(); };
+
+    api.begin_frame = []{ g_renderer->begin_frame(); };
+    api.end_frame   = []{ g_renderer->end_frame(); };
+
+    api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d); };
+    api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { g_renderer->resize_swapchain(s,e); };
+    api.destroy_swapchain= [](SwapchainHandle s) { g_renderer->destroy_swapchain(s); };
+    api.get_current_backbuffer = [](SwapchainHandle s) { return g_renderer->get_current_backbuffer(s); };
+
+    api.create_buffer = [](const BufferDesc* d, const void* p) { return g_renderer->create_buffer(d,p); };
+    api.destroy_buffer= [](BufferHandle h) { g_renderer->destroy_buffer(h); };
+    api.update_buffer = [](BufferHandle h, uint64_t o, const void* p, uint64_t sz) { return g_renderer->update_buffer(h,o,p,sz); };
+
+    api.create_texture = [](const TextureDesc* d, const void* p) { return g_renderer->create_texture(d,p); };
+    api.destroy_texture= [](TextureHandle h) { g_renderer->destroy_texture(h); };
+    api.create_sampler = [](const SamplerDesc* d) { return g_renderer->create_sampler(d); };
+    api.destroy_sampler= [](SamplerHandle h) { g_renderer->destroy_sampler(h); };
+
+    api.create_shader_module = [](const ShaderModuleDesc* d) { return g_renderer->create_shader_module(d); };
+    api.destroy_shader_module= [](ShaderModuleHandle h) { g_renderer->destroy_shader_module(h); };
+    api.create_graphics_pipeline = [](const GraphicsPipelineDesc* d) { return g_renderer->create_graphics_pipeline(d); };
+    api.destroy_pipeline= [](PipelineHandle h) { g_renderer->destroy_pipeline(h); };
+
+    api.create_bind_group_layout = [](const BindGroupLayoutDesc* d) { return g_renderer->create_bind_group_layout(d); };
+    api.destroy_bind_group_layout = [](BindGroupLayoutHandle h) { g_renderer->destroy_bind_group_layout(h); };
+    api.create_bind_group = [](const BindGroupDesc* d) { return g_renderer->create_bind_group(d); };
+    api.destroy_bind_group = [](BindGroupHandle h) { g_renderer->destroy_bind_group(h); };
+
+    api.begin_commands = []{ return g_renderer->begin_commands(); };
+    api.cmd_begin_rendering_ops = [](CommandListHandle c, const ColorAttachmentDesc* cs, uint32_t n, const DepthAttachmentDesc* dp){
+        g_renderer->cmd_begin_rendering_ops(c, cs, n, dp);
+    };
+    api.cmd_end_rendering = [](CommandListHandle c) { g_renderer->cmd_end_rendering(c); };
+
+    api.cmd_set_bind_group = [](CommandListHandle c, uint32_t i, BindGroupHandle h) { g_renderer->cmd_set_bind_group(c,i,h); };
+    api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };
+    api.cmd_set_vertex_buffer = [](CommandListHandle c, uint32_t s, BufferHandle b, uint64_t o) { g_renderer->cmd_set_vertex_buffer(c,s,b,o); };
+
+    api.cmd_draw = [](CommandListHandle c, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t first) {
+        g_renderer->cmd_draw(c, vc, ic, fv, first);
+    };
+
+    api.end_commands = [](CommandListHandle c) { g_renderer->end_commands(c); };
+    api.submit = [](CommandListHandle* l, uint32_t n) { g_renderer->submit(l,n); };
+    api.present= [](SwapchainHandle s) { g_renderer->present(s); };
+    api.wait_idle = []{ g_renderer->wait_idle(); };
+
+    *out_api = api;
     return true;
 }

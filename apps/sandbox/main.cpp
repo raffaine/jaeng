@@ -160,16 +160,16 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // Bind-group layout (binding 0: texture SRV @ PS; binding 1: sampler @ PS)
     BindGroupLayoutEntry le[3] = {
-        { 0u, 1u, (uint32_t)ShaderStage::Fragment }, // SRV
-        { 1u, 2u, (uint32_t)ShaderStage::Fragment },  // Sampler
-        { 2u, 0u, (uint32_t)ShaderStage::Vertex | (uint32_t)ShaderStage::Fragment} // CBV
+        { 0u, BindGroupEntryType::Texture, (uint32_t)ShaderStage::Fragment }, // SRV
+        { 1u, BindGroupEntryType::Sampler, (uint32_t)ShaderStage::Fragment },  // Sampler
+        { 2u, BindGroupEntryType::UniformBuffer, (uint32_t)ShaderStage::Vertex | (uint32_t)ShaderStage::Fragment} // CBV
     };
     BindGroupLayoutDesc ldesc{ le, 3 };
     BindGroupLayoutHandle bgl = renderer.gfx.create_bind_group_layout(&ldesc);
     BindGroupEntry be[3]{};
-    be[0].binding = 0; be[0].texture = tex;
-    be[1].binding = 1; be[1].sampler = samp;
-    be[2].binding = 2;
+    be[0].type = BindGroupEntryType::Texture; be[0].texture = tex;
+    be[1].type = BindGroupEntryType::Sampler; be[1].sampler = samp;
+    be[2].type = BindGroupEntryType::UniformBuffer;
     be[2].buffer = cb;
     be[2].offset = 0;
     be[2].size = 256;

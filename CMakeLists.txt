@@ -27,18 +27,22 @@ target_include_directories(renderer_api INTERFACE ${ENGINE_ROOT}/render/public)
 
 # D3D12 plugin (DLL)
 add_library(renderer_d3d12 SHARED
-  plugins/renderer_d3d12/d3d12_renderer_old.cpp
+  plugins/renderer_d3d12/d3d12_renderer.cpp
+  plugins/renderer_d3d12/d3d12_bind.cpp
   plugins/renderer_d3d12/d3d12_device.cpp
+  plugins/renderer_d3d12/d3d12_descriptors.cpp
   plugins/renderer_d3d12/d3d12_upload.cpp
   plugins/renderer_d3d12/d3d12_swapchain.cpp
   plugins/renderer_d3d12/d3d12_commands.cpp
-  plugins/renderer_d3d12/d3d12_descriptors.cpp
+  plugins/renderer_d3d12/d3d12_pipeline.cpp
+  plugins/renderer_d3d12/d3d12_resources.cpp
 )
 if(WIN32)
   target_compile_definitions(renderer_d3d12 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-  target_link_libraries(renderer_d3d12 PRIVATE d3d12 dxgi)
+  target_link_libraries(renderer_d3d12 PRIVATE d3d12 dxgi dxguid)
 endif()
 target_include_directories(renderer_d3d12 PRIVATE ${ENGINE_ROOT}/render/public)
+target_include_directories(renderer_d3d12 PRIVATE ${ENGINE_ROOT})
 
 # Sandbox app
 add_executable(sandbox WIN32

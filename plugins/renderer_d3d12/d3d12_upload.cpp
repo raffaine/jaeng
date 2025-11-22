@@ -1,38 +1,68 @@
 #include "d3d12_upload.h"
 #include "d3d12_utils.h"
+#include <cstdio>
 
-bool UploadRing::create(ID3D12Device* dev, UINT64 sizeBytes) {
-        // Step 3: allocate per-frame upload ring and map it
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC rd{};
-        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        rd.Width = sizeBytes;
-        rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-        rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer_)))) return false;
-        D3D12_RANGE r{0,0};
-        if (FAILED(buffer_->Map(0, &r, reinterpret_cast<void**>(&mapped_)))) return false;
+bool UploadRing::create(ID3D12Device* dev, UINT64 sizeBytes)
+{
+    size_ = sizeBytes;
+    head_ = 0;
 
-        return true;
-}
+    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rd.Width = sizeBytes;
+    rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+    rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-void  UploadRing::reset() {
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer_)))) return false;
 
-}
+    D3D12_RANGE r{0,0};
+    if (FAILED(buffer_->Map(0, &r, reinterpret_cast<void**>(&mapped_)))) return false;
 
-bool  UploadRing::stage(const void* src, UINT64 size, UINT64 alignment, D3D12_GPU_VIRTUAL_ADDRESS* outGpu, ID3D12Resource** outRes, UINT64* outOffset, void** outCpu /*nullptr*/) {
-    uint64_t off = AlignUp(head_, alignment);
-    if (off + size > size_) {
-        // Ring overflow within the same frame; try wrap to 0 (safe because we fence per frame)
-        off = 0;
-        if (size > size_) return false; // too large for the ring
-    }
-    memcpy(mapped_ + off, src, size);
-    head_ = off + size;
-
-    *outRes = buffer_.Get();
-    *outOffset = head_;
     return true;
+}
+
+void  UploadRing::reset()
+{
+    head_ = 0;
+}
+
+std::optional<UploadSlice> UploadRing::stage(const void* src, UINT64 size, UINT64 alignment)
+{
+    if (!src || size == 0 || !buffer_) {
+        OutputDebugStringA("[UploadRing] stage(): invalid args or buffer not created.\n");
+        return std::nullopt;
+    }
+
+    // Alignment must be >= 1 and preferably power-of-two
+    if (alignment == 0) alignment = 1;
+    // If alignment not pow2, round it up to nearest pow2 (defensive)
+    auto is_pow2 = [](auto x){ return x && !(x & (x-1)); };
+    if (!is_pow2(alignment)) {
+        UINT64 p2 = 1ull;
+        while (p2 < alignment) p2 <<= 1ull;
+        alignment = p2;
+        OutputDebugStringA("[UploadRing] stage(): non-pow2 alignment -> rounded.\n");
+    }
+
+    const UINT64 aligned = (head_ + (alignment - 1)) & ~(alignment - 1); // AlignUp
+    if (aligned + size > size_) {
+        // Not enough space this frame: fail (caller will fallback)
+        char msg[176];
+        sprintf_s(msg, "[UploadRing] stage(): out of space. size=%llu head=%llu aligned=%llu cap=%llu\n",
+                  (unsigned long long)size,
+                  (unsigned long long)head_,
+                  (unsigned long long)aligned,
+                  (unsigned long long)size_);
+        OutputDebugStringA(msg);
+        return std::nullopt;
+    }
+
+    // Copy into mapped upload buffer
+    memcpy(mapped_ + aligned, src, (size_t)size);
+    head_ = aligned + size;
+
+    return UploadSlice { buffer_.Get(), aligned, mapped_ + aligned };
 }
 

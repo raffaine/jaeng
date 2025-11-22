@@ -2,7 +2,9 @@
 #pragma once
 #include <wrl.h>
 #include <vector>
+#include <functional>
 #include <d3d12.h>
+
 #include "render/public/renderer_api.h"
 
 struct BufferRec {
@@ -34,6 +36,8 @@ public:
     BufferRec*  get_buf(BufferHandle h);
     TextureRec* get_tex(TextureHandle h);
     SamplerRec* get_samp(SamplerHandle h);
+
+    void on_all_buffers(std::function<void(BufferRec&)>&& action);
 
     // ... destroy helpers ...
 

@@ -1,11 +1,12 @@
 // d3d12_bind.h
 #pragma once
+
+#include "d3d12_descriptors.h"
+#include "d3d12_resources.h"
+
 #include <wrl.h>
 #include <d3d12.h>
 #include <vector>
-#include "render/public/renderer_api.h"
-#include "d3d12_descriptors.h"
-#include "d3d12_resources.h"
 
 struct BindGroupLayoutRec {
     std::vector<BindGroupLayoutEntry> entries;
@@ -30,7 +31,7 @@ public:
     BindGroupLayoutHandle add_layout(const BindGroupLayoutDesc*);
     void del_layout(BindGroupLayoutHandle);
 
-    BindGroupHandle add_group(const BindGroupDesc*, ResourceTable*, DescriptorAllocatorCPU*);
+    BindGroupHandle add_group(const BindGroupDesc*, ID3D12Device*, ResourceTable*, DescriptorAllocatorCPU*);
     void del_group(BindGroupHandle);
 
     BindGroupRec* get_group(BindGroupHandle);

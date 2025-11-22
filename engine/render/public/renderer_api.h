@@ -105,11 +105,17 @@ struct GraphicsPipelineDesc {
   TextureFormat      color_format; // single RT
 };
 
+enum class BindGroupEntryType {
+    UniformBuffer = 0,
+    Texture = 1,
+    Sampler = 2,
+};
+
 // Bind groups
 // type: 0=CBV, 1=SRV/Texture, 2=Sampler, 3=UAV (reserved)
 struct BindGroupLayoutEntry {
     uint32_t binding; // 0..3
-    uint32_t type;    // see above
+    BindGroupEntryType type;    // see above
     uint32_t stages;  // ShaderStage bitmask
 };
 
@@ -119,7 +125,7 @@ struct BindGroupLayoutDesc {
 };
 
 struct BindGroupEntry {
-    uint32_t      binding;
+    BindGroupEntryType type;
     BufferHandle  buffer;
     uint64_t      offset;
     uint64_t      size;   // for CBV/SSBO (reserved)

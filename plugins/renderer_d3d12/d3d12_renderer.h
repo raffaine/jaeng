@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <dxgi1_6.h>
 #include "render/public/renderer_api.h"
 
 // Forward declarations for internal classes
@@ -47,14 +48,14 @@ public:
     void destroy_sampler(SamplerHandle);
 
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc*);
-    void               destroy_shader_module(ShaderModuleHandle);
-    PipelineHandle     create_graphics_pipeline(const GraphicsPipelineDesc*);
-    void               destroy_pipeline(PipelineHandle);
+    void destroy_shader_module(ShaderModuleHandle);
+    PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc*);
+    void destroy_pipeline(PipelineHandle);
 
     BindGroupLayoutHandle create_bind_group_layout(const BindGroupLayoutDesc*);
-    void                  destroy_bind_group_layout(BindGroupLayoutHandle);
-    BindGroupHandle       create_bind_group(const BindGroupDesc*);
-    void                  destroy_bind_group(BindGroupHandle);
+    void destroy_bind_group_layout(BindGroupLayoutHandle);
+    BindGroupHandle create_bind_group(const BindGroupDesc*);
+    void destroy_bind_group(BindGroupHandle);
 
     CommandListHandle begin_commands();
     void cmd_begin_rendering_ops(CommandListHandle,
@@ -82,7 +83,7 @@ public:
 
 private:
     std::mutex mtx_;
-    ComPtr<IDXGIFactory6> factory_;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> factory_;
     std::unique_ptr<D3D12Device> device_;
     std::unique_ptr<D3D12Swapchain> swapchain_;
 
@@ -96,9 +97,11 @@ private:
     std::unique_ptr<BindSpace>     binds_;      // layouts + bind groups (+ fallback CBV)
 
     std::vector<std::unique_ptr<FrameContext>> frames_;
+    std::vector<TextureHandle> backbufferHandles_;
     uint32_t frameIndex_ = 0;
     uint32_t frameCount_ = 3;
     bool frameBegun_ = false;
+    UINT currentVertexStride_ = 0;
     HWND hwnd_ = 0;
 
     // Helpers
