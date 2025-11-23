@@ -1,6 +1,7 @@
 ﻿#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
+#include <array>
 #include <vector>
 #include <wrl.h>
 #include <d3dcompiler.h>
@@ -15,10 +16,26 @@ using Microsoft::WRL::ComPtr;
 static const wchar_t* kWndClass = L"SandboxWindowClass";
 
 static const char* kVS = R"(
-struct VSIn { float3 pos: POSITION; float3 col: COLOR; float2 uv: TEXCOORD; };
-struct VSOut { float4 pos: SV_Position; float3 col: COLOR; float2 uv: TEXCOORD; };
+cbuffer CBTransform : register(b0)
+{
+    float4x4 uTransform;
+};
+struct VSIn {
+    float3 pos: POSITION;
+    float3 col: COLOR;
+    float2 uv: TEXCOORD;
+};
+struct VSOut {
+    float4 pos: SV_Position;
+    float3 col: COLOR;
+    float2 uv: TEXCOORD;
+};
 VSOut main(VSIn v) {
-    VSOut o; o.pos = float4(v.pos, 1.0); o.col = v.col; o.uv = v.uv; return o;
+    VSOut o;
+    o.pos = mul(uTransform, float4(v.pos, 1.0));
+    o.col = v.col;
+    o.uv = v.uv;
+    return o;
 }
 )";
 
@@ -62,6 +79,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
+struct CBTransform {
+    float m[16]; // column-major 4x4
+};
+
+// Simple function to build a translation matrix
+CBTransform Translate(float x, float y) {
+    CBTransform cb{};
+    cb.m[0]=.5; cb.m[5]=.5; cb.m[10]=1; cb.m[15]=1;
+    cb.m[12]=x; cb.m[13]=y; // translation components
+    return cb;
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     HMODULE hGpuCap = PIXLoadLatestWinPixGpuCapturerLibrary();
     if (!hGpuCap) {
@@ -96,18 +125,25 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, PresentMode::Fifo };
     swap = renderer.gfx.create_swapchain(&swapDesc);
 
-    // Textured quad vertex buffer (pos.xyz, col.xyz, uv.xy) - 2 triangles
-    struct Vtx { float px,py,pz, cx,cy,cz, u,v; };
-    Vtx quad[6] = {
-        { -0.6f,  0.6f, 0.0f, 1,1,1, 0,0 },
-        {  0.6f,  0.6f, 0.0f, 1,1,1, 1,0 },
-        {  0.6f, -0.6f, 0.0f, 1,1,1, 1,1 },
-        { -0.6f,  0.6f, 0.0f, 1,1,1, 0,0 },
-        {  0.6f, -0.6f, 0.0f, 1,1,1, 1,1 },
-        { -0.6f, -0.6f, 0.0f, 1,1,1, 0,1 },
-    };
-    BufferDesc vbDesc{ sizeof(quad), BufferUsage_Vertex };
-    BufferHandle vb = renderer.gfx.create_buffer(&vbDesc, nullptr); // upload below
+    // Mesh: a colored quad (two triangles)
+    struct Vtx { float px, py, pz; float r, g, b; float u,v; };
+    const std::array<Vtx,4> vertices = {{
+        { -0.5f, -0.5f, 0.f, 1,0,0, 0,0 },
+        {  0.5f, -0.5f, 0.f, 0,1,0, 1,0 },
+        {  0.5f,  0.5f, 0.f, 0,0,1, 1,1 },
+        { -0.5f,  0.5f, 0.f, 1,1,0, 0,1 },
+    }};
+    const std::array<uint32_t,6> indices = {{ 0,1,2, 0,2,3 }};
+
+    BufferDesc vbd{};
+    vbd.size_bytes = sizeof(vertices);
+    vbd.usage      = BufferUsage_Vertex;
+    BufferHandle vb = renderer.gfx.create_buffer(&vbd, vertices.data());
+
+    BufferDesc ibd{};
+    ibd.size_bytes = sizeof(indices);
+    ibd.usage      = BufferUsage_Index;
+    BufferHandle ib = renderer.gfx.create_buffer(&ibd, indices.data());
 
     // Compile HLSL and create shader modules
     ComPtr<ID3DBlob> vsBlob, psBlob;
@@ -132,10 +168,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     PipelineHandle pso = renderer.gfx.create_graphics_pipeline(&pdesc);
 
     // Constant Buffer for VS/PS
-    struct TintCB {
-        float color[4];
-    }; // 16 bytes, we’ll allocate 256
-    TintCB       cbData{1.0f, 1.0f, 1.0f, 1.0f}; // white
+    const CBTransform cbData[4] = {
+        Translate(-0.5f, -0.5f),
+        Translate( 0.5f, -0.5f),
+        Translate(-0.5f,  0.5f),
+        Translate( 0.5f,  0.5f)
+    };
+
     BufferDesc   cbDesc{256, BufferUsage_Uniform};
     BufferHandle cb = renderer.gfx.create_buffer(&cbDesc, nullptr);
 
@@ -176,7 +215,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     BindGroupDesc bgd{ bgl, be, 3 };
     BindGroupHandle bg = renderer.gfx.create_bind_group(&bgd);
 
-    bool uploaded = false;
     bool running = true;
     MSG msg{};
     while (running) {
@@ -207,22 +245,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             graph.add_pass("Forward", { ct }, rg::RGDepthTarget{},
                 [&](const rg::RGPassContext& ctx) {
                     ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
-                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
-                    ctx.gfx->cmd_draw(ctx.cmd, 6, 1, 0, 0);
+                    ctx.gfx->cmd_set_index_buffer(ctx.cmd, ib, true, 0);
+
+                    for (int i=0; i<4; i++) {
+                        ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(CBTransform));
+                        ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
+                        ctx.gfx->cmd_draw_indexed(ctx.cmd, 6, 1, 0, 0, 0);
+                    }
                 }
             );
         }
 
         // Execute
         graph.compile();
-        graph.execute(renderer.gfx, swap, 0, [&](RendererAPI& gfx) {
-            if (!uploaded) {
-                gfx.update_buffer(cb, 0, &cbData, sizeof(cbData));
-                gfx.update_buffer(vb, 0, quad, sizeof(quad));
-                uploaded = true;
-            }
-        });
+        graph.execute(renderer.gfx, swap, 0, nullptr);
     }
 
     // Optional cleanup

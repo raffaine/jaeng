@@ -86,6 +86,7 @@ private:
     Microsoft::WRL::ComPtr<IDXGIFactory6> factory_;
     std::unique_ptr<D3D12Device> device_;
     std::unique_ptr<D3D12Swapchain> swapchain_;
+    bool tearing_ = false;
 
     std::unique_ptr<DescriptorAllocatorCPU> cpuDesc_;
     std::unique_ptr<DescriptorAllocatorCPU> samplerHeapCpu_;

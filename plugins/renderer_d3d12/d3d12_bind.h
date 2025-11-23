@@ -27,6 +27,7 @@ public:
 
     // Fallback CBV:
     D3D12_CPU_DESCRIPTOR_HANDLE fallback_cbv_cpu() const { return fallbackCbvCpu_; }
+    BufferHandle fallback_cb_buffer() const { return 0; }
 
     BindGroupLayoutHandle add_layout(const BindGroupLayoutDesc*);
     void del_layout(BindGroupLayoutHandle);

@@ -17,7 +17,17 @@
       renderer.h
   /plugins
     /renderer_d3d12     # D3D12 backend (DLL)
-      d3d12_renderer.cpp
+      d3d12_bind.h/cpp
+      d3d12_commands.h/cpp
+      d3d12_descriptors.h/cpp
+      d3d12_device.h/cpp
+      d3d12_pipeline.h/cpp
+      d3d12_renderer.h/cpp
+      d3d12_resources.h/cpp
+      d3d12_swapchain.h/cpp
+      d3d12_upload.h/cpp
+      d3d12_utils.h
+      d3d12_renderer.h/cpp
 /apps
   /sandbox     # Win32 app that loads the renderer and clears the screen
     main.cpp
@@ -28,8 +38,10 @@
 Prereqs: Visual Studio 2022 (or newer) with Desktop development with C++ workload and Windows 10/11 SDK. Direct3D 12 headers/libs are included in the Windows SDK.
 
 ```
-:: From a Developer Command Prompt for VS
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+:: From a Developer Command Prompt for VS (for an arm64)
+cmake -S . -B build -G "Visual Studio 17 2022" -A arm64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=arm64-windows
 cmake --build build --config Debug
 
 :: Run

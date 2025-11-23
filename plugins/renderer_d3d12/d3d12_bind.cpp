@@ -13,12 +13,8 @@ bool BindSpace::init(ID3D12Device* dev, DescriptorAllocatorCPU* cpuDesc)
 
 void BindSpace::shutdown()
 {
-    if (fallbackCb_ && fallbackReady_)
-    {
-        fallbackCb_->Unmap(0, nullptr);
-        fallbackReady_ = false;
-    }
     fallbackCb_.Reset();
+    fallbackReady_ = false;
 }
 
 BindGroupLayoutHandle BindSpace::add_layout(const BindGroupLayoutDesc* d)

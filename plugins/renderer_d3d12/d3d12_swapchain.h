@@ -13,10 +13,10 @@ struct BackbufferRTV {
 class D3D12Swapchain {
 public:
     bool  create(HWND hwnd, IDXGIFactory6* factory, ID3D12Device* dev, ID3D12CommandQueue* queue,
-                 DXGI_FORMAT rtvFormat, UINT width, UINT height, uint32_t frameCount);
+                 DXGI_FORMAT rtvFormat, UINT width, UINT height, uint32_t frameCount, bool allow_tearing);
     void  destroy();
 
-    void  resize(ID3D12Device* dev, UINT width, UINT height);
+    void  resize(ID3D12Device* dev, UINT width, UINT height, bool allow_tearing);
     UINT  current_index() const { return swap_->GetCurrentBackBufferIndex(); }
     DXGI_FORMAT rtv_format() const { return rtvFormat_; }
 

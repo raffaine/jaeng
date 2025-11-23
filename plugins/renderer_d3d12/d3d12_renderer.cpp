@@ -74,6 +74,15 @@ bool RendererD3D12::init(const RendererDesc* desc)
 #endif
 
     if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)))) return false;
+    { // Tearing Support
+        BOOL allowTearing = FALSE;    
+        ComPtr<IDXGIFactory5> factory5;
+        if (SUCCEEDED(factory_.As(&factory5))) {
+            if (FAILED(factory5->CheckFeatureSupport( DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) allowTearing = FALSE;
+            tearing_ = (allowTearing == TRUE);
+        }
+        tearing_ = false;
+    }
 
     device_ = std::make_unique<D3D12Device>();
     if(!device_->create(factory_.Get())) return false;
@@ -83,7 +92,6 @@ bool RendererD3D12::init(const RendererDesc* desc)
 
     samplerHeapCpu_ = std::make_unique<DescriptorAllocatorCPU>();
     if(!samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256)) return false;
-
 
     resources_ = std::make_unique<ResourceTable>();
     pipelines_ = std::make_unique<PipelineTable>();
@@ -177,13 +185,13 @@ SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
 
     // Create & build RTVs internally
     swapchain_ = std::make_unique<D3D12Swapchain>();
-    if(!swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(), ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_)) return false;
+    if(!swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(),
+                           ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_, tearing_)) return false;
 
     // Register backbuffers as textures in ResourceTable and cache handles for get_current_backbuffer()
     backbufferHandles_.clear();
     backbufferHandles_.reserve(frameCount_);
-    for (uint32_t i = 0; i < frameCount_; ++i)
-    {
+    for (uint32_t i = 0; i < frameCount_; ++i) {
         TextureRec t{};
         t.res     = swapchain_->rtv_resource(i);     // backbuffer resource
         t.state   = D3D12_RESOURCE_STATE_PRESENT;
@@ -202,8 +210,12 @@ void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
     std::lock_guard<std::mutex> lock(mtx_);
     if(!swapchain_) return;
 
+    // --- Pause presents and quiesce GPU before resizing ---
+    // Ensure no new presents can happen (mtx_ held). Now flush GPU work touching backbuffers.
+    wait_idle(); // uses fence: device_->signal(); device_->wait(v);
+
     // Resize backbuffers & RTVs inside swapchain
-    swapchain_->resize(device_->dev(), newSize.width, newSize.height);
+    swapchain_->resize(device_->dev(), newSize.width, newSize.height, tearing_);
 
     // Refresh resource table entries for backbuffers
     for (uint32_t i = 0; i < frameCount_ && i < backbufferHandles_.size(); ++i)
@@ -215,7 +227,6 @@ void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
             tex->state  = D3D12_RESOURCE_STATE_PRESENT;
         }
     }
-
 }
 
 void RendererD3D12::destroy_swapchain(SwapchainHandle)
@@ -261,21 +272,18 @@ BufferHandle RendererD3D12::create_buffer(const BufferDesc* d, const void* initi
         buf.vbv.StrideInBytes  = 32; // default; refined by cmd_set_vertex_buffer
     }
 
+    // IBV setup (default to 32-bit; actual format picked at bind time)
+    if (d->usage & BufferUsage_Index) {
+        buf.ibv.BufferLocation = buf.res->GetGPUVirtualAddress();
+        buf.ibv.SizeInBytes    = (UINT)d->size_bytes;
+        // buf.ibv.Format set at cmd_set_index_buffer based on `index32`
+    }
+
     auto h = resources_->add_buffer(std::move(buf));
 
     // Optional initial upload (record into current frame)
     if (initial && d->size_bytes) {
-        if (!frameBegun_) begin_frame();
-        auto& fc = curFrame();
-        if (auto us = fc.upload->stage(initial, d->size_bytes, /*align*/256); us.has_value()) {
-            auto* br = resources_->get_buf(h);
-            // Transition COPY, copy region, leave in COPY; pipeline bind will transition to VERTEX/CONSTANT
-            Barrier(fc.cmd(), br->res.Get(), br->state, D3D12_RESOURCE_STATE_COPY_DEST);
-            br->state = D3D12_RESOURCE_STATE_COPY_DEST;
-            // Enqueue copy
-            fc.cmd()->CopyBufferRegion(br->res.Get(), 0, us->resource, us->offset, d->size_bytes);
-            // Leave in COPY_DEST; we'll transition to VERTEX at bind time
-        }
+        update_buffer(h, 0, initial, d->size_bytes);
     }
 
     return h;
@@ -296,6 +304,7 @@ bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* 
 
     FrameContext& fr = curFrame();
 
+    bool staged = false;
     if (frameBegun_) {
         // ---- Fast path: record into the active frame's command list using the per-frame ring ----
         if (auto us = fr.upload->stage(data, size, 256ull); us.has_value()) {
@@ -304,10 +313,11 @@ bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* 
             b->state = D3D12_RESOURCE_STATE_COPY_DEST;
             // Enqueue copy
             fr.cmd()->CopyBufferRegion(b->res.Get(), dst_off, us->resource, us->offset, size);
-            // Leave in COPY_DEST; we'll transition to VERTEX at bind time
-            return true;
+            staged = true;
         }
-    } else {
+    }
+
+    if (!staged) {
         // ---- Robust path: no frame begun -> perform an immediate one-shot copy and wait ----
         // Create a transient upload resource
         D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -353,10 +363,9 @@ bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* 
         device_->queue()->ExecuteCommandLists(1, lists);
         auto fv = device_->signal();
         device_->wait(fv);
-
-        // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
-        return true;
     }
+    // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
+    return true;
 }
 
 TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
@@ -703,6 +712,12 @@ void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, Bi
         D3D12_GPU_DESCRIPTOR_HANDLE cbvGpu{};
         fc.gpuDescs->alloc_srv(&cbvGpuCpu, &cbvGpu); // slot for CBV
         device_->dev()->CopyDescriptorsSimple(1, cbvGpuCpu, cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        BufferRec* cbBuf = resources_->get_buf((bg->cb.present && bg->cb.cpuValid)? bg->cb.buf : binds_->fallback_cb_buffer());
+        if (cbBuf && cbBuf->res) {
+            Barrier(cl, cbBuf->res.Get(), cbBuf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            cbBuf->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        }
+
         cl->SetGraphicsRootDescriptorTable(0, cbvGpu);
 
         // SRV at root 1
@@ -754,8 +769,25 @@ void RendererD3D12::cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, Buff
     cl->IASetVertexBuffers(slot, 1, &vbv);
 }
 
-void RendererD3D12::cmd_set_index_buffer(CommandListHandle, BufferHandle, bool index32, uint64_t offset)
-{}
+void RendererD3D12::cmd_set_index_buffer(CommandListHandle, BufferHandle h, bool index32, uint64_t offset)
+{
+    auto* buf = resources_->get_buf(h);
+    if (!buf) return;
+
+    auto* cl = curFrame().cmd();
+
+    // Transition COPY/COMMON -> INDEX_BUFFER when binding
+    Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+    buf->state = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+
+    // Build the view (respect offset and remaining size)
+    D3D12_INDEX_BUFFER_VIEW ibv = buf->ibv;
+    ibv.BufferLocation += offset;
+    ibv.SizeInBytes     = (UINT)std::max<uint64_t>(0, buf->size - offset);
+    ibv.Format          = index32 ? DXGI_FORMAT_R32_UINT : DXGI_FORMAT_R16_UINT;
+
+    cl->IASetIndexBuffer(&ibv);
+}
 
 void RendererD3D12::cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t inst_count,
                              uint32_t first_vtx, uint32_t first_inst)
@@ -765,7 +797,9 @@ void RendererD3D12::cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t ins
 
 void RendererD3D12::cmd_draw_indexed(CommandListHandle, uint32_t idx_count, uint32_t inst_count,
                                      uint32_t first_idx, int32_t vtx_offset, uint32_t first_inst)
-{}
+{
+    curFrame().cmd()->DrawIndexedInstanced(idx_count, inst_count, first_idx, vtx_offset, first_inst);
+}
 
 void RendererD3D12::end_commands(CommandListHandle) {
     curFrame().cmd()->Close();
@@ -785,16 +819,18 @@ void RendererD3D12::submit(CommandListHandle* /*lists*/, uint32_t /*list_count*/
 {
     ID3D12CommandList* one[] = { curFrame().cmd() };
     device_->queue()->ExecuteCommandLists(1, one);
-}
-
-void RendererD3D12::present(SwapchainHandle)
-{
-    // Present (vsync on by default; can add a flag in RendererDesc if desired)
-    swapchain_->swap()->Present(/*syncInterval*/1, /*flags*/0);
 
     // Signal fence and store value for this frame, so begin_frame can wait next time
     auto& fc = curFrame();
     fc.fenceValue = device_->signal();
+}
+
+void RendererD3D12::present(SwapchainHandle)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    // Present (vsync on by default; can add a flag in RendererDesc if desired)
+    UINT syncInterval = (tearing_)? 0 : 1;
+    swapchain_->swap()->Present(syncInterval, (tearing_)? DXGI_PRESENT_ALLOW_TEARING : 0);
 }
 
 void RendererD3D12::wait_idle()
@@ -851,9 +887,13 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.cmd_set_bind_group = [](CommandListHandle c, uint32_t i, BindGroupHandle h) { g_renderer->cmd_set_bind_group(c,i,h); };
     api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };
     api.cmd_set_vertex_buffer = [](CommandListHandle c, uint32_t s, BufferHandle b, uint64_t o) { g_renderer->cmd_set_vertex_buffer(c,s,b,o); };
+    api.cmd_set_index_buffer = [](CommandListHandle c, BufferHandle b, bool i32, uint64_t o) { g_renderer->cmd_set_index_buffer(c,b,i32,o); };
 
     api.cmd_draw = [](CommandListHandle c, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t first) {
         g_renderer->cmd_draw(c, vc, ic, fv, first);
+    };
+    api.cmd_draw_indexed = [](CommandListHandle c, uint32_t in, uint32_t ic, uint32_t fi, uint32_t o, uint32_t first) {
+        g_renderer->cmd_draw_indexed(c, in, ic, fi, o, first);
     };
 
     api.end_commands = [](CommandListHandle c) { g_renderer->end_commands(c); };

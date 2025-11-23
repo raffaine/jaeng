@@ -53,7 +53,12 @@ struct SwapchainDesc {
 };
 
 // --- New: buffers, shaders, pipelines ---
-enum BufferUsage : uint32_t { BufferUsage_Vertex=1, BufferUsage_Index=2, BufferUsage_Uniform=4, BufferUsage_Upload=16 };
+enum BufferUsage : uint32_t {
+    BufferUsage_Vertex  = 1 << 0,
+    BufferUsage_Index   = 1 << 1,
+    BufferUsage_Uniform = 1 << 2,
+    BufferUsage_Upload  = 1 << 3
+};
 
 struct BufferDesc {
     uint64_t size_bytes;
@@ -203,7 +208,9 @@ typedef struct RendererAPI {
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
+    void (*cmd_set_index_buffer)(CommandListHandle, BufferHandle, bool index32, uint64_t offset);
     void (*cmd_draw)(CommandListHandle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance);
+    void (*cmd_draw_indexed)(CommandListHandle, uint32_t idx_count, uint32_t instance_count, uint32_t first_idx, uint32_t vtx_offset, uint32_t first_instance);
     void (*end_commands)(CommandListHandle);
 
     // submit/present
