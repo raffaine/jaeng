@@ -15,8 +15,8 @@ class UploadRing;
 class ResourceTable;            
 class PipelineTable;            
 class BindSpace;                
-class FrameContext;       
-class DepthManager;      
+class FrameContext;
+class DepthManager;
 
 class RendererD3D12 {
 public:

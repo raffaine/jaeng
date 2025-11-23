@@ -84,10 +84,10 @@ struct CBTransform {
 };
 
 // Simple function to build a translation matrix
-CBTransform Translate(float x, float y) {
+CBTransform Translate(float x, float y, float z = 0.0f) {
     CBTransform cb{};
-    cb.m[0]=.5; cb.m[5]=.5; cb.m[10]=1; cb.m[15]=1;
-    cb.m[12]=x; cb.m[13]=y; // translation components
+    cb.m[0]=1; cb.m[5]=1; cb.m[10]=1; cb.m[15]=1;
+    cb.m[12]=x; cb.m[13]=y;  cb.m[14]=z;  // translation components
     return cb;
 }
 
@@ -131,10 +131,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     // Mesh: a colored quad (two triangles)
     struct Vtx { float px, py, pz; float r, g, b; float u,v; };
     const std::array<Vtx,4> vertices = {{
-        { -0.5f, -0.5f, 0.f, 1,0,0, 0,0 },
-        {  0.5f, -0.5f, 0.f, 0,1,0, 1,0 },
-        {  0.5f,  0.5f, 0.f, 0,0,1, 1,1 },
-        { -0.5f,  0.5f, 0.f, 1,1,0, 0,1 },
+        { -0.5f, -0.5f, .0f, 1,0,0, 0,0 },
+        {  0.5f, -0.5f, .0f, 0,1,0, 1,0 },
+        {  0.5f,  0.5f, .0f, 0,0,1, 1,1 },
+        { -0.5f,  0.5f, .0f, 1,1,0, 0,1 },
     }};
     const std::array<uint32_t,6> indices = {{ 0,1,2, 0,2,3 }};
 
@@ -172,10 +172,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // Constant Buffer for VS/PS
     const CBTransform cbData[4] = {
-        Translate(-0.5f, -0.5f),
-        Translate( 0.5f, -0.5f),
-        Translate(-0.5f,  0.5f),
-        Translate( 0.5f,  0.5f)
+        Translate(-0.25f, -0.25f, 0.5),
+        Translate( 0.25f, -0.25f, 0.5),
+        Translate(-0.25f,  0.25f, 0.5),
+        Translate( 0.25f,  0.25f, 0.5)
     };
 
     BufferDesc   cbDesc{256, BufferUsage_Uniform};
