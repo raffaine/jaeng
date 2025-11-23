@@ -15,7 +15,8 @@ class UploadRing;
 class ResourceTable;            
 class PipelineTable;            
 class BindSpace;                
-class FrameContext;             
+class FrameContext;       
+class DepthManager;      
 
 class RendererD3D12 {
 public:
@@ -58,7 +59,7 @@ public:
     void destroy_bind_group(BindGroupHandle);
 
     CommandListHandle begin_commands();
-    void cmd_begin_rendering_ops(CommandListHandle,
+    void cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
                                  const ColorAttachmentDesc* colors, uint32_t count,
                                  const DepthAttachmentDesc* depth);
     void cmd_end_rendering(CommandListHandle);
@@ -96,6 +97,9 @@ private:
     std::unique_ptr<ResourceTable> resources_;  // buffers, textures, samplers, shader blobs
     std::unique_ptr<PipelineTable> pipelines_;  // root signatures, PSOs
     std::unique_ptr<BindSpace>     binds_;      // layouts + bind groups (+ fallback CBV)
+
+    std::unique_ptr<DescriptorAllocatorCPU> dsvDesc_;
+    std::unique_ptr<DepthManager>  depthManager_;    // manages depth buffer resources
 
     std::vector<std::unique_ptr<FrameContext>> frames_;
     std::vector<TextureHandle> backbufferHandles_;

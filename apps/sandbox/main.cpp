@@ -122,7 +122,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         return -2;
     }
 
-    SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, PresentMode::Fifo };
+    DepthStencilDesc depthDesc{};   // No depth/stencil for now
+    depthDesc.depth_enable = true;
+    depthDesc.depth_format = TextureFormat::D32F;
+    SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo };
     swap = renderer.gfx.create_swapchain(&swapDesc);
 
     // Mesh: a colored quad (two triangles)
@@ -236,13 +239,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             ct.clear_rgba[1] = 0.08f;
             ct.clear_rgba[2] = 0.12f;
             ct.clear_rgba[3] = 1.0f;
-            graph.add_pass("Clear", { ct }, rg::RGDepthTarget{}, nullptr);
+            rg::RGDepthTarget dt{};
+            dt.tex = 1; // arbitrary for now, indicates the swapchain's depth buffer
+            dt.clear_depth = 1.0f;
+            graph.add_pass("Clear", { ct }, dt, nullptr);
         }
         // 2) Forward pass
         {
             rg::RGColorTarget ct{};
             ct.tex = renderer.gfx.get_current_backbuffer(swap);
-            graph.add_pass("Forward", { ct }, rg::RGDepthTarget{},
+            rg::RGDepthTarget dt{};
+            dt.tex = 1; // arbitrary for now, indicates the swapchain's depth buffer
+            graph.add_pass("Forward", { ct }, dt,
                 [&](const rg::RGPassContext& ctx) {
                     ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);

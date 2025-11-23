@@ -36,7 +36,6 @@ enum class PrimitiveTopology : uint32_t { TriangleList=0, TriangleStrip=1, LineL
 enum class SamplerFilter : uint32_t { Nearest = 0, Linear = 1 };
 enum class AddressMode:uint32_t { Repeat = 0, ClampToEdge = 1, Mirror = 2, Border = 3 };
 
-
 struct Extent2D { uint32_t width, height; };
 
 // --- Descriptors ---
@@ -46,9 +45,16 @@ struct RendererDesc {
     uint32_t frame_count;  // 2 or 3
 };
 
+struct DepthStencilDesc {
+    bool depth_enable;
+    bool stencil_enable;
+    TextureFormat depth_format;
+};
+
 struct SwapchainDesc {
     Extent2D size;
     TextureFormat format;
+    DepthStencilDesc depth_stencil;
     PresentMode present_mode;
 };
 
@@ -102,12 +108,22 @@ struct VertexLayoutDesc {
   uint32_t attribute_count;
 };
 
+struct DepthStencilOptions {
+    bool enableDepth = false;
+    bool enableStencil = false;
+    float clearDepth = 1.0f;
+    uint8_t clearStencil = 0;
+    enum class DepthFunc { Less, LessEqual, Greater, Always } depthFunc = DepthFunc::Less;
+    // Future: stencil ops, masks, etc    // Future: stencil ops, masks, etc.
+};
+
 struct GraphicsPipelineDesc {
   ShaderModuleHandle vs;
   ShaderModuleHandle fs; // optional
   PrimitiveTopology topology;
   VertexLayoutDesc   vertex_layout;
   TextureFormat      color_format; // single RT
+  DepthStencilOptions depth_stencil;
 };
 
 enum class BindGroupEntryType {
@@ -147,12 +163,9 @@ struct BindGroupDesc {
 enum class LoadOp : uint32_t { Load, Clear, DontCare };
 struct ColorAttachmentDesc {
     TextureHandle tex;
-    LoadOp load;
     float clear_rgba[4];
 };
 struct DepthAttachmentDesc {
-    TextureHandle tex;
-    LoadOp load;
     float clear_d;
     /* stencil optional */
 };
@@ -203,7 +216,7 @@ typedef struct RendererAPI {
 
     // command encoding (subset sufficient to clear)
     CommandListHandle (*begin_commands)();
-    void (*cmd_begin_rendering_ops)(CommandListHandle, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
+    void (*cmd_begin_rendering_ops)(CommandListHandle, LoadOp load_op, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
     void (*cmd_end_rendering)(CommandListHandle);
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);

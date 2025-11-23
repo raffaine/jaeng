@@ -31,6 +31,7 @@ add_library(renderer_d3d12 SHARED
   plugins/renderer_d3d12/d3d12_bind.cpp
   plugins/renderer_d3d12/d3d12_device.cpp
   plugins/renderer_d3d12/d3d12_descriptors.cpp
+  plugins/renderer_d3d12/d3d12_depthmanager.cpp
   plugins/renderer_d3d12/d3d12_upload.cpp
   plugins/renderer_d3d12/d3d12_swapchain.cpp
   plugins/renderer_d3d12/d3d12_commands.cpp

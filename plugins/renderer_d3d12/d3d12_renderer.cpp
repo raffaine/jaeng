@@ -1,13 +1,15 @@
 #define RENDERER_BUILD
 #include "d3d12_renderer.h"
-#include "d3d12_device.h"
-#include "d3d12_swapchain.h"
-#include "d3d12_descriptors.h"
-#include "d3d12_upload.h"
-#include "d3d12_resources.h"
-#include "d3d12_pipeline.h"
+
 #include "d3d12_bind.h"
 #include "d3d12_commands.h"
+#include "d3d12_depthmanager.h"
+#include "d3d12_descriptors.h"
+#include "d3d12_device.h"
+#include "d3d12_pipeline.h"
+#include "d3d12_resources.h"
+#include "d3d12_swapchain.h"
+#include "d3d12_upload.h"
 #include "d3d12_utils.h"
 
 #include <dxgidebug.h>
@@ -17,7 +19,8 @@ using Microsoft::WRL::ComPtr;
 static std::unique_ptr<RendererD3D12> g_renderer;
 
 // Helpers
-static DXGI_FORMAT ToDxgiFormat(TextureFormat fmt) {
+static DXGI_FORMAT ToDxgiFormat(TextureFormat fmt)
+{
     switch (fmt) {
         case TextureFormat::BGRA8_UNORM: return DXGI_FORMAT_B8G8R8A8_UNORM;
         case TextureFormat::RGBA8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -27,8 +30,20 @@ static DXGI_FORMAT ToDxgiFormat(TextureFormat fmt) {
     }
 }
 
+static D3D12_COMPARISON_FUNC ConvertDepthFunc(DepthStencilOptions::DepthFunc func)
+{
+    switch (func) {
+        case DepthStencilOptions::DepthFunc::Less: return D3D12_COMPARISON_FUNC_LESS;
+        case DepthStencilOptions::DepthFunc::LessEqual: return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        case DepthStencilOptions::DepthFunc::Greater: return D3D12_COMPARISON_FUNC_GREATER;
+        case DepthStencilOptions::DepthFunc::Always: return D3D12_COMPARISON_FUNC_ALWAYS;
+        default: return D3D12_COMPARISON_FUNC_LESS;
+    }
+}
+
 static void Barrier(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
-                    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+                    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+{
     if (before == after) return;
     D3D12_RESOURCE_BARRIER b{};
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -74,7 +89,7 @@ bool RendererD3D12::init(const RendererDesc* desc)
 #endif
 
     if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)))) return false;
-    { // Tearing Support
+    { // Tearing Support (Off for now as it causes crashes after some time running)
         BOOL allowTearing = FALSE;    
         ComPtr<IDXGIFactory5> factory5;
         if (SUCCEEDED(factory_.As(&factory5))) {
@@ -89,6 +104,9 @@ bool RendererD3D12::init(const RendererDesc* desc)
 
     cpuDesc_ = std::make_unique<DescriptorAllocatorCPU>();
     if(!cpuDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2048)) return false;
+
+    dsvDesc_ = std::make_unique<DescriptorAllocatorCPU>();
+    if(!dsvDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 256)) return false;
 
     samplerHeapCpu_ = std::make_unique<DescriptorAllocatorCPU>();
     if(!samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256)) return false;
@@ -138,13 +156,16 @@ void RendererD3D12::shutdown()
     for (auto& g : gpuDescPerFrame_) g.reset();
     for (auto& u : uploadPerFrame_) u.reset();
 
+    if (depthManager_) depthManager_.reset();
+    dsvDesc_.reset();
+
     if (swapchain_) swapchain_->destroy();
     samplerHeapCpu_.reset();
     cpuDesc_.reset();
 
     if (device_) device_->shutdown();
-
     factory_.Reset();
+
     hwnd_       = 0;
     frameCount_ = 0;
     frameIndex_ = 0;
@@ -186,7 +207,7 @@ SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
     // Create & build RTVs internally
     swapchain_ = std::make_unique<D3D12Swapchain>();
     if(!swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(),
-                           ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_, tearing_)) return false;
+                           ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_, tearing_)) return 0;
 
     // Register backbuffers as textures in ResourceTable and cache handles for get_current_backbuffer()
     backbufferHandles_.clear();
@@ -200,6 +221,14 @@ SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
         // (No SRV for backbuffer; rendering targets use RTV via swapchain)
         TextureHandle h = resources_->add_texture(std::move(t));
         backbufferHandles_.push_back(h);
+    }
+
+    if (d->depth_stencil.depth_enable) {
+        // Depth Manager: create depth buffer for this swapchain size/format
+        UINT dsvIndex;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDesc_->allocate(&dsvIndex);
+        depthManager_ = std::make_unique<DepthManager>(device_->dev(), dsvHandle);
+        if (!depthManager_->init(d->size.width, d->size.height, ToDxgiFormat(d->depth_stencil.depth_format))) return 0;
     }
 
     return 1; // Single id for this starter
@@ -226,6 +255,11 @@ void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
             tex->height = newSize.height;
             tex->state  = D3D12_RESOURCE_STATE_PRESENT;
         }
+    }
+
+    // Resize depth buffer to match new size
+    if (depthManager_) {
+        depthManager_->resize(newSize.width, newSize.height);
     }
 }
 
@@ -553,8 +587,12 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     rast.DepthClipEnable = TRUE;
 
     D3D12_DEPTH_STENCIL_DESC depth{};
-    depth.DepthEnable = FALSE;
-    depth.StencilEnable = FALSE;
+    if (depthManager_ && gp->depth_stencil.enableDepth) {
+        depth.DepthEnable = TRUE;
+        depth.DepthFunc = ConvertDepthFunc(gp->depth_stencil.depthFunc);
+        depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    }
+    depth.StencilEnable = FALSE; // gp->depth_stencil.enableStencil;
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
     pso.pRootSignature   = root.Get();
@@ -564,6 +602,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     pso.SampleMask       = UINT_MAX;
     pso.RasterizerState  = rast;
     pso.DepthStencilState= depth;
+    pso.DSVFormat        = (depth.DepthEnable) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
     pso.InputLayout      = { ils.data(), (UINT)ils.size() };
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1;
@@ -614,7 +653,7 @@ CommandListHandle RendererD3D12::begin_commands()
     return 1; // single list in this backend (FrameContext::cmd())
 }
 
-void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle,
+void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
                                             const ColorAttachmentDesc* colors, uint32_t count,
                                             const DepthAttachmentDesc* depth)
 {
@@ -635,17 +674,18 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle,
     // Transition PRESENT -> RENDER_TARGET on current backbuffer
     const uint32_t idx = swapchain_->current_index();
     ID3D12Resource* res = swapchain_->rtv_resource(idx);
-    D3D12_RESOURCE_BARRIER b{};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition.pResource   = res;
-    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    cl->ResourceBarrier(1, &b);
+    Barrier(cl, res, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     // Bind RTV (and optionally depth if you decide to add a DSV path later)
     auto rtv = swapchain_->rtv_handle(idx);
     cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+    if (depthManager_ && depth) {
+        auto dsv = depthManager_->get_dsv();
+        Barrier(cl, depthManager_->dsv_resource(), depthManager_->resState, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        depthManager_->resState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+        cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    }
 
     // Viewport/scissor from backbuffer size
     D3D12_RESOURCE_DESC texDesc = res->GetDesc();
@@ -660,8 +700,11 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle,
     cl->RSSetScissorRects(1, &sc);
 
     // Clear if requested
-    if (colors[0].load == LoadOp::Clear) {
+    if (load_op == LoadOp::Clear) {
         cl->ClearRenderTargetView(rtv, colors[0].clear_rgba, 0, nullptr);
+        if (depthManager_ && depth) {
+            cl->ClearDepthStencilView(depthManager_->get_dsv(), D3D12_CLEAR_FLAG_DEPTH, depth->clear_d, 0, 0, nullptr);
+        }
     }
 }
 
@@ -673,13 +716,7 @@ void RendererD3D12::cmd_end_rendering(CommandListHandle)
     // Transition RENDER_TARGET -> PRESENT
     const uint32_t idx = swapchain_->current_index();
     ID3D12Resource* res = swapchain_->rtv_resource(idx);
-    D3D12_RESOURCE_BARRIER b{};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition.pResource   = res;
-    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
-    cl->ResourceBarrier(1, &b);
+    Barrier(cl, res, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 }
 
 void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h)
@@ -879,8 +916,8 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.destroy_bind_group = [](BindGroupHandle h) { g_renderer->destroy_bind_group(h); };
 
     api.begin_commands = []{ return g_renderer->begin_commands(); };
-    api.cmd_begin_rendering_ops = [](CommandListHandle c, const ColorAttachmentDesc* cs, uint32_t n, const DepthAttachmentDesc* dp){
-        g_renderer->cmd_begin_rendering_ops(c, cs, n, dp);
+    api.cmd_begin_rendering_ops = [](CommandListHandle c, LoadOp op, const ColorAttachmentDesc* cs, uint32_t n, const DepthAttachmentDesc* dp){
+        g_renderer->cmd_begin_rendering_ops(c, op, cs, n, dp);
     };
     api.cmd_end_rendering = [](CommandListHandle c) { g_renderer->cmd_end_rendering(c); };
 
