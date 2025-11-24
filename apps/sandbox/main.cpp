@@ -124,6 +124,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         return -2;
     }
 
+    // SwapChain and Default Depth Buffer
     DepthStencilDesc depthDesc{};   // No depth/stencil for now
     depthDesc.depth_enable = true;
     depthDesc.depth_format = TextureFormat::D32F;
@@ -140,6 +141,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }};
     const std::array<uint32_t,6> indices = {{ 0,1,2, 0,2,3 }};
 
+    // Vertex and Index Buffer Resources
     BufferDesc vbd{};
     vbd.size_bytes = sizeof(vertices);
     vbd.usage      = BufferUsage_Vertex;
@@ -150,25 +152,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     ibd.usage      = BufferUsage_Index;
     BufferHandle ib = renderer.gfx.create_buffer(&ibd, indices.data());
 
-    // Compile HLSL and create shader modules
-    ComPtr<ID3DBlob> vsBlob, psBlob;
-    CompileHlsl(kVS, "main", "vs_5_0", &vsBlob);
-    CompileHlsl(kPS, "main", "ps_5_0", &psBlob);
-    ShaderModuleDesc vertexDesc {
-        ShaderStage::Vertex, vsBlob->GetBufferPointer(), (uint32_t)vsBlob->GetBufferSize(), 0
-    };
-    ShaderModuleDesc fragmentDesc {
-        ShaderStage::Fragment, psBlob->GetBufferPointer(), (uint32_t)psBlob->GetBufferSize(), 0
-    };
-    ShaderModuleHandle vsh = renderer.gfx.create_shader_module(&vertexDesc);
-    ShaderModuleHandle psh = renderer.gfx.create_shader_module(&fragmentDesc);
+    // Use Pre-compiled Shaders and Reflected Headers
+    ShaderModuleHandle vsh, psh;
+    LoadShaders(&renderer.gfx, vsh, psh);
 
-    // Pipeline (POSITION@0 off 0, COLOR@1 off 12, TEXCOORD@2 off 24, stride 32)
-    VertexAttributeDesc attrs[3] = { {0,0,0}, {1,0,12}, {2,0,24} };
-    VertexLayoutDesc vtxLayout{ 32, attrs, 3 };
-
+    // Creates Pipeline (also with reflecte header for Vertex Layout)
     GraphicsPipelineDesc pdesc{
-    vsh, psh, PrimitiveTopology::TriangleList, vtxLayout, TextureFormat::BGRA8_UNORM
+    vsh, psh, PrimitiveTopology::TriangleList, ShaderReflection::vertexLayout, TextureFormat::BGRA8_UNORM
     };
     PipelineHandle pso = renderer.gfx.create_graphics_pipeline(&pdesc);
 
@@ -193,6 +183,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             pixels[y*W + x] = (0xFFu<<24) | (c<<16) | (c<<8) | c;
         }
     }
+
+    // Create Texture and Sampler Resources
     TextureDesc td{ TextureFormat::RGBA8_UNORM, W, H, 1, 1, 0 };
     TextureHandle tex = renderer.gfx.create_texture(&td, pixels.data());
     SamplerDesc sd{};
@@ -202,27 +194,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     sd.border_color[0]=sd.border_color[1]=sd.border_color[2]=0.0f; sd.border_color[3]=1.0f;
     SamplerHandle samp = renderer.gfx.create_sampler(&sd);
 
-    // Bind-group layout (binding 0: texture SRV @ PS; binding 1: sampler @ PS)
-    BindGroupLayoutEntry le[3] = {
-        { 0u, BindGroupEntryType::Texture, (uint32_t)ShaderStage::Fragment }, // SRV
-        { 1u, BindGroupEntryType::Sampler, (uint32_t)ShaderStage::Fragment },  // Sampler
-        { 2u, BindGroupEntryType::UniformBuffer, (uint32_t)ShaderStage::Vertex | (uint32_t)ShaderStage::Fragment} // CBV
+    // Use Bind Group Layout from Reflection and created Resources as Group Entries
+    BindGroupLayoutHandle bgl = renderer.gfx.create_bind_group_layout(&ShaderReflection::bindGroupLayout);
+    BindGroupEntry be[] {
+        { .type = BindGroupEntryType::Texture, .texture = tex },
+        { .type = BindGroupEntryType::Sampler, .sampler = samp },
+        { .type = BindGroupEntryType::UniformBuffer, .buffer = cb, .offset = 0, .size = 256 }
     };
-    BindGroupLayoutDesc ldesc{ le, 3 };
-    BindGroupLayoutHandle bgl = renderer.gfx.create_bind_group_layout(&ldesc);
-    BindGroupEntry be[3]{};
-    be[0].type = BindGroupEntryType::Texture; be[0].texture = tex;
-    be[1].type = BindGroupEntryType::Sampler; be[1].sampler = samp;
-    be[2].type = BindGroupEntryType::UniformBuffer;
-    be[2].buffer = cb;
-    be[2].offset = 0;
-    be[2].size = 256;
     BindGroupDesc bgd{ bgl, be, 3 };
     BindGroupHandle bg = renderer.gfx.create_bind_group(&bgd);
 
+    // ---- Main Loop ----
     bool running = true;
     MSG msg{};
     while (running) {
+        // -- Process Windows Events --
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { running = false; break; }
             TranslateMessage(&msg);
@@ -235,23 +221,17 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // 1) Clear pass
         {
-            rg::RGColorTarget ct{};
-            ct.tex = renderer.gfx.get_current_backbuffer(swap);
-            ct.clear_rgba[0] = 0.07f;
-            ct.clear_rgba[1] = 0.08f;
-            ct.clear_rgba[2] = 0.12f;
-            ct.clear_rgba[3] = 1.0f;
-            rg::RGDepthTarget dt{};
-            dt.tex = 1; // arbitrary for now, indicates the swapchain's depth buffer
-            dt.clear_depth = 1.0f;
+            rg::RGColorTarget ct{
+                .tex = renderer.gfx.get_current_backbuffer(swap),
+                .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
+            };
+            rg::RGDepthTarget dt { .tex = 1, .clear_depth = 1.0f };
             graph.add_pass("Clear", { ct }, dt, nullptr);
         }
         // 2) Forward pass
         {
-            rg::RGColorTarget ct{};
-            ct.tex = renderer.gfx.get_current_backbuffer(swap);
-            rg::RGDepthTarget dt{};
-            dt.tex = 1; // arbitrary for now, indicates the swapchain's depth buffer
+            rg::RGColorTarget ct{ .tex = renderer.gfx.get_current_backbuffer(swap) };
+            rg::RGDepthTarget dt{ .tex = 1 }; // arbitrary for now, indicates the swapchain's depth buffer
             graph.add_pass("Forward", { ct }, dt,
                 [&](const rg::RGPassContext& ctx) {
                     ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
@@ -272,15 +252,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         graph.execute(renderer.gfx, swap, 0, nullptr);
     }
 
-    // Optional cleanup
-    renderer.gfx.destroy_pipeline(pso);
-    renderer.gfx.destroy_shader_module(psh);
-    renderer.gfx.destroy_shader_module(vsh);
-    renderer.gfx.destroy_buffer(vb);
-    renderer.gfx.destroy_bind_group(bg);
-    renderer.gfx.destroy_bind_group_layout(bgl);
-    renderer.gfx.destroy_sampler(samp);
-    renderer.gfx.destroy_texture(tex);
+    // Releases renderer resources
     renderer.shutdown();
 
     return 0;

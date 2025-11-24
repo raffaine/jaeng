@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
 
         std::ofstream out(headerPath);
         out << "#pragma once\n#include \"renderer_api.h\"\n\n";
+        out << "#include <fstream>\n#include <vector>\n#include <stdexcept>\n#include <string>\n\n";
         out << "// Auto-generated pipeline reflection\nnamespace ShaderReflection {\n";
 
         // Vertex layout
@@ -95,7 +96,6 @@ int main(int argc, char** argv) {
         out << "        .attribute_count = " << vsDesc.InputParameters << "\n";
         out << "    };\n\n";
 
-
         // Combined resources
         out << "    static constexpr BindGroupLayoutEntry bindGroupEntries[] = {\n";
         for (UINT i = 0; i < vsDesc.BoundResources; ++i) {
@@ -113,8 +113,35 @@ int main(int argc, char** argv) {
         out << "        .entries = bindGroupEntries,\n";
         out << "        .entry_count = " << (vsDesc.BoundResources + psDesc.BoundResources) << "\n";
         out << "    };\n";
-
+        // Closes namespace
         out << "}\n";
+
+        // Helper to Load the associated shaders
+        out << "\ninline void LoadShaders(RendererAPI* api, ShaderModuleHandle& vsHandle, ShaderModuleHandle& fsHandle) {\n";
+        out << "    // Vertex Shader\n";
+        out << "    {\n";
+        out << "        std::ifstream vsFile(\"" << vertexPath << "\", std::ios::binary | std::ios::ate);\n";
+        out << "        if (!vsFile) throw std::runtime_error(\"Failed to open vertex shader file\");\n";
+        out << "        size_t size = vsFile.tellg();\n";
+        out << "        vsFile.seekg(0);\n";
+        out << "        std::vector<char> data(size);\n";
+        out << "        vsFile.read(data.data(), size);\n";
+        out << "        ShaderModuleDesc desc { ShaderStage::Vertex, data.data(), (uint32_t)data.size(), 0 };\n";
+        out << "        vsHandle = api->create_shader_module(&desc);\n";
+        out << "    }\n\n";
+        out << "    // Pixel Shader\n";
+        out << "    {\n";
+        out << "        std::ifstream psFile(\"" << pixelPath << "\", std::ios::binary | std::ios::ate);\n";
+        out << "        if (!psFile) throw std::runtime_error(\"Failed to open pixel shader file\");\n";
+        out << "        size_t size = psFile.tellg();\n";
+        out << "        psFile.seekg(0);\n";
+        out << "        std::vector<char> data(size);\n";
+        out << "        psFile.read(data.data(), size);\n";
+        out << "        ShaderModuleDesc desc { ShaderStage::Fragment, data.data(), (uint32_t)data.size(), 0 };\n";
+        out << "        fsHandle = api->create_shader_module(&desc);\n";
+        out << "    }\n";
+        out << "}\n";
+
         out.close();
 
         std::cout << "Reflection header generated: " << headerPath << "\n";
