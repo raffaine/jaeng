@@ -8,6 +8,8 @@
 #include "render/frontend/renderer.h"
 #include "render/graph/render_graph.h"
 
+#include "basic_reflect.h"
+
 #define USE_PIX    // or _DEBUG / PROFILE / PROFILE_BUILD
 #include "pix3.h"  // provided by winpixevent package
 

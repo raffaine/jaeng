@@ -2,6 +2,7 @@
     "name": "jaeng",
     "version-string": "0.1.0",
     "dependencies": [
-        { "name": "winpixevent" }
+        { "name": "winpixevent" },
+        { "name": "directx-dxc"}
     ]
 }

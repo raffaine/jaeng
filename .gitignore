@@ -3,3 +3,5 @@
 /.vscode/
 /vcpkg_installed/
 /out/
+/shaders/include/
+/shaders/compiled/

@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
+# DXIL Reflection (D3D12 HLSL Compiled Shaders -> Header Files for main function)
+add_subdirectory(tools/dxil_reflect)
+
+# Shader Compiler
+add_subdirectory(shaders)
+
 # Output directories for all targets (DLLs/EXEs in one bin dir)
 foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
   string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG_UPPER)
@@ -54,14 +60,21 @@ add_executable(sandbox WIN32
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})
 target_link_libraries(sandbox PRIVATE renderer_api)
-add_dependencies(sandbox renderer_d3d12)
+add_dependencies(sandbox dxil_reflect compile_shaders renderer_d3d12)
+
+# Include generated reflection headers for the app
+target_include_directories(sandbox PRIVATE ${CMAKE_BINARY_DIR}/include)
+
 
 if(WIN32)
   # vcpkg provides a config package for WinPixEventRuntime
   find_package(winpixevent CONFIG REQUIRED)
 
   find_path(PIX_INCLUDE_DIRS "pix3.h")
-  target_include_directories(sandbox PRIVATE ${PIX_INCLUDE_DIRS})
+  target_include_directories(sandbox PRIVATE 
+    ${CMAKE_SOURCE_DIR}/shaders/include
+    ${PIX_INCLUDE_DIRS}
+  )
 
   target_link_libraries(sandbox PRIVATE d3dcompiler Microsoft::WinPixEventRuntime)
   target_compile_definitions(sandbox PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
