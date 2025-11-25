@@ -160,6 +160,22 @@ struct BindGroupDesc {
     uint32_t              entry_count;
 };
 
+// Used on Reflection Generated Headers
+struct PipelineReflectionResources {
+    ShaderModuleHandle vs;
+    ShaderModuleHandle fs;
+    PipelineHandle pipeline;
+
+    BufferHandle uniformBuffer;
+    TextureHandle texture;
+    SamplerHandle sampler;
+
+    BindGroupLayoutHandle bindGroupLayout;
+    BindGroupHandle bindGroup;
+
+    // Optional: offsets for uniform data, descriptor indices, etc.
+};
+
 enum class LoadOp : uint32_t { Load, Clear, DontCare };
 struct ColorAttachmentDesc {
     TextureHandle tex;

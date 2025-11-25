@@ -142,6 +142,56 @@ int main(int argc, char** argv) {
         out << "    }\n";
         out << "}\n";
 
+        // Inline function to create all pipeline-related resources
+        out << "\ninline void CreatePipelineResources(RendererAPI* api, PipelineReflectionResources& out) {\n";
+
+        // Load shaders using previously generated inline function
+        out << "    LoadShaders(api, out.vs, out.fs);\n\n";
+
+        // Create graphics pipeline
+        out << "    GraphicsPipelineDesc pipelineDesc {\n";
+        out << "        .vs = out.vs,\n";
+        out << "        .fs = out.fs,\n";
+        out << "        .topology = PrimitiveTopology::TriangleList,\n";
+        out << "        .vertex_layout = ShaderReflection::vertexLayout,\n";
+        out << "        .color_format = TextureFormat::RGBA8_UNORM,\n";
+        out << "        .depth_stencil = {}\n";
+        out << "    };\n";
+        out << "    out.pipeline = api->create_graphics_pipeline(&pipelineDesc);\n\n";
+
+        // Create uniform buffer
+        UINT cbSize = 0;
+        for (UINT i = 0; i < vsDesc.ConstantBuffers; ++i) {
+            ID3D12ShaderReflectionConstantBuffer* cb = vsReflect->GetConstantBufferByIndex(i);
+            D3D12_SHADER_BUFFER_DESC cbDesc;
+            cb->GetDesc(&cbDesc);
+            cbSize += cbDesc.Size;
+        }
+        out << "    BufferDesc bufferDesc { " << cbSize << ", BufferUsage_Uniform };\n";
+        out << "    out.uniformBuffer = api->create_buffer(&bufferDesc, nullptr);\n\n";
+
+        // Create texture
+        out << "    TextureDesc texDesc { TextureFormat::RGBA8_UNORM, 256, 256, 1, 1, 0 };\n";
+        out << "    out.texture = api->create_texture(&texDesc, nullptr);\n\n";
+
+        // Create sampler
+        out << "    SamplerDesc samplerDesc { SamplerFilter::Linear, AddressMode::Repeat, AddressMode::Repeat, AddressMode::Repeat,\n";
+        out << "        0.0f, 0.0f, 1.0f, {0, 0, 0, 0} };\n";
+        out << "    out.sampler = api->create_sampler(&samplerDesc);\n\n";
+
+        // Create bind group layout
+        out << "    out.bindGroupLayout = api->create_bind_group_layout(&ShaderReflection::bindGroupLayout);\n\n";
+
+        // Create bind group entries
+        out << "    BindGroupEntry entries[] = {\n";
+        out << "        { BindGroupEntryType::UniformBuffer, out.uniformBuffer, 0, " << cbSize << ", {}, {} },\n";
+        out << "        { BindGroupEntryType::Sampler, {}, 0, 0, {}, out.sampler },\n";
+        out << "        { BindGroupEntryType::Texture, {}, 0, 0, out.texture, {} }\n";
+        out << "    };\n";
+        out << "    BindGroupDesc bindGroupDesc { out.bindGroupLayout, entries, " << (vsDesc.BoundResources + psDesc.BoundResources) << " };\n";
+        out << "    out.bindGroup = api->create_bind_group(&bindGroupDesc);\n";
+        out << "}\n";
+
         out.close();
 
         std::cout << "Reflection header generated: " << headerPath << "\n";
