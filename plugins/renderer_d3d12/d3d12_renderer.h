@@ -3,7 +3,9 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <functional>
 #include <dxgi1_6.h>
+#include <d3d12.h>
 #include "common/result.h"
 #include "render/public/renderer_api.h"
 
@@ -110,6 +112,15 @@ private:
     UINT currentVertexStride_ = 0;
     HWND hwnd_ = 0;
 
+    enum class RendererState {
+        Uninitialized = 0,
+        Rendering,
+        Presenting
+    } state_ = RendererState::Uninitialized;
+
     // Helpers
     FrameContext& curFrame();
+
+    // Single Command List Execution (Off Frame Execution)
+    jaeng::result<> executeNow(std::function<void(ID3D12GraphicsCommandList*)> &&);
 };

@@ -63,3 +63,16 @@ jaeng::result<UploadSlice> UploadRing::stage(const void* src, UINT64 size, UINT6
     return UploadSlice{ buffer_.Get(), aligned, mapped_ + aligned };
 }
 
+jaeng::result<UploadSlice> UploadRing::stage_pitched(const uint8_t* src, int rows, int pitch, D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp)
+{
+    JAENG_ERROR_IF((!src || rows == 0 || pitch == 0), jaeng::error_code::invalid_args, "[UploadRing] stage(): Null or 0-sized source buffer is invalid");
+    JAENG_ERROR_IF((head_ + rows * pitch) > size_, jaeng::error_code::invalid_args, "[UploadRing] stage(): Out of space");
+
+    for (UINT y = 0; y < rows; ++y) {
+        std::memcpy(mapped_ + head_ + fp.Offset + y * fp.Footprint.RowPitch, src + y * pitch, pitch);
+    }
+    head_ = fp.Offset + rows * fp.Footprint.RowPitch;
+    
+    return UploadSlice{ buffer_.Get(), 0, mapped_ + head_ };
+}
+

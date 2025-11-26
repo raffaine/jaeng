@@ -16,6 +16,7 @@ public:
     jaeng::result<>  create(ID3D12Device* dev, UINT64 sizeBytes);
     void  reset(); // per-frame
     jaeng::result<UploadSlice>  stage(const void* src, UINT64 size, UINT64 alignment);
+    jaeng::result<UploadSlice>  stage_pitched(const uint8_t* src, int rows, int elems_per_row, D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp);
 
 private:
     Microsoft::WRL::ComPtr<ID3D12Resource> buffer_;

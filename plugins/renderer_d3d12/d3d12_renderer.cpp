@@ -63,6 +63,29 @@ FrameContext& RendererD3D12::curFrame()
     return *frames_[frameIndex_]; 
 }
 
+jaeng::result<> RendererD3D12::executeNow(std::function<void(ID3D12GraphicsCommandList*)>&& command)
+{
+    ComPtr<ID3D12CommandAllocator> alloc;
+    JAENG_CHECK_HRESULT(device_->dev()->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
+
+    ComPtr<ID3D12GraphicsCommandList> list;
+    JAENG_CHECK_HRESULT(device_->dev()->CreateCommandList(
+            0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)));
+
+    // Run provided commands
+    command(list.Get());
+
+    // Close & execute immediately, then wait
+    list->Close();
+    ID3D12CommandList* lists[] = { list.Get() };
+    device_->queue()->ExecuteCommandLists(1, lists);
+    auto fv = device_->signal();
+    device_->wait(fv);
+
+    return {};
+}
+
 jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -236,12 +259,19 @@ jaeng::result<SwapchainHandle> RendererD3D12::create_swapchain(const SwapchainDe
 
 jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
 {
+    // Not safe to take the lock if presenting
+    JAENG_ERROR_IF(state_ == RendererState::Presenting, jaeng::error_code::resource_not_ready, "[Renderer] Swapchain is presenting, defer this call.");
     std::lock_guard<std::mutex> lock(mtx_);
-    JAENG_ERROR_IF(!swapchain_, jaeng::error_code::resource_not_ready, "[Renderer] No Swapchain.");
+    JAENG_ERROR_IF(!swapchain_, jaeng::error_code::no_resource, "[Renderer] No Swapchain.");
 
     // --- Pause presents and quiesce GPU before resizing ---
     // Ensure no new presents can happen (mtx_ held). Now flush GPU work touching backbuffers.
     wait_idle(); // uses fence: device_->signal(); device_->wait(v);
+
+    // Release RTV from resource table before resizing
+    for (uint32_t i = 0; i < frameCount_ && i < backbufferHandles_.size(); ++i) {
+        if (auto* tex = resources_->get_tex(backbufferHandles_[i])) tex->res.Reset();
+    }
 
     // Resize backbuffers & RTVs inside swapchain
     JAENG_TRY(swapchain_->resize(device_->dev(), newSize.width, newSize.height, tearing_));
@@ -340,85 +370,51 @@ jaeng::result<> RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, c
 
     FrameContext& fr = curFrame();
 
-    bool staged = false;
+    // Helper to Generate the required Action to be executed on the CommandList
+    auto actionGen = [](BufferRec& b, const UploadSlice& us, uint64_t dst_off, uint64_t size) {
+        return [&b, us, dst_off, size](ID3D12GraphicsCommandList* list) {
+            // Ensure COPY_DEST
+            Barrier(list, b.res.Get(), b.state, D3D12_RESOURCE_STATE_COPY_DEST);
+            b.state = D3D12_RESOURCE_STATE_COPY_DEST;
+            list->CopyBufferRegion(b.res.Get(), dst_off, us.resource, us.offset, size);
+            // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
+        };
+    };
+
     if (frameBegun_) {
         // ---- Fast path: record into the active frame's command list using the per-frame ring ----
-        if (auto us = fr.upload->stage(data, size, 256ull).logError(); us.has_value()) {
-            // Ensure COPY_DEST
-            Barrier(fr.cmd(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
-            b->state = D3D12_RESOURCE_STATE_COPY_DEST;
-            // Enqueue copy
-            fr.cmd()->CopyBufferRegion(b->res.Get(), dst_off, us->resource, us->offset, size);
-            staged = true;
-        }
+        JAENG_TRY_ASSIGN(UploadSlice us, fr.upload->stage(data, size, 256ull));
+        actionGen(*b, us, dst_off, size)(fr.cmd());
     }
-
-    if (!staged) {
+    else {
         // ---- Robust path: no frame begun -> perform an immediate one-shot copy and wait ----
-        // Create a transient upload resource
-        D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC   upDesc{};
-        upDesc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
-        upDesc.Width            = size;
-        upDesc.Height           = 1;
-        upDesc.DepthOrArraySize = 1;
-        upDesc.MipLevels        = 1;
-        upDesc.SampleDesc.Count = 1;
-        upDesc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        ComPtr<ID3D12Resource> upload;
-        JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(
-                &hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
-                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)));
-
-        // Fill upload
-        uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
-        JAENG_CHECK_HRESULT(upload->Map(0, &r, reinterpret_cast<void**>(&upPtr)));
-        std::memcpy(upPtr, data, size);
-        upload->Unmap(0, nullptr);
-
-        // One-shot command list to do the copy now
-        ComPtr<ID3D12CommandAllocator> alloc;
-        JAENG_CHECK_HRESULT(device_->dev()->CreateCommandAllocator(
-                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
-
-        ComPtr<ID3D12GraphicsCommandList> list;
-        JAENG_CHECK_HRESULT(device_->dev()->CreateCommandList(
-                0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)));
-
-        // Transition and copy
-        Barrier(list.Get(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
-        b->state = D3D12_RESOURCE_STATE_COPY_DEST;
-        list->CopyBufferRegion(b->res.Get(), dst_off, upload.Get(), 0, size);
-
-        // Close & execute immediately, then wait
-        list->Close();
-        ID3D12CommandList* lists[] = { list.Get() };
-        device_->queue()->ExecuteCommandLists(1, lists);
-        auto fv = device_->signal();
-        device_->wait(fv);
+        UploadRing up;
+        JAENG_TRY(up.create(device_->dev(), size));
+        JAENG_TRY_ASSIGN(UploadSlice us, up.stage(data, size, 256ull));
+        JAENG_TRY(executeNow(actionGen(*b, us, dst_off, size)));
     }
-    // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
     return {};
 }
 
 jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
 {
-    TextureRec t{};
-    t.width  = td->width;
-    t.height = td->height;
+    TextureRec t {
+        .width  = td->width,
+        .height = td->height
+    };
 
-    D3D12_RESOURCE_DESC rd{};
-    rd.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    rd.Width              = td->width;
-    rd.Height             = td->height;
-    rd.DepthOrArraySize   = 1;
-    rd.MipLevels          = (UINT16)td->mip_levels;
-    rd.Format             = (td->format == TextureFormat::BGRA8_UNORM) ? DXGI_FORMAT_B8G8R8A8_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
-    rd.SampleDesc.Count   = 1;
-    rd.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    D3D12_RESOURCE_DESC rd {
+        .Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        .Width            = td->width,
+        .Height           = td->height,
+        .DepthOrArraySize = 1,
+        .MipLevels        = (UINT16)td->mip_levels,
+        .Format           = (td->format == TextureFormat::BGRA8_UNORM) ? DXGI_FORMAT_B8G8R8A8_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM,
+        .SampleDesc       = { .Count = 1 },
+        .Layout           = D3D12_TEXTURE_LAYOUT_UNKNOWN
+    };
 
-    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_HEAP_PROPERTIES hp{ .Type = D3D12_HEAP_TYPE_DEFAULT };
     JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(
         &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)));
     t.state = D3D12_RESOURCE_STATE_COPY_DEST;
@@ -430,34 +426,26 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
         UINT rows = 0; UINT64 rowSizeInBytes = 0;
         device_->dev()->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSizeInBytes, &totalBytes);
 
-        D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
-        D3D12_RESOURCE_DESC upDesc{};
-        upDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        upDesc.Width = totalBytes; upDesc.Height = 1; upDesc.DepthOrArraySize = 1; upDesc.MipLevels = 1;
-        upDesc.SampleDesc.Count = 1; upDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        ComPtr<ID3D12Resource> upload;
-        JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)));
-
-        // Fill upload
-        uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
-        upload->Map(0, &r, reinterpret_cast<void**>(&upPtr));
-        const uint8_t* src = static_cast<const uint8_t*>(initial);
-        size_t srcPitch = size_t(td->width) * 4; // RGBA8
-        for (UINT y = 0; y < rows; ++y) {
-            std::memcpy(upPtr + fp.Offset + y * fp.Footprint.RowPitch, src + y * srcPitch, srcPitch);
-        }
-        upload->Unmap(0, nullptr);
+        UploadRing up;
+        JAENG_TRY(up.create(device_->dev(), totalBytes));
+        JAENG_TRY_ASSIGN(UploadSlice us, up.stage_pitched(static_cast<const uint8_t*>(initial), rows, td->width * 4 /*RGBA8*/, fp));
 
         auto doCopy = [&](ID3D12GraphicsCommandList* cl) {
             // Transition and copy
             Barrier(cl, t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
-            D3D12_TEXTURE_COPY_LOCATION dstLoc{}; dstLoc.pResource = t.res.Get();
-            dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dstLoc.SubresourceIndex = 0;
-            D3D12_TEXTURE_COPY_LOCATION srcLoc{}; srcLoc.pResource = upload.Get();
-            srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; srcLoc.PlacedFootprint = fp;
+            D3D12_TEXTURE_COPY_LOCATION dstLoc {
+                .pResource        = t.res.Get(),
+                .Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                .SubresourceIndex = 0
+            };
+            D3D12_TEXTURE_COPY_LOCATION srcLoc {
+                .pResource       = us.resource,
+                .Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                .PlacedFootprint = fp
+            };
             cl->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
             Barrier(cl, t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         };
 
         if (frameBegun_) {
@@ -465,31 +453,19 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
             doCopy(curFrame().cmd());
         } else {
             // No frame yet -> execute a tiny one-shot list and wait
-            ComPtr<ID3D12CommandAllocator> alloc;
-            JAENG_CHECK_HRESULT(device_->dev()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
-            ComPtr<ID3D12GraphicsCommandList> list;
-            JAENG_CHECK_HRESULT(device_->dev()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)));
-
-            doCopy(list.Get());
-            list->Close();
-
-            ID3D12CommandList* lists[] = { list.Get() };
-            device_->queue()->ExecuteCommandLists(1, lists);
-            auto fv = device_->signal();
-            device_->wait(fv);
+            JAENG_TRY(executeNow(std::move(doCopy)));
         }
-        t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
 
     // Create SRV in CPU heap (permanent)
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = rd.Format;
-    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Texture2D.MipLevels = td->mip_levels;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv {
+        .Format                  = rd.Format,
+        .ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D,
+        .Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+        .Texture2D               = { .MipLevels = td->mip_levels }
+    };
 
-    UINT idx = 0;
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu = cpuDesc_->allocate(&idx);
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu = cpuDesc_->allocate(nullptr);
     device_->dev()->CreateShaderResourceView(t.res.Get(), &srv, cpu);
     t.srvCpu = cpu;
 
@@ -860,9 +836,11 @@ void RendererD3D12::submit(CommandListHandle* /*lists*/, uint32_t /*list_count*/
 void RendererD3D12::present(SwapchainHandle)
 {
     std::lock_guard<std::mutex> lock(mtx_);
+    state_ = RendererState::Presenting;
     // Present (vsync on by default; can add a flag in RendererDesc if desired)
     UINT syncInterval = (tearing_)? 0 : 1;
     swapchain_->swap()->Present(syncInterval, (tearing_)? DXGI_PRESENT_ALLOW_TEARING : 0);
+    state_ = RendererState::Rendering;
 }
 
 void RendererD3D12::wait_idle()
