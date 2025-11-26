@@ -10,58 +10,12 @@
 
 #include "basic_reflect.h"
 
-#define USE_PIX    // or _DEBUG / PROFILE / PROFILE_BUILD
+#define USE_PIX
 #include "pix3.h"  // provided by winpixevent package
 
 using Microsoft::WRL::ComPtr;
 
 static const wchar_t* kWndClass = L"SandboxWindowClass";
-
-static const char* kVS = R"(
-cbuffer CBTransform : register(b0)
-{
-    float4x4 uTransform;
-};
-struct VSIn {
-    float3 pos: POSITION;
-    float3 col: COLOR;
-    float2 uv: TEXCOORD;
-};
-struct VSOut {
-    float4 pos: SV_Position;
-    float3 col: COLOR;
-    float2 uv: TEXCOORD;
-};
-VSOut main(VSIn v) {
-    VSOut o;
-    o.pos = mul(uTransform, float4(v.pos, 1.0));
-    o.col = v.col;
-    o.uv = v.uv;
-    return o;
-}
-)";
-
-static const char* kPS = R"(
-Texture2D t0 : register(t0);
-SamplerState s0 : register(s0);
-struct PSIn { float4 pos: SV_Position; float3 col: COLOR; float2 uv: TEXCOORD; };
-float4 main(PSIn i) : SV_Target {
-    float4 tex = t0.Sample(s0, i.uv);
-    return float4(i.col, 1.0) * tex;
-}
-)";
-
-static bool CompileHlsl(const char* src, const char* entry, const char* target, ID3DBlob** outBlob) {
-    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if defined(_DEBUG)
-    flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-    ComPtr<ID3DBlob> sh, err;
-    HRESULT hr = D3DCompile(src, strlen(src), nullptr, nullptr, nullptr, entry, target, flags, 0, &sh, &err);
-    if (FAILED(hr)) { if (err) OutputDebugStringA((const char*)err->GetBufferPointer()); return false; }
-    *outBlob = sh.Detach();
-    return true;
-}
 
 Renderer renderer {};
 SwapchainHandle swap = 0;
