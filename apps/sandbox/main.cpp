@@ -158,6 +158,33 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     BindGroupDesc bgd{ bgl, be, 3 };
     BindGroupHandle bg = renderer.gfx.create_bind_group(&bgd);
 
+    // Build a small render graph: Clear -> Forward
+    RenderGraph graph;
+
+    // 1) Clear pass
+    graph.add_pass("Clear", { {
+        .tex = renderer.gfx.get_current_backbuffer(swap),
+        .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
+    } }, { .tex = 1, .clear_depth = 1.0f }, nullptr);
+    // 2) Forward pass
+    graph.add_pass("Forward", 
+        { { .tex = renderer.gfx.get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
+        [&](const RGPassContext& ctx) {
+            ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
+            ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
+            ctx.gfx->cmd_set_index_buffer(ctx.cmd, ib, true, 0);
+
+            for (int i=0; i<4; i++) {
+                ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(CBTransform));
+                ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
+                ctx.gfx->cmd_draw_indexed(ctx.cmd, 6, 1, 0, 0, 0);
+            }
+        }
+    );
+
+    // Validate
+    graph.compile();
+
     // ---- Main Loop ----
     bool running = true;
     MSG msg{};
@@ -170,39 +197,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
         if (!running) break;
 
-        // Build a small render graph: Clear -> Forward
-        rg::RenderGraph graph;
-
-        // 1) Clear pass
-        {
-            rg::RGColorTarget ct{
-                .tex = renderer.gfx.get_current_backbuffer(swap),
-                .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
-            };
-            rg::RGDepthTarget dt { .tex = 1, .clear_depth = 1.0f };
-            graph.add_pass("Clear", { ct }, dt, nullptr);
-        }
-        // 2) Forward pass
-        {
-            rg::RGColorTarget ct{ .tex = renderer.gfx.get_current_backbuffer(swap) };
-            rg::RGDepthTarget dt{ .tex = 1 }; // arbitrary for now, indicates the swapchain's depth buffer
-            graph.add_pass("Forward", { ct }, dt,
-                [&](const rg::RGPassContext& ctx) {
-                    ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
-                    ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
-                    ctx.gfx->cmd_set_index_buffer(ctx.cmd, ib, true, 0);
-
-                    for (int i=0; i<4; i++) {
-                        ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(CBTransform));
-                        ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
-                        ctx.gfx->cmd_draw_indexed(ctx.cmd, 6, 1, 0, 0, 0);
-                    }
-                }
-            );
-        }
-
-        // Execute
-        graph.compile();
+        // Execute Render Passes
         graph.execute(renderer.gfx, swap, 0, nullptr);
     }
 

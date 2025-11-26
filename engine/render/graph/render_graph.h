@@ -6,29 +6,27 @@
 #include <cstdint>
 #include "render/public/renderer_api.h"
 
-// Render Graph v0 (color-only):
+// Render Graph v0 (single target, color + depth):
 // - Declares passes that bind one or more color render targets.
-// - Depth is reserved in the types but unused (no backend API for it yet).
+//   - Only uses first and expects render target
+// - Depth is optionally declared on passes and only support defaults target.
 // - Uses only functions that exist in the current RendererAPI.
 //
 // Execution order:
 //   begin_frame()
 //   cmd list open
 //   for each pass:
-//       cmd_begin_rendering(color-only), record(), cmd_end_rendering()
+//       cmd_begin_rendering(rtv/dsv), record(), cmd_end_rendering()
 //   close, submit, present
 //   end_frame()
-
-namespace rg {
 
 struct RGColorTarget {
     TextureHandle tex = 0;
     float clear_rgba[4] = {0, 0, 0, 1};
 };
 
-// Reserved for a future depth-enabled variant (not used in v0).
 struct RGDepthTarget {
-    TextureHandle tex = 0;      // 0 = unused
+    TextureHandle tex = 0;      // 0 = unused, !0 = default
     float clear_depth = 1.0f;
 };
 
@@ -37,7 +35,7 @@ struct RGPassContext {
     CommandListHandle cmd = 0;
     const RGColorTarget* colorTargets = nullptr;
     uint32_t colorCount = 0;
-    const RGDepthTarget* depthTarget = nullptr; // unused by v0
+    const RGDepthTarget* depthTarget = nullptr;
 };
 
 using RecordFunc = std::function<void(const RGPassContext&)>;
@@ -45,7 +43,7 @@ using RecordFunc = std::function<void(const RGPassContext&)>;
 struct RGPass {
     std::string name;
     std::vector<RGColorTarget> colorTargets;
-    RGDepthTarget depthTarget; // kept for forward-compat; v0 ignores it
+    RGDepthTarget depthTarget;
     RecordFunc record;
 };
 
@@ -60,12 +58,10 @@ public:
                       const std::vector<RGColorTarget>& colors,
                       const RGDepthTarget& depth,
                       RecordFunc record) {
-        RGPass p;
-        p.name = name;
-        p.colorTargets = colors;
-        p.depthTarget = depth;     // stored but unused in v0
-        p.record = std::move(record);
-        passes_.push_back(std::move(p));
+        passes_.emplace_back(RGPass{
+            .name = name, .colorTargets = colors,
+            .depthTarget = depth, .record = std::move(record)
+        });
         return static_cast<uint32_t>(passes_.size() - 1);
     }
 
@@ -76,7 +72,6 @@ public:
     }
 
     // Execute the graph for the current frame.
-    // NOTE: Color-only begin; depth is ignored in v0.
     void execute(RendererAPI& gfx, SwapchainHandle swap, TextureHandle defaultDepth = 0, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
         if (!gfx.begin_frame || !gfx.begin_commands || !gfx.cmd_begin_rendering_ops ||
             !gfx.cmd_end_rendering || !gfx.end_commands || !gfx.submit ||
@@ -139,5 +134,3 @@ public:
 private:
     std::vector<RGPass> passes_;
 };
-
-} // namespace rg
