@@ -3,8 +3,9 @@
 
 using Microsoft::WRL::ComPtr;
 
-bool  D3D12Swapchain::create(HWND hwnd, IDXGIFactory6* factory, ID3D12Device* dev,
-                             ID3D12CommandQueue* queue, DXGI_FORMAT rtvFormat, UINT width, UINT height, uint32_t frameCount, bool allow_tearing)
+jaeng::result<>  D3D12Swapchain::create(HWND hwnd, IDXGIFactory6* factory, ID3D12Device* dev,
+                                        ID3D12CommandQueue* queue, DXGI_FORMAT rtvFormat, UINT width, UINT height,
+                                        uint32_t frameCount, bool allow_tearing)
 {
     frameCount_ = frameCount;
     rtvFormat_ = rtvFormat;
@@ -24,20 +25,20 @@ bool  D3D12Swapchain::create(HWND hwnd, IDXGIFactory6* factory, ID3D12Device* de
     scd.Flags = (allow_tearing)? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
 
     ComPtr<IDXGISwapChain1> swap1;
-    if (FAILED(factory->CreateSwapChainForHwnd(queue, hwnd, &scd, nullptr, nullptr, &swap1))) return false;
-    if (FAILED(swap1.As(&swap_))) return false;
+    JAENG_CHECK_HRESULT(factory->CreateSwapChainForHwnd(queue, hwnd, &scd, nullptr, nullptr, &swap1));
+    JAENG_CHECK_HRESULT(swap1.As(&swap_));
 
     // RTV heap (big enough for swapchain backbuffers)
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
     rtvHeapDesc.NumDescriptors = 8; // plenty for starter
     rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    if (FAILED(dev->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)))) return false;
+    JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)));
     rtvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     // Create RTVs
     rebuild_rtvs(dev);
 
-    return true;
+    return {};
 }
 
 void  D3D12Swapchain::destroy()
@@ -49,9 +50,9 @@ void  D3D12Swapchain::destroy()
     frameCount_ = 0;
 }
 
-void D3D12Swapchain::resize(ID3D12Device* dev, UINT width, UINT height, bool allow_teearing)
+jaeng::result<> D3D12Swapchain::resize(ID3D12Device* dev, UINT width, UINT height, bool allow_teearing)
 {
-    if (!swap_) return;
+    JAENG_ERROR_IF(!swap_, jaeng::error_code::resource_not_ready, "[Swapchain] No Swapchain.");
     width_ = width;
     height_ = height;
 
@@ -59,8 +60,10 @@ void D3D12Swapchain::resize(ID3D12Device* dev, UINT width, UINT height, bool all
     for (auto& bb : rtv_) bb.res.Reset();
     rtv_.clear();
 
-    HR_CHECK(swap_->ResizeBuffers(frameCount_, width_, height_, rtvFormat_, (allow_teearing)? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0));
+    JAENG_CHECK_HRESULT(swap_->ResizeBuffers(frameCount_, width_, height_, rtvFormat_, (allow_teearing)? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0));
     rebuild_rtvs(dev);
+
+    return {};
 }
 
 void D3D12Swapchain::rebuild_rtvs(ID3D12Device* dev) {    

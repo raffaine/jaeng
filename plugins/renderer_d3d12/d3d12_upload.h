@@ -2,7 +2,8 @@
 #pragma once
 #include <wrl.h>
 #include <d3d12.h>
-#include <optional>
+
+#include "common/result.h"
 
 struct UploadSlice {
     ID3D12Resource* resource;   // UPLOAD heap, caller treats as non-owning
@@ -12,9 +13,9 @@ struct UploadSlice {
 
 class UploadRing {
 public:
-    bool  create(ID3D12Device* dev, UINT64 sizeBytes);
+    jaeng::result<>  create(ID3D12Device* dev, UINT64 sizeBytes);
     void  reset(); // per-frame
-    std::optional<UploadSlice>  stage(const void* src, UINT64 size, UINT64 alignment);
+    jaeng::result<UploadSlice>  stage(const void* src, UINT64 size, UINT64 alignment);
 
 private:
     Microsoft::WRL::ComPtr<ID3D12Resource> buffer_;

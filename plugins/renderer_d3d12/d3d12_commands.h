@@ -3,12 +3,14 @@
 #include <wrl.h>
 #include <d3d12.h>
 
+#include "common/result.h"
+
 class DescriptorAllocatorGPU;
 class UploadRing;
 
 class FrameContext {
 public:
-    bool init(ID3D12Device* dev);
+    jaeng::result<> init(ID3D12Device* dev);
     void reset(); // Reset allocator and cmd list for the frame
 
     ID3D12GraphicsCommandList* cmd() const { return cmd_.Get(); }

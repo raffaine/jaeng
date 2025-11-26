@@ -63,7 +63,7 @@ FrameContext& RendererD3D12::curFrame()
     return *frames_[frameIndex_]; 
 }
 
-bool RendererD3D12::init(const RendererDesc* desc)
+jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 {
     std::lock_guard<std::mutex> lock(mtx_);
 
@@ -88,7 +88,7 @@ bool RendererD3D12::init(const RendererDesc* desc)
     factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
 #endif
 
-    if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)))) return false;
+    JAENG_CHECK_HRESULT(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)));
     { // Tearing Support (Off for now as it causes crashes after some time running)
         BOOL allowTearing = FALSE;    
         ComPtr<IDXGIFactory5> factory5;
@@ -100,21 +100,21 @@ bool RendererD3D12::init(const RendererDesc* desc)
     }
 
     device_ = std::make_unique<D3D12Device>();
-    if(!device_->create(factory_.Get())) return false;
+    JAENG_TRY(device_->create(factory_.Get()));
 
     cpuDesc_ = std::make_unique<DescriptorAllocatorCPU>();
-    if(!cpuDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2048)) return false;
+    JAENG_TRY(cpuDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2048));
 
     dsvDesc_ = std::make_unique<DescriptorAllocatorCPU>();
-    if(!dsvDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 256)) return false;
+    JAENG_TRY(dsvDesc_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 256));
 
     samplerHeapCpu_ = std::make_unique<DescriptorAllocatorCPU>();
-    if(!samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256)) return false;
+    JAENG_TRY(samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256));
 
     resources_ = std::make_unique<ResourceTable>();
     pipelines_ = std::make_unique<PipelineTable>();
     binds_     = std::make_unique<BindSpace>();
-    if (!binds_->init(device_->dev(), cpuDesc_.get())) return false;
+    JAENG_TRY(binds_->init(device_->dev(), cpuDesc_.get()));
 
     // Frames
     frames_.resize(frameCount_);
@@ -122,13 +122,13 @@ bool RendererD3D12::init(const RendererDesc* desc)
     gpuDescPerFrame_.resize(frameCount_);
     for (uint32_t i = 0; i < frameCount_; ++i) {
         gpuDescPerFrame_[i] = std::make_unique<DescriptorAllocatorGPU>();
-        if(!gpuDescPerFrame_[i]->create(device_->dev(), 1024 /*srv*/, 64 /*sampler*/)) return false;
+        JAENG_TRY(gpuDescPerFrame_[i]->create(device_->dev(), 1024 /*srv*/, 64 /*sampler*/));
 
         uploadPerFrame_[i] = std::make_unique<UploadRing>();
-        if (!uploadPerFrame_[i]->create(device_->dev(), 8ull * 1024ull * 1024ull /*8 MB ring*/)) return false;
+        JAENG_TRY(uploadPerFrame_[i]->create(device_->dev(), 8ull * 1024ull * 1024ull /*8 MB ring*/));
 
         frames_[i] = std::make_unique<FrameContext>();
-        if (!frames_[i]->init(device_->dev())) return false;
+        JAENG_TRY(frames_[i]->init(device_->dev()));
 
         frames_[i]->upload = uploadPerFrame_[i].get();
         frames_[i]->gpuDescs = gpuDescPerFrame_[i].get();
@@ -137,7 +137,7 @@ bool RendererD3D12::init(const RendererDesc* desc)
     frameIndex_ = 0;
     frameBegun_ = false;
 
-    return true;
+    return {};
 }
 
 void RendererD3D12::shutdown()
@@ -199,15 +199,15 @@ void RendererD3D12::end_frame()
     frameBegun_ = false;
 }
 
-SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
+jaeng::result<SwapchainHandle> RendererD3D12::create_swapchain(const SwapchainDesc* d)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (!hwnd_) return 0;
+    JAENG_ERROR_IF(!hwnd_, jaeng::error_code::resource_not_ready, "[Renderer] No Window Handle");
 
     // Create & build RTVs internally
     swapchain_ = std::make_unique<D3D12Swapchain>();
-    if(!swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(),
-                           ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_, tearing_)) return 0;
+    JAENG_TRY(swapchain_->create(hwnd_, factory_.Get(), device_->dev(), device_->queue(),
+              ToDxgiFormat(d->format), d->size.width, d->size.height, frameCount_, tearing_));
 
     // Register backbuffers as textures in ResourceTable and cache handles for get_current_backbuffer()
     backbufferHandles_.clear();
@@ -228,23 +228,23 @@ SwapchainHandle RendererD3D12::create_swapchain(const SwapchainDesc* d)
         UINT dsvIndex;
         D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDesc_->allocate(&dsvIndex);
         depthManager_ = std::make_unique<DepthManager>(device_->dev(), dsvHandle);
-        if (!depthManager_->init(d->size.width, d->size.height, ToDxgiFormat(d->depth_stencil.depth_format))) return 0;
+        JAENG_TRY(depthManager_->init(d->size.width, d->size.height, ToDxgiFormat(d->depth_stencil.depth_format)));
     }
 
     return 1; // Single id for this starter
 }
 
-void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
+jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    if(!swapchain_) return;
+    JAENG_ERROR_IF(!swapchain_, jaeng::error_code::resource_not_ready, "[Renderer] No Swapchain.");
 
     // --- Pause presents and quiesce GPU before resizing ---
     // Ensure no new presents can happen (mtx_ held). Now flush GPU work touching backbuffers.
     wait_idle(); // uses fence: device_->signal(); device_->wait(v);
 
     // Resize backbuffers & RTVs inside swapchain
-    swapchain_->resize(device_->dev(), newSize.width, newSize.height, tearing_);
+    JAENG_TRY(swapchain_->resize(device_->dev(), newSize.width, newSize.height, tearing_));
 
     // Refresh resource table entries for backbuffers
     for (uint32_t i = 0; i < frameCount_ && i < backbufferHandles_.size(); ++i)
@@ -259,8 +259,10 @@ void RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
 
     // Resize depth buffer to match new size
     if (depthManager_) {
-        depthManager_->resize(newSize.width, newSize.height);
+        JAENG_TRY(depthManager_->resize(newSize.width, newSize.height));
     }
+
+    return {};
 }
 
 void RendererD3D12::destroy_swapchain(SwapchainHandle)
@@ -278,7 +280,7 @@ TextureHandle RendererD3D12::get_current_backbuffer(SwapchainHandle)
 
 }
 
-BufferHandle RendererD3D12::create_buffer(const BufferDesc* d, const void* initial)
+jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, const void* initial)
 {
     // Create DEFAULT-heap resource; if initial != null, stage via UploadRing and copy
     BufferRec buf{};
@@ -295,8 +297,8 @@ BufferHandle RendererD3D12::create_buffer(const BufferDesc* d, const void* initi
     rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
     // Start in COMMON; we'll transition as needed
-    if (FAILED(device_->dev()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-        D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&buf.res)))) return 0;
+    JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&buf.res)));
     buf.state = D3D12_RESOURCE_STATE_COMMON;
 
     // Convenience: set VBV/IBV if usage flags indicate it (stride will be overridden by pipeline)
@@ -317,7 +319,7 @@ BufferHandle RendererD3D12::create_buffer(const BufferDesc* d, const void* initi
 
     // Optional initial upload (record into current frame)
     if (initial && d->size_bytes) {
-        update_buffer(h, 0, initial, d->size_bytes);
+        JAENG_TRY(update_buffer(h, 0, initial, d->size_bytes));
     }
 
     return h;
@@ -330,18 +332,18 @@ void RendererD3D12::destroy_buffer(BufferHandle h)
     }
 }
 
-bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* data, uint64_t size)
+jaeng::result<> RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* data, uint64_t size)
 {
-    if (!data || size == 0) return true;
+    if (!data || size == 0) return {};
     auto* b = resources_->get_buf(h);
-    if (!b) return false;
+    JAENG_ERROR_IF(!b, jaeng::error_code::no_resource, "[Renderer] No buffer to update");
 
     FrameContext& fr = curFrame();
 
     bool staged = false;
     if (frameBegun_) {
         // ---- Fast path: record into the active frame's command list using the per-frame ring ----
-        if (auto us = fr.upload->stage(data, size, 256ull); us.has_value()) {
+        if (auto us = fr.upload->stage(data, size, 256ull).logError(); us.has_value()) {
             // Ensure COPY_DEST
             Barrier(fr.cmd(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
             b->state = D3D12_RESOURCE_STATE_COPY_DEST;
@@ -365,26 +367,24 @@ bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* 
         upDesc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
         ComPtr<ID3D12Resource> upload;
-        if (FAILED(device_->dev()->CreateCommittedResource(
+        JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(
                 &hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
-                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload))))
-            return false;
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)));
 
         // Fill upload
         uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
-        if (FAILED(upload->Map(0, &r, reinterpret_cast<void**>(&upPtr)))) return false;
+        JAENG_CHECK_HRESULT(upload->Map(0, &r, reinterpret_cast<void**>(&upPtr)));
         std::memcpy(upPtr, data, size);
         upload->Unmap(0, nullptr);
 
         // One-shot command list to do the copy now
         ComPtr<ID3D12CommandAllocator> alloc;
-        if (FAILED(device_->dev()->CreateCommandAllocator(
-                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) return false;
+        JAENG_CHECK_HRESULT(device_->dev()->CreateCommandAllocator(
+                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
 
         ComPtr<ID3D12GraphicsCommandList> list;
-        if (FAILED(device_->dev()->CreateCommandList(
-                0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list))))
-            return false;
+        JAENG_CHECK_HRESULT(device_->dev()->CreateCommandList(
+                0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)));
 
         // Transition and copy
         Barrier(list.Get(), b->res.Get(), b->state, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -399,10 +399,10 @@ bool RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* 
         device_->wait(fv);
     }
     // Leave buffer in COPY_DEST; cmd_set_vertex_buffer will transition to VERTEX when binding
-    return true;
+    return {};
 }
 
-TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
+jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
 {
     TextureRec t{};
     t.width  = td->width;
@@ -419,8 +419,8 @@ TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* i
     rd.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
     D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-    if (FAILED(device_->dev()->CreateCommittedResource(
-        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)))) return 0;
+    JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(
+        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&t.res)));
     t.state = D3D12_RESOURCE_STATE_COPY_DEST;
 
     // If initial data provided, do one-shot upload (either in-frame or immediate list)
@@ -436,8 +436,8 @@ TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* i
         upDesc.Width = totalBytes; upDesc.Height = 1; upDesc.DepthOrArraySize = 1; upDesc.MipLevels = 1;
         upDesc.SampleDesc.Count = 1; upDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         ComPtr<ID3D12Resource> upload;
-        if (FAILED(device_->dev()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)))) return 0;
+        JAENG_CHECK_HRESULT(device_->dev()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)));
 
         // Fill upload
         uint8_t* upPtr = nullptr; D3D12_RANGE r{0,0};
@@ -465,23 +465,18 @@ TextureHandle RendererD3D12::create_texture(const TextureDesc* td, const void* i
             doCopy(curFrame().cmd());
         } else {
             // No frame yet -> execute a tiny one-shot list and wait
-            //ExecuteNow(doCopy);
-            do { // TODO: This should move somewhere else, loop is just so I can break without returning
-                ComPtr<ID3D12CommandAllocator> alloc;
-                if (FAILED(device_->dev()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)))) break;
+            ComPtr<ID3D12CommandAllocator> alloc;
+            JAENG_CHECK_HRESULT(device_->dev()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
+            ComPtr<ID3D12GraphicsCommandList> list;
+            JAENG_CHECK_HRESULT(device_->dev()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)));
 
-                ComPtr<ID3D12GraphicsCommandList> list;
-                if (FAILED(device_->dev()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&list)))) break;
+            doCopy(list.Get());
+            list->Close();
 
-                doCopy(list.Get());
-                list->Close();
-
-                ID3D12CommandList* lists[] = { list.Get() };
-                device_->queue()->ExecuteCommandLists(1, lists);
-
-                auto fv = device_->signal();
-                device_->wait(fv);
-            } while (false);
+            ID3D12CommandList* lists[] = { list.Get() };
+            device_->queue()->ExecuteCommandLists(1, lists);
+            auto fv = device_->signal();
+            device_->wait(fv);
         }
         t.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
@@ -508,7 +503,7 @@ void RendererD3D12::destroy_texture(TextureHandle h)
     }
 }
 
-SamplerHandle RendererD3D12::create_sampler(const SamplerDesc* sd)
+jaeng::result<SamplerHandle> RendererD3D12::create_sampler(const SamplerDesc* sd)
 {
     D3D12_SAMPLER_DESC d{};
     d.Filter   = (sd->filter == SamplerFilter::Nearest) ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -885,24 +880,24 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     // Fill function table with static lambdas forwarding to instance
     static RendererAPI api = {};
 
-    api.init       = [](const RendererDesc* d) { return g_renderer->init(d); };
+    api.init       = [](const RendererDesc* d) { return g_renderer->init(d).logError().has_value(); };
     api.shutdown   = []{ g_renderer->shutdown(); };
 
     api.begin_frame = []{ g_renderer->begin_frame(); };
     api.end_frame   = []{ g_renderer->end_frame(); };
 
-    api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d); };
-    api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { g_renderer->resize_swapchain(s,e); };
+    api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d).orValue(0); };
+    api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { if(!g_renderer->resize_swapchain(s,e).logError()); };
     api.destroy_swapchain= [](SwapchainHandle s) { g_renderer->destroy_swapchain(s); };
     api.get_current_backbuffer = [](SwapchainHandle s) { return g_renderer->get_current_backbuffer(s); };
 
-    api.create_buffer = [](const BufferDesc* d, const void* p) { return g_renderer->create_buffer(d,p); };
+    api.create_buffer = [](const BufferDesc* d, const void* p) { return g_renderer->create_buffer(d,p).orValue(0); };
     api.destroy_buffer= [](BufferHandle h) { g_renderer->destroy_buffer(h); };
-    api.update_buffer = [](BufferHandle h, uint64_t o, const void* p, uint64_t sz) { return g_renderer->update_buffer(h,o,p,sz); };
+    api.update_buffer = [](BufferHandle h, uint64_t o, const void* p, uint64_t sz) { return g_renderer->update_buffer(h,o,p,sz).logError().has_value(); };
 
-    api.create_texture = [](const TextureDesc* d, const void* p) { return g_renderer->create_texture(d,p); };
+    api.create_texture = [](const TextureDesc* d, const void* p) { return g_renderer->create_texture(d,p).orValue(0); };
     api.destroy_texture= [](TextureHandle h) { g_renderer->destroy_texture(h); };
-    api.create_sampler = [](const SamplerDesc* d) { return g_renderer->create_sampler(d); };
+    api.create_sampler = [](const SamplerDesc* d) { return g_renderer->create_sampler(d).orValue(0); };
     api.destroy_sampler= [](SamplerHandle h) { g_renderer->destroy_sampler(h); };
 
     api.create_shader_module = [](const ShaderModuleDesc* d) { return g_renderer->create_shader_module(d); };

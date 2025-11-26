@@ -4,6 +4,7 @@
 #include <vector>
 #include <mutex>
 #include <dxgi1_6.h>
+#include "common/result.h"
 #include "render/public/renderer_api.h"
 
 // Forward declarations for internal classes
@@ -28,24 +29,24 @@ public:
     RendererD3D12& operator=(const RendererD3D12&) = delete;
 
     // --- RendererAPI methods ---
-    bool init(const RendererDesc*);
+    jaeng::result<> init(const RendererDesc*);
     void shutdown();
 
     void begin_frame();
     void end_frame();
 
-    SwapchainHandle create_swapchain(const SwapchainDesc*);
-    void resize_swapchain(SwapchainHandle, Extent2D);
+    jaeng::result<SwapchainHandle> create_swapchain(const SwapchainDesc*);
+    jaeng::result<> resize_swapchain(SwapchainHandle, Extent2D);
     void destroy_swapchain(SwapchainHandle);
     TextureHandle get_current_backbuffer(SwapchainHandle);
 
-    BufferHandle create_buffer(const BufferDesc*, const void* initial);
+    jaeng::result<BufferHandle> create_buffer(const BufferDesc*, const void* initial);
     void destroy_buffer(BufferHandle);
-    bool update_buffer(BufferHandle, uint64_t dst_off, const void* data, uint64_t size);
+    jaeng::result<> update_buffer(BufferHandle, uint64_t dst_off, const void* data, uint64_t size);
 
-    TextureHandle create_texture(const TextureDesc*, const void* initial);
+    jaeng::result<TextureHandle> create_texture(const TextureDesc*, const void* initial);
     void destroy_texture(TextureHandle);
-    SamplerHandle create_sampler(const SamplerDesc*);
+    jaeng::result<SamplerHandle> create_sampler(const SamplerDesc*);
     void destroy_sampler(SamplerHandle);
 
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc*);

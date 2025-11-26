@@ -1,12 +1,13 @@
 // d3d12_bind.h
 #pragma once
 
-#include "d3d12_descriptors.h"
-#include "d3d12_resources.h"
-
 #include <wrl.h>
 #include <d3d12.h>
 #include <vector>
+
+#include "common/result.h"
+#include "d3d12_descriptors.h"
+#include "d3d12_resources.h"
 
 struct BindGroupLayoutRec {
     std::vector<BindGroupLayoutEntry> entries;
@@ -22,7 +23,7 @@ struct BindGroupRec {
 
 class BindSpace {
 public:
-    bool init(ID3D12Device* dev, DescriptorAllocatorCPU* cpuDesc);
+    jaeng::result<> init(ID3D12Device* dev, DescriptorAllocatorCPU* cpuDesc);
     void shutdown();
 
     // Fallback CBV:
@@ -45,5 +46,5 @@ private:
     std::vector<BindGroupLayoutRec> layouts_;
     std::vector<BindGroupRec>       groups_;
 
-    bool create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* cpu);
+    jaeng::result<> create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* cpu);
 };

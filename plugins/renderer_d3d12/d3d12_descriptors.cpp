@@ -5,20 +5,20 @@ using Microsoft::WRL::ComPtr;
 
 // ------------------ CPU allocator (linear, non-shader-visible) ------------------
 
-bool DescriptorAllocatorCPU::create(ID3D12Device* dev, D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count)
+jaeng::result<> DescriptorAllocatorCPU::create(ID3D12Device* dev, D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count)
 {
     // RTV heap (big enough for swapchain backbuffers)
     D3D12_DESCRIPTOR_HEAP_DESC dh{};
     dh.NumDescriptors = count;
     dh.Type           = type;
     dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    if (FAILED(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&heap_)))) return false;
+    JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&heap_)));
 
     incSize_  = dev->GetDescriptorHandleIncrementSize(type);
     capacity_ = count;
     used_     = 0;
 
-    return true;
+    return {};
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE DescriptorAllocatorCPU::allocate(UINT* outIndex)
@@ -36,14 +36,14 @@ D3D12_CPU_DESCRIPTOR_HANDLE DescriptorAllocatorCPU::allocate(UINT* outIndex)
 
 // ------------------ GPU allocators (shader-visible, per-frame reset) ------------
 
-bool DescriptorAllocatorGPU::create(ID3D12Device* dev, UINT srvCount, UINT sampCount) {
+jaeng::result<> DescriptorAllocatorGPU::create(ID3D12Device* dev, UINT srvCount, UINT sampCount) {
     // SRV/CBV/UAV heap
     {
         D3D12_DESCRIPTOR_HEAP_DESC dh{};
         dh.NumDescriptors = srvCount;
         dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        if(FAILED(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&srvHeap_)))) return false;
+        JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&srvHeap_)));
 
         srvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         srvCap_ = srvCount;
@@ -55,14 +55,14 @@ bool DescriptorAllocatorGPU::create(ID3D12Device* dev, UINT srvCount, UINT sampC
         dh.NumDescriptors = sampCount;
         dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
         dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        if(FAILED(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&sampHeap_)))) return false;
+        JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&sampHeap_)));
 
         sampInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
         sampCap_ = sampCount;
         sampUsed_= 0;
     }
 
-    return true;
+    return {};
 }
 
 void DescriptorAllocatorGPU::reset()

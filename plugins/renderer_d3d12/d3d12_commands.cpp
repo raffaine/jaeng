@@ -3,15 +3,15 @@
 #include "d3d12_upload.h"
 #include "d3d12_utils.h"
 
-bool FrameContext::init(ID3D12Device* dev)
+jaeng::result<> FrameContext::init(ID3D12Device* dev)
 {
-    if (FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc_)))) return false;
-    if (FAILED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc_.Get(), nullptr, IID_PPV_ARGS(&cmd_)))) return false;
+    JAENG_CHECK_HRESULT(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc_)));
+    JAENG_CHECK_HRESULT(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc_.Get(), nullptr, IID_PPV_ARGS(&cmd_)));
     
     HR_CHECK(cmd_->Close());
     fenceValue = 0;
 
-    return true;
+    return {};
 }
 
 void FrameContext::reset()

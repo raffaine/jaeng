@@ -3,9 +3,11 @@
 #include <wrl.h>
 #include <d3d12.h>
 
+#include "common/result.h"
+
 class DescriptorAllocatorCPU {
 public:
-    bool create(ID3D12Device* dev, D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count);
+    jaeng::result<> create(ID3D12Device* dev, D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count);
     D3D12_CPU_DESCRIPTOR_HANDLE allocate(UINT* outIndex); // linear bump
     UINT inc() const { return incSize_; }
     ID3D12DescriptorHeap* heap() const { return heap_.Get(); }
@@ -21,7 +23,7 @@ private:
 
 class DescriptorAllocatorGPU {
 public:
-    bool create(ID3D12Device* dev, UINT srvCount, UINT sampCount);
+    jaeng::result<> create(ID3D12Device* dev, UINT srvCount, UINT sampCount);
     void reset(); // per-frame
     // Allocate 1 CBV/SRV/UAV or 1 Sampler slot (returns CPU+GPU handles)
     void alloc_srv(D3D12_CPU_DESCRIPTOR_HANDLE* outCpu, D3D12_GPU_DESCRIPTOR_HANDLE* outGpu);

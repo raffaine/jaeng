@@ -5,7 +5,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-bool D3D12Device::create(IDXGIFactory6* factory) {
+jaeng::result<> D3D12Device::create(IDXGIFactory6* factory) {
     ComPtr<IDXGIAdapter1> adapter;
     for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
         DXGI_ADAPTER_DESC1 desc1{};
@@ -17,8 +17,8 @@ bool D3D12Device::create(IDXGIFactory6* factory) {
     }
     if (!device_) {
         // fallback WARP
-        if (FAILED(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)))) return false;
-        if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)))) return false;
+        JAENG_CHECK_HRESULT(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));
+        JAENG_CHECK_HRESULT(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)));
     }
 
     // Command queue
@@ -27,14 +27,15 @@ bool D3D12Device::create(IDXGIFactory6* factory) {
     qdesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
     qdesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
     qdesc.NodeMask = 0;
-    if (FAILED(device_->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&gfxQueue_)))) return false;
+    JAENG_CHECK_HRESULT(device_->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&gfxQueue_)));
 
     // Fence
-    if (FAILED(device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)))) return false;
-    if (fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr); !fenceEvent_) return false;
+    JAENG_CHECK_HRESULT(device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
+    fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    JAENG_CHECK_LASTERROR(fenceEvent_);
     fenceValue_ = 1;
 
-    return true;
+    return {};
 }
 
 UINT64 D3D12Device::signal() {

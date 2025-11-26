@@ -5,7 +5,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-bool BindSpace::init(ID3D12Device* dev, DescriptorAllocatorCPU* cpuDesc)
+jaeng::result<> BindSpace::init(ID3D12Device* dev, DescriptorAllocatorCPU* cpuDesc)
 {
     // Build fallback 256-byte CBV in CPU heap (CBV/SRV/UAV)
     return create_fallback_cbv(dev, cpuDesc);
@@ -89,9 +89,9 @@ BindGroupRec* BindSpace::get_group(BindGroupHandle h)
     return (idx < groups_.size()) ? &groups_[idx] : nullptr;
 }
 
-bool BindSpace::create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* cpu)
+jaeng::result<> BindSpace::create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* cpu)
 {
-    if (fallbackReady_) return true;
+    if (fallbackReady_) return {};
 
     // Small upload buffer (256 bytes)
     D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -104,12 +104,12 @@ bool BindSpace::create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* c
     rd.SampleDesc.Count = 1;
     rd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    HR_CHECK(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+    JAENG_CHECK_HRESULT(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fallbackCb_)));
 
     // Zero initialize
     void* p = nullptr; D3D12_RANGE r{0, 0};
-    HR_CHECK(fallbackCb_->Map(0, &r, &p));
+    JAENG_CHECK_HRESULT(fallbackCb_->Map(0, &r, &p));
     std::memset(p, 0, 256);
     fallbackCb_->Unmap(0, nullptr);
 
@@ -126,5 +126,5 @@ bool BindSpace::create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* c
     devRef->CreateConstantBufferView(&cbv, fallbackCbvCpu_);
 
     fallbackReady_ = true;
-    return true;
+    return {};
 }

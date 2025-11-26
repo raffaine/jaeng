@@ -4,9 +4,12 @@
 #include <dxgi1_6.h>
 #include <d3d12.h>
 
+#include "common/result.h"
+
 class D3D12Device {
 public:
-    bool create(IDXGIFactory6* factory);
+    jaeng::result<> create(IDXGIFactory6* factory);
+    
     ID3D12Device*          dev()     const { return device_.Get(); }
     ID3D12CommandQueue*    queue()   const { return gfxQueue_.Get(); }
     ID3D12Fence*           fence()   const { return fence_.Get(); }

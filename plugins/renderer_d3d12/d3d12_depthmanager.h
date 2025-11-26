@@ -3,13 +3,15 @@
 #include <d3d12.h>
 #include <wrl.h>
 
+#include "common/result.h"
+
 class DepthManager {
 public:
     DepthManager(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle);
     ~DepthManager();
 
-    bool init(UINT width, UINT height, DXGI_FORMAT format);
-    bool resize(UINT width, UINT height);
+    jaeng::result<> init(UINT width, UINT height, DXGI_FORMAT format);
+    jaeng::result<> resize(UINT width, UINT height);
     void bind(ID3D12GraphicsCommandList* cmd, D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, UINT rtvCount);
     void clear(ID3D12GraphicsCommandList* cmd);
 
@@ -27,5 +29,5 @@ private:
     float clearDepth = 1.0f;
     UINT8 clearStencil = 0;
 
-    bool create_depth_buffer(UINT width, UINT height);
+    jaeng::result<> create_depth_buffer(UINT width, UINT height);
 };

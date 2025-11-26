@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <d3d12shader.h>
 
+#include "common/result.h"
 #include "d3d12_utils.h"
 
 using Microsoft::WRL::ComPtr;
@@ -96,12 +97,14 @@ CreateRootSignature_BindTables(ID3D12Device* dev, /*out*/ D3D_ROOT_SIGNATURE_VER
                          | D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS
                          | D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
-    ComPtr<ID3DBlob> sig, err;
-    if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err))) return nullptr;
-
     ComPtr<ID3D12RootSignature> root;
-    if (FAILED(dev->CreateRootSignature(/*nodeMask*/0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&root)))) return nullptr;
-    if (usedVer) *usedVer = D3D_ROOT_SIGNATURE_VERSION_1;
+    if(!std::invoke([&] -> jaeng::result<> {
+        ComPtr<ID3DBlob> sig, err;
+        JAENG_CHECK_HRESULT(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err));
+        JAENG_CHECK_HRESULT(dev->CreateRootSignature(/*nodeMask*/ 0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&root)));
+        if (usedVer) *usedVer = D3D_ROOT_SIGNATURE_VERSION_1;
+        return {};
+    }).logError()) return nullptr;
 
     return root;
 }

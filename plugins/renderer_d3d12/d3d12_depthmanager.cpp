@@ -2,21 +2,21 @@
 
 using Microsoft::WRL::ComPtr;
 
-DepthManager::DepthManager(ID3D12Device* dev, D3D12_CPU_DESCRIPTOR_HANDLE dh) : device(dev), dsvHandle(dh) {}
+DepthManager::DepthManager(ID3D12Device* dev, D3D12_CPU_DESCRIPTOR_HANDLE dh) : device(dev), dsvHandle(dh), resState(D3D12_RESOURCE_STATE_COMMON) {}
 
 DepthManager::~DepthManager() {}
 
-bool DepthManager::init(UINT width, UINT height, DXGI_FORMAT format) {
+jaeng::result<> DepthManager::init(UINT width, UINT height, DXGI_FORMAT format) {
     depthFormat = format;
     return create_depth_buffer(width, height);
 }
 
-bool DepthManager::resize(UINT width, UINT height) {
+jaeng::result<> DepthManager::resize(UINT width, UINT height) {
     depthResource.Reset();
     return create_depth_buffer(width, height);
 }
 
-bool DepthManager::create_depth_buffer(UINT width, UINT height) {
+jaeng::result<> DepthManager::create_depth_buffer(UINT width, UINT height) {
     D3D12_RESOURCE_DESC desc{};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     desc.Width = width;
@@ -39,9 +39,9 @@ bool DepthManager::create_depth_buffer(UINT width, UINT height) {
     heapProps.CreationNodeMask = 1;
     heapProps.VisibleNodeMask = 1;
 
-    if (FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+    JAENG_CHECK_HRESULT(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
                                     D3D12_RESOURCE_STATE_COMMON, &clearVal,
-                                    IID_PPV_ARGS(&depthResource)))) return false;
+                                    IID_PPV_ARGS(&depthResource)));
 
     // Create DSV
     D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
@@ -51,7 +51,7 @@ bool DepthManager::create_depth_buffer(UINT width, UINT height) {
 
     resState = D3D12_RESOURCE_STATE_COMMON;
 
-    return true;
+    return {};
 }
 
 void DepthManager::bind(ID3D12GraphicsCommandList* cmd, D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, UINT rtvCount) {
