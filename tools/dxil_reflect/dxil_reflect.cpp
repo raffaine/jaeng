@@ -126,7 +126,7 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
             out << "        { " << bind.bindPoint << ", BindGroupEntryType::UniformBuffer, (uint32_t)ShaderStage::Vertex }, // " << bind.name << "\n";
         }
         for (auto& bind : rd.psBindings) {
-            out << "        { " << bind.bindPoint << ", BindGroupEntryType::Texture, (uint32_t)ShaderStage::Fragment }, // " << bind.name << "\n";
+            out << "        { " << bind.bindPoint << ", " << (bind.type.starts_with("texture") ? "BindGroupEntryType::Texture" : "BindGroupEntryType::Sampler") << ", (uint32_t)ShaderStage::Fragment }, // " << bind.name << "\n";
         }
         out << "    };\n\n";
         out << "    static constexpr BindGroupLayoutDesc bindGroupLayout = {\n";
