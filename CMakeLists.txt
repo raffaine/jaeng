@@ -51,15 +51,29 @@ endif()
 target_include_directories(renderer_d3d12 PRIVATE ${ENGINE_ROOT}/render/public)
 target_include_directories(renderer_d3d12 PRIVATE ${ENGINE_ROOT})
 
+# GLM (OpenGL Math Library) for General Systems
+find_package(glm CONFIG REQUIRED)
+
+# Find nlohmann/json for Material System
+find_package(nlohmann_json CONFIG REQUIRED)
+
+# Find json-schema-validator
+find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
+
 # Sandbox app
 add_executable(sandbox WIN32
   apps/sandbox/main.cpp
   engine/render/frontend/renderer.h
   engine/render/graph/render_graph.h
+  engine/storage/ifstorage.h
+  engine/storage/win/filestorage.cpp
+  engine/material/imaterialsys.h
+  engine/material/materialsys.cpp
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})
-target_link_libraries(sandbox PRIVATE renderer_api)
+target_link_libraries(sandbox PRIVATE renderer_api glm::glm-header-only)
+target_link_libraries(sandbox PRIVATE nlohmann_json::nlohmann_json nlohmann_json_schema_validator::validator)
 add_dependencies(sandbox dxil_reflect compile_shaders renderer_d3d12)
 
 # Include generated reflection headers for the app

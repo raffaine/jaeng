@@ -133,10 +133,9 @@ enum class BindGroupEntryType {
 };
 
 // Bind groups
-// type: 0=CBV, 1=SRV/Texture, 2=Sampler, 3=UAV (reserved)
 struct BindGroupLayoutEntry {
     uint32_t binding; // 0..3
-    BindGroupEntryType type;    // see above
+    BindGroupEntryType type;
     uint32_t stages;  // ShaderStage bitmask
 };
 

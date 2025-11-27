@@ -3,6 +3,9 @@
     "version-string": "0.1.0",
     "dependencies": [
         { "name": "winpixevent" },
-        { "name": "directx-dxc"}
+        { "name": "directx-dxc"},
+        { "name": "glm"},
+        "nlohmann-json",
+        "json-schema-validator"
     ]
 }

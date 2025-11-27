@@ -7,6 +7,8 @@
 #include <d3dcompiler.h>
 #include "render/frontend/renderer.h"
 #include "render/graph/render_graph.h"
+#include "storage/win/filestorage.h"
+#include "material/materialsys.h"
 
 #include "basic_reflect.h"
 
@@ -79,9 +81,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 
     // SwapChain and Default Depth Buffer
-    DepthStencilDesc depthDesc{};   // No depth/stencil for now
-    depthDesc.depth_enable = true;
-    depthDesc.depth_format = TextureFormat::D32F;
+    DepthStencilDesc depthDesc {
+        .depth_enable = true,
+        .depth_format = TextureFormat::D32F
+    };
     SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo };
     swap = renderer.gfx.create_swapchain(&swapDesc);
 
@@ -105,6 +108,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     ibd.size_bytes = sizeof(indices);
     ibd.usage      = BufferUsage_Index;
     BufferHandle ib = renderer.gfx.create_buffer(&ibd, indices.data());
+
+    FileManager fileMan;
+    MaterialSystem matSys(&fileMan);
+    matSys.createMaterial("/mem/test.json");
 
     // Use Pre-compiled Shaders and Reflected Headers
     ShaderModuleHandle vsh, psh;
@@ -137,6 +144,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             pixels[y*W + x] = (0xFFu<<24) | (c<<16) | (c<<8) | c;
         }
     }
+    // Stores it on File Manager
+    fileMan.registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size()*sizeof(uint32_t));
 
     // Create Texture and Sampler Resources
     TextureDesc td{ TextureFormat::RGBA8_UNORM, W, H, 1, 1, 0 };
@@ -172,7 +181,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // Build a small render graph: Clear -> Forward
         RenderGraph graph;
-        
+
         // 1) Clear pass
         graph.add_pass("Clear", { {
             .tex = renderer.gfx.get_current_backbuffer(swap),
