@@ -23,12 +23,12 @@ foreach(PIPELINE ${PIPELINES})
     if(EXISTS ${VERTEX_SHADER} AND EXISTS ${PIXEL_SHADER})
         set(VERTEX_DXIL ${OUTPUT_DIR}/${PIPELINE}_vs.dxil)
         set(PIXEL_DXIL ${OUTPUT_DIR}/${PIPELINE}_ps.dxil)
-        set(REFLECT_HEADER ${REFLECT_DIR}/${PIPELINE}_reflect.h)
+        set(REFLECT_OUT ${REFLECT_DIR}/${PIPELINE})
 
         add_custom_command(TARGET compile_shaders POST_BUILD
             COMMAND ${DXC_EXECUTABLE} -T vs_6_0 -E main -Fo ${VERTEX_DXIL} ${VERTEX_SHADER}
             COMMAND ${DXC_EXECUTABLE} -T ps_6_0 -E main -Fo ${PIXEL_DXIL} ${PIXEL_SHADER}
-            COMMAND dxil_reflect ${VERTEX_DXIL} ${PIXEL_DXIL} ${REFLECT_HEADER}
+            COMMAND dxil_reflect ${VERTEX_DXIL} ${PIXEL_DXIL} ${PIPELINE} ${REFLECT_OUT}
 
             COMMENT "Pipeline ${PIPELINE}: Compiling Vertex & Pixel shaders and generating reflection"
         )
