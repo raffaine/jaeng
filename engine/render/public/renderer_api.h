@@ -19,6 +19,7 @@ typedef RendererHandle BufferHandle;
 typedef RendererHandle TextureHandle;
 typedef RendererHandle SamplerHandle;
 typedef RendererHandle ShaderModuleHandle;
+typedef RendererHandle VertexLayoutHandle;
 typedef RendererHandle BindGroupLayoutHandle;
 typedef RendererHandle BindGroupHandle;
 typedef RendererHandle PipelineHandle;
@@ -97,11 +98,13 @@ struct ShaderModuleDesc {
   uint32_t    format; // 0 = D3D blob
 };
 
+// ------- Input Layout for Vertex Shaders ---------
 struct VertexAttributeDesc {
   uint32_t location;  // 0=POSITION, 1=COLOR in sample
   uint32_t format;    // 0 = R32G32B32_FLOAT
   uint32_t offset;    // byte offset
 };
+
 struct VertexLayoutDesc {
   uint32_t stride;
   const VertexAttributeDesc* attributes;
@@ -121,7 +124,7 @@ struct GraphicsPipelineDesc {
   ShaderModuleHandle vs;
   ShaderModuleHandle fs; // optional
   PrimitiveTopology topology;
-  VertexLayoutDesc   vertex_layout;
+  VertexLayoutHandle vertex_layout;
   TextureFormat      color_format; // single RT
   DepthStencilOptions depth_stencil;
 };
@@ -220,6 +223,7 @@ typedef struct RendererAPI {
 
     ShaderModuleHandle (*create_shader_module)(const ShaderModuleDesc*);
     void              (*destroy_shader_module)(ShaderModuleHandle);
+    VertexLayoutHandle (*create_vertex_layout)(const VertexLayoutDesc*);
     PipelineHandle (*create_graphics_pipeline)(const GraphicsPipelineDesc*);
     void           (*destroy_pipeline)(PipelineHandle);
 

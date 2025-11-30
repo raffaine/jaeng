@@ -11,19 +11,59 @@
 
 typedef uint32_t MaterialHandle; // Opaque identifier
 
-struct BindGroup {
-    RendererHandle pipeline;
-    RendererHandle textureSRV;
-    RendererHandle sampler;
-    RendererHandle constantBuffer;
+struct MaterialBindings {
+    ShaderModuleHandle vertexShader;
+    ShaderModuleHandle pixelShader;
+    RendererHandle vertexLayout;
+    std::vector<std::string> requiredSemantics;
+    std::vector<TextureHandle> textures;
+    std::vector<SamplerHandle> samplers;
+    std::vector<BufferHandle>  constantBuffers;
+    BindGroupLayoutHandle bindGroupLayout;
+    BindGroupHandle bindGroup;
+};
+
+struct CBData {
+    std::string name;
+    uint32_t size;
+    uint32_t binding;
+};
+
+struct TextureData {
+    std::string path;
+    std::string format;
+    uint32_t width, height;
+    struct {
+        std::string filter;
+        std::string addressModeU;
+        std::string addressModeV;
+    } sampler;
 };
 
 struct MaterialMetadata {
     std::string name;
-    std::string shaderPath;
-    std::vector<std::string> texturePaths;
+    std::string vsPath;
+    std::string psPath;
+    std::string reflectPath;
+    std::vector<TextureData> textures;
+    // --- Pipeline States ---
+    struct {
+        bool enabled;
+        std::string srcFactor;
+        std::string dstFactor;
+    } blendState;
+    struct {
+        std::string cullMode;
+        std::string fillMode;
+    } rasterizer;
+    struct {
+        bool depthTest;
+        bool depthWrite;
+    } depthStencil;
+    // --- Constant Buffers and Per Model Data ---
     std::unordered_map<std::string, float> scalarParams;
     std::unordered_map<std::string, glm::vec4> vectorParams;
+    std::vector<CBData> constantBuffers;
 };
 
 struct MaterialEventListener {
@@ -41,6 +81,7 @@ public:
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
+        const std::string* requiredSemantics, // count should match attributes on vertex layout
         const BindGroupLayoutDesc* bindGroups,
         size_t bindGroupCount
     ) = 0;
@@ -49,7 +90,7 @@ public:
     virtual void destroyMaterial(MaterialHandle handle) = 0;
 
     // Query GPU bindings for rendering
-    virtual jaeng::result<const BindGroup*> getBindGroup(MaterialHandle handle) const = 0;
+    virtual jaeng::result<const MaterialBindings*> getBindData(MaterialHandle handle) const = 0;
 
     // Query metadata (for editor or debug)
     virtual jaeng::result<const MaterialMetadata*> getMetadata(MaterialHandle handle) const = 0;

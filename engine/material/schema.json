@@ -4,10 +4,35 @@
   "type": "object",
   "properties": {
     "name": { "type": "string" },
-    "shader": { "type": "string" },
+    "shader": {
+      "type": "object",
+      "properties": {
+        "vertex": { "type": "string" },
+        "pixel": { "type": "string" },
+        "reflection": { "type": "string" }
+      },
+      "required": ["vertex", "pixel", "reflection"]
+    },
     "textures": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "format": { "type": "string", "enum": ["FROMFILE", "RGBA8UNORM"], "default": "RGBA8UNORM" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "sampler": {
+            "type": "object",
+            "properties": {
+              "filter": { "type": "string", "enum": ["linear", "nearest"], "default": "linear" },
+              "addressModeU": { "type": "string", "enum": ["wrap", "clamp"], "default": "wrap" },
+              "addressModeV": { "type": "string", "enum": ["wrap", "clamp"], "default": "wrap" }
+            }
+          }
+        },
+        "required": ["path", "width", "height"]
+      }
     },
     "parameters": {
       "type": "object",
@@ -16,14 +41,52 @@
           "type": "array",
           "items": { "type": "number" },
           "minItems": 4,
-          "maxItems": 4
+          "maxItems": 4,
+          "default": [1.0, 1.0, 1.0, 1.0]
         },
-        "roughness": { "type": "number" },
-        "metallic": { "type": "number" }
-      },
-      "additionalProperties": false
+        "roughness": { "type": "number", "default": 0.5 },
+        "metallic": { "type": "number", "default": 0.0 }
+      }
+    },
+    "constantBuffers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "size": { "type": "integer" },
+          "binding": { "type": "integer" }
+        },
+        "required": ["name", "size", "binding"]
+      }
+    },
+    "pipelineStates": {
+      "type": "object",
+      "properties": {
+        "blend": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "srcFactor": { "type": "string", "enum": ["one", "srcAlpha", "invSrcAlpha"], "default": "one" },
+            "dstFactor": { "type": "string", "enum": ["zero", "one", "invSrcAlpha"], "default": "zero" }
+          }
+        },
+        "rasterizer": {
+          "type": "object",
+          "properties": {
+            "cullMode": { "type": "string", "enum": ["none", "front", "back"], "default": "back" },
+            "fillMode": { "type": "string", "enum": ["solid", "wireframe"], "default": "solid" }
+          }
+        },
+        "depthStencil": {
+          "type": "object",
+          "properties": {
+            "depthTest": { "type": "boolean", "default": true },
+            "depthWrite": { "type": "boolean", "default": true }
+          }
+        }
+      }
     }
   },
-  "required": ["name", "shader"],
-  "additionalProperties": false
+  "required": ["name", "shader"]
 }

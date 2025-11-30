@@ -53,6 +53,7 @@ public:
 
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc*);
     void destroy_shader_module(ShaderModuleHandle);
+    VertexLayoutHandle create_vertex_layout(const VertexLayoutDesc*);
     PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc*);
     void destroy_pipeline(PipelineHandle);
 
@@ -97,9 +98,14 @@ private:
     std::vector<std::unique_ptr<DescriptorAllocatorGPU>> gpuDescPerFrame_;
     std::vector<std::unique_ptr<UploadRing>> uploadPerFrame_;
 
-    std::unique_ptr<ResourceTable> resources_;  // buffers, textures, samplers, shader blobs
-    std::unique_ptr<PipelineTable> pipelines_;  // root signatures, PSOs
-    std::unique_ptr<BindSpace>     binds_;      // layouts + bind groups (+ fallback CBV)
+    struct InputLayout {
+        std::vector<D3D12_INPUT_ELEMENT_DESC> ieds;
+        uint32_t stride;
+    };
+    std::unique_ptr<ResourceTable> resources_; // buffers, textures, samplers, shader blobs
+    std::vector<InputLayout>  vertexLayouts_;  // vertex layout descriptors
+    std::unique_ptr<PipelineTable> pipelines_; // root signatures, PSOs
+    std::unique_ptr<BindSpace>     binds_;     // layouts + bind groups (+ fallback CBV)
 
     std::unique_ptr<DescriptorAllocatorCPU> dsvDesc_;
     std::unique_ptr<DepthManager>  depthManager_;    // manages depth buffer resources

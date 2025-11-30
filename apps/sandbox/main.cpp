@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -15,6 +15,57 @@
 #define USE_PIX
 #include "pix3.h"  // provided by winpixevent package
 
+static const char* materialFileData = R"(
+{
+  "name": "CheckerboardMaterial",
+  "shader": {
+    "vertex": "C:/dev/repos/pluggable_renderer/shaders/compiled/basic_vs.dxil",
+    "pixel": "C:/dev/repos/pluggable_renderer/shaders/compiled/basic_ps.dxil",
+    "reflection": "C:/dev/repos/pluggable_renderer/shaders/include/basic_reflect.json"
+  },
+  "textures": [
+    {
+      "path": "/mem/checker.raw",
+      "width": 256,
+      "height": 256,
+      "sampler": {
+        "filter": "linear",
+        "addressModeU": "wrap",
+        "addressModeV": "wrap"
+      }
+    }
+  ],
+  "parameters": {
+    "color": [1.0, 1.0, 1.0, 1.0],
+    "roughness": 0.5,
+    "metallic": 0.0
+  },
+  "constantBuffers": [
+    {
+      "name": "CBTransform",
+      "size": 64,
+      "binding": 0
+    }
+  ],
+  "pipelineStates": {
+    "blend": {
+      "enabled": false,
+      "srcFactor": "one",
+      "dstFactor": "zero"
+    },
+    "rasterizer": {
+      "cullMode": "back",
+      "fillMode": "solid"
+    },
+    "depthStencil": {
+      "depthTest": true,
+      "depthWrite": true
+    }
+  }
+}
+)";
+
+
 using Microsoft::WRL::ComPtr;
 
 static const wchar_t* kWndClass = L"SandboxWindowClass";
@@ -27,7 +78,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_SIZE: {
             UINT w = LOWORD(lParam), h = HIWORD(lParam);
             if (swap > 0 && w > 0 && h > 0) {
-                renderer.gfx.resize_swapchain(swap, { w, h });
+                renderer.gfx->resize_swapchain(swap, { w, h });
             }
             return 0;
         }
@@ -75,10 +126,30 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     if (!hwnd) return -1;
 
+    // Renderer
     if (!renderer.initialize(GfxBackend::D3D12, hwnd, 3)) {
         MessageBox(hwnd, L"Failed to initialize renderer.", L"Error", MB_ICONERROR);
         return -2;
     }
+
+    // File Manager
+    std::shared_ptr<IFileManager> fileMan = std::make_shared<FileManager>();
+
+    // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
+    const uint32_t W = 256, H = 256, CS = 32;
+    std::vector<uint32_t> pixels(W * H);
+    for (uint32_t y=0; y<H; ++y) {
+        for (uint32_t x=0; x<W; ++x) {
+            bool on = ((x/CS) ^ (y/CS)) & 1;
+            uint8_t c = on ? 255 : 30;
+            pixels[y*W + x] = (0xFFu<<24) | (c<<16) | (c<<8) | c;
+        }
+    }
+    // Stores it on File Manager
+    fileMan->registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size()*sizeof(uint32_t));
+
+    // Stores the material description in the File Manager
+    fileMan->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
     // SwapChain and Default Depth Buffer
     DepthStencilDesc depthDesc {
@@ -86,7 +157,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         .depth_format = TextureFormat::D32F
     };
     SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo };
-    swap = renderer.gfx.create_swapchain(&swapDesc);
+    swap = renderer->create_swapchain(&swapDesc);
 
     // Mesh: a colored quad (two triangles)
     struct Vtx { float px, py, pz; float r, g, b; float u,v; };
@@ -102,70 +173,32 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     BufferDesc vbd{};
     vbd.size_bytes = sizeof(vertices);
     vbd.usage      = BufferUsage_Vertex;
-    BufferHandle vb = renderer.gfx.create_buffer(&vbd, vertices.data());
+    BufferHandle vb = renderer->create_buffer(&vbd, vertices.data());
 
     BufferDesc ibd{};
     ibd.size_bytes = sizeof(indices);
     ibd.usage      = BufferUsage_Index;
-    BufferHandle ib = renderer.gfx.create_buffer(&ibd, indices.data());
-
-    FileManager fileMan;
-    MaterialSystem matSys(&fileMan);
-    matSys.createMaterial("/mem/test.json");
-
-    // Use Pre-compiled Shaders and Reflected Headers
-    ShaderModuleHandle vsh, psh;
-    LoadShaders(&renderer.gfx, vsh, psh);
-
-    // Creates Pipeline (also with reflecte header for Vertex Layout)
-    GraphicsPipelineDesc pdesc{
-    vsh, psh, PrimitiveTopology::TriangleList, ShaderReflection::vertexLayout, TextureFormat::BGRA8_UNORM
-    };
-    PipelineHandle pso = renderer.gfx.create_graphics_pipeline(&pdesc);
+    BufferHandle ib = renderer->create_buffer(&ibd, indices.data());
 
     // Constant Buffer for VS/PS
-    const CBTransform cbData[4] = {
-        Translate(-0.25f, -0.25f, 0.5),
-        Translate( 0.25f, -0.25f, 0.5),
-        Translate(-0.25f,  0.25f, 0.5),
-        Translate( 0.25f,  0.25f, 0.5)
-    };
+    const CBTransform cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
+                                   Translate(-0.25f, 0.25f, 0.5), Translate(0.25f, 0.25f, 0.5)};
 
-    BufferDesc   cbDesc{256, BufferUsage_Uniform};
-    BufferHandle cb = renderer.gfx.create_buffer(&cbDesc, nullptr);
+    // --- Material System setup ---
+    MaterialSystem matSys(fileMan, renderer.gfx);
 
-    // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
-    const uint32_t W = 256, H = 256, CS = 32;
-    std::vector<uint32_t> pixels(W * H);
-    for (uint32_t y=0; y<H; ++y) {
-        for (uint32_t x=0; x<W; ++x) {
-            bool on = ((x/CS) ^ (y/CS)) & 1;
-            uint8_t c = on ? 255 : 30;
-            pixels[y*W + x] = (0xFFu<<24) | (c<<16) | (c<<8) | c;
-        }
-    }
-    // Stores it on File Manager
-    fileMan.registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size()*sizeof(uint32_t));
+    // Creates Test Checkerboard Textured Material with precompiled shaders and reflected header layouts
+    std::string semantics[] = {"POSITION", "COLOR", "TEXCOORD"};
+    MaterialHandle matHandle = matSys.createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, semantics, &ShaderReflection::bindGroupLayout, 1).orValue({});
 
-    // Create Texture and Sampler Resources
-    TextureDesc td{ TextureFormat::RGBA8_UNORM, W, H, 1, 1, 0 };
-    TextureHandle tex = renderer.gfx.create_texture(&td, pixels.data());
-    SamplerDesc sd{};
-    sd.filter = SamplerFilter::Linear;
-    sd.address_u = AddressMode::Repeat; sd.address_v = AddressMode::Repeat; sd.address_w = AddressMode::Repeat;
-    sd.mip_lod_bias = 0.0f; sd.min_lod = 0.0f; sd.max_lod = 1000.0f;
-    sd.border_color[0]=sd.border_color[1]=sd.border_color[2]=0.0f; sd.border_color[3]=1.0f;
-    SamplerHandle samp = renderer.gfx.create_sampler(&sd);
+    // Retrieve Material Created and Convenience Variables for Constant Buffer and Bind Group
+    const MaterialBindings* matBg = matSys.getBindData(matHandle).orValue(nullptr);
+    const BufferHandle      cb    = matBg->constantBuffers[0];
+    const BindGroupHandle   bg    = matBg->bindGroup;
 
-    // Use Bind Group Layout from Reflection and created Resources as Group Entries
-    BindGroupLayoutHandle bgl = renderer.gfx.create_bind_group_layout(&ShaderReflection::bindGroupLayout);
-    BindGroupEntry be[] {
-        { .type = BindGroupEntryType::Texture, .texture = tex },
-        { .type = BindGroupEntryType::Sampler, .sampler = samp },
-        { .type = BindGroupEntryType::UniformBuffer, .buffer = cb, .offset = 0, .size = 256 }
-    };
-    BindGroupDesc bgd{ bgl, be, 3 };
-    BindGroupHandle bg = renderer.gfx.create_bind_group(&bgd);
+    // Creates the Required Pipelines (Involves Geometry aside from Material)
+    GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, PrimitiveTopology::TriangleList, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
+    PipelineHandle       pso = renderer->create_graphics_pipeline(&pdesc);
 
     // ---- Main Loop ----
     bool running = true;
@@ -184,12 +217,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // 1) Clear pass
         graph.add_pass("Clear", { {
-            .tex = renderer.gfx.get_current_backbuffer(swap),
+            .tex = renderer->get_current_backbuffer(swap),
             .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
         } }, { .tex = 1, .clear_depth = 1.0f }, nullptr);
         // 2) Forward pass
         graph.add_pass("Forward", 
-            { { .tex = renderer.gfx.get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
+            { { .tex = renderer->get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
             [&](const RGPassContext& ctx) {
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
                 ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
@@ -207,7 +240,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         graph.compile();
 
         // Execute Render Passes
-        graph.execute(renderer.gfx, swap, 0, nullptr);
+        graph.execute(*renderer.gfx, swap, 0, nullptr);
     }
 
     // Releases renderer resources

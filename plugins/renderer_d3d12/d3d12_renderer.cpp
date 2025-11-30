@@ -317,11 +317,16 @@ jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, co
     buf.size = d->size_bytes;
     buf.usage = d->usage;
 
+    // Uniform Buffers are 256byte aligned
+    if (d->usage & BufferUsage_Uniform) {
+        buf.size = ((buf.size + 255ull) & ~255ull);
+    }
+
     // Create committed buffer resource (COMMON initially)
     D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC rd{};
     rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    rd.Width = d->size_bytes;
+    rd.Width = buf.size;
     rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
     rd.SampleDesc.Count = 1;
     rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
@@ -334,22 +339,22 @@ jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, co
     // Convenience: set VBV/IBV if usage flags indicate it (stride will be overridden by pipeline)
     if (d->usage & BufferUsage_Vertex) {
         buf.vbv.BufferLocation = buf.res->GetGPUVirtualAddress();
-        buf.vbv.SizeInBytes    = (UINT)d->size_bytes;
+        buf.vbv.SizeInBytes    = (UINT)buf.size;
         buf.vbv.StrideInBytes  = 32; // default; refined by cmd_set_vertex_buffer
     }
 
     // IBV setup (default to 32-bit; actual format picked at bind time)
     if (d->usage & BufferUsage_Index) {
         buf.ibv.BufferLocation = buf.res->GetGPUVirtualAddress();
-        buf.ibv.SizeInBytes    = (UINT)d->size_bytes;
+        buf.ibv.SizeInBytes    = (UINT)buf.size;
         // buf.ibv.Format set at cmd_set_index_buffer based on `index32`
     }
-
+    auto buf_size = buf.size;
     auto h = resources_->add_buffer(std::move(buf));
 
     // Optional initial upload (record into current frame)
-    if (initial && d->size_bytes) {
-        JAENG_TRY(update_buffer(h, 0, initial, d->size_bytes));
+    if (initial && buf_size) {
+        JAENG_TRY(update_buffer(h, 0, initial, buf_size));
     }
 
     return h;
@@ -521,6 +526,26 @@ void RendererD3D12::destroy_shader_module(ShaderModuleHandle h)
     pipelines_->del_shader(h);
 }
 
+VertexLayoutHandle RendererD3D12::create_vertex_layout(const VertexLayoutDesc* vld)
+{
+    std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
+    ils.reserve(vld->attribute_count);
+    for (uint32_t i = 0; i < vld->attribute_count; ++i) {
+        const auto& a = vld->attributes[i];
+        D3D12_INPUT_ELEMENT_DESC e{};
+        e.SemanticName = (a.location == 0) ? "POSITION" : (a.location == 1) ? "COLOR" : "TEXCOORD";
+        e.SemanticIndex = 0;
+        e.Format = (a.location == 2) ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
+        e.InputSlot = 0;
+        e.AlignedByteOffset = a.offset;
+        e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+        ils.push_back(e);
+    }
+
+    vertexLayouts_.emplace_back(std::move(ils), vld->stride);
+    return (VertexLayoutHandle)(vertexLayouts_.size() - 1);
+}
+
 PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDesc* gp)
 {
     // Build root signature with tables (CBV b0 / SRV t0 / Sampler s0) via helper
@@ -532,20 +557,8 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     auto* psb = pipelines_->get_shader(gp->fs);
     if (!vsb) return 0;
 
-    // Input layout from GraphicsPipelineDesc
-    std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
-    ils.reserve(gp->vertex_layout.attribute_count);
-    for (uint32_t i = 0; i < gp->vertex_layout.attribute_count; ++i) {
-        const auto& a = gp->vertex_layout.attributes[i];
-        D3D12_INPUT_ELEMENT_DESC e{};
-        e.SemanticName = (a.location == 0) ? "POSITION" : (a.location == 1) ? "COLOR" : "TEXCOORD";
-        e.SemanticIndex = 0;
-        e.Format = (a.location == 2) ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
-        e.InputSlot = 0;
-        e.AlignedByteOffset = a.offset;
-        e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-        ils.push_back(e);
-    }
+    if (gp->vertex_layout >= vertexLayouts_.size()) return 0;
+    auto& vld = vertexLayouts_[gp->vertex_layout];
 
     // PSO defaults
     D3D12_BLEND_DESC blend{};
@@ -574,7 +587,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     pso.RasterizerState  = rast;
     pso.DepthStencilState= depth;
     pso.DSVFormat        = (depth.DepthEnable) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
-    pso.InputLayout      = { ils.data(), (UINT)ils.size() };
+    pso.InputLayout      = { vld.ieds.data(), (UINT)vld.ieds.size() };
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1;
     pso.RTVFormats[0]    = swapchain_ ? swapchain_->rtv_format() : DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -587,7 +600,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     rec.topo         = (gp->topology == PrimitiveTopology::TriangleStrip) ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP :
                        (gp->topology == PrimitiveTopology::LineList)     ? D3D_PRIMITIVE_TOPOLOGY_LINELIST :
                                                                            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    rec.vertexStride = gp->vertex_layout.stride;
+    rec.vertexStride = vld.stride;
 
     return pipelines_->add_pipeline(std::move(rec));
 }
@@ -880,6 +893,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
 
     api.create_shader_module = [](const ShaderModuleDesc* d) { return g_renderer->create_shader_module(d); };
     api.destroy_shader_module= [](ShaderModuleHandle h) { g_renderer->destroy_shader_module(h); };
+    api.create_vertex_layout = [](const VertexLayoutDesc* d){ return g_renderer->create_vertex_layout(d); };
     api.create_graphics_pipeline = [](const GraphicsPipelineDesc* d) { return g_renderer->create_graphics_pipeline(d); };
     api.destroy_pipeline= [](PipelineHandle h) { g_renderer->destroy_pipeline(h); };
 

@@ -166,14 +166,15 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
         out << "\ninline void CreatePipelineResources(RendererAPI* api, PipelineReflectionResources& out) {\n";
 
         // Load shaders using previously generated inline function
-        out << "    LoadShaders(api, out.vs, out.fs);\n\n";
+        out << "    LoadShaders(api, out.vs, out.fs);\n";
+        out << "    auto vlh = api->create_vertex_layout(&ShaderReflection::vertexLayout);\n\n";
 
         // Create graphics pipeline
         out << "    GraphicsPipelineDesc pipelineDesc {\n";
         out << "        .vs = out.vs,\n";
         out << "        .fs = out.fs,\n";
         out << "        .topology = PrimitiveTopology::TriangleList,\n";
-        out << "        .vertex_layout = ShaderReflection::vertexLayout,\n";
+        out << "        .vertex_layout = vlh,\n";
         out << "        .color_format = TextureFormat::RGBA8_UNORM,\n";
         out << "        .depth_stencil = {}\n";
         out << "    };\n";

@@ -9,16 +9,21 @@ public:
         if (!plugin.load(L"renderer_d3d12.dll")) return false;
         gfx = plugin.api;
         RendererDesc d{ backend, hwnd, frame_count };
-        return gfx.init(&d);
+        return (gfx->init)? gfx->init(&d) : false;
     }
 
     void shutdown() {
-        if (gfx.wait_idle) gfx.wait_idle();
-        if (gfx.shutdown) gfx.shutdown();
+        if (!gfx) return;
+        if (gfx->wait_idle) gfx->wait_idle();
+        if (gfx->shutdown) gfx->shutdown();
         plugin.unload();
     }
 
-    RendererAPI gfx{};
+    RendererAPI* operator->() const {
+        return gfx.get();
+    }
+
+    std::shared_ptr<RendererAPI> gfx{};
     
 private:
     RendererPlugin plugin;

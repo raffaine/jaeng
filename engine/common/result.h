@@ -172,5 +172,8 @@ private:
 
 #define JAENG_ERROR_IF(predicate, code, msg) \
     if (predicate) return jaeng::Error::fromMessage(static_cast<int>(code), msg)
+    
+#define JAENG_ERROR(code, msg) \
+    return jaeng::Error::fromMessage(static_cast<int>(code), msg)
 
 } // jaeng namespace
