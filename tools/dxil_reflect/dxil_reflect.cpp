@@ -119,6 +119,11 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
         out << "        .attributes = vertexAttributes,\n";
         out << "        .attribute_count = " << rd.vsParams.size() << "\n";
         out << "    };\n\n";
+        out << "    const char* inputSemantics[] = {\n";
+        for (int i = 0; i < rd.vsParams.size(); i++) {
+            out << "        \"" << rd.vsParams[i].semanticName << "\",\n";
+        }
+        out << "    };\n\n";
 
         // Combined resources
         out << "    static constexpr BindGroupLayoutEntry bindGroupEntries[] = {\n";
@@ -132,79 +137,11 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
         out << "    static constexpr BindGroupLayoutDesc bindGroupLayout = {\n";
         out << "        .entries = bindGroupEntries,\n";
         out << "        .entry_count = " << (rd.vsBindings.size() + rd.psBindings.size()) << "\n";
-        out << "    };\n";
+        out << "    };\n\n";
+        out << "    const char* vsPath = \"" << vertexPath << "\";\n";
+        out << "    const char* psPath = \"" << pixelPath  << "\";\n\n";
+
         // Closes namespace
-        out << "}\n";
-
-        // Helper to Load the associated shaders
-        out << "\ninline void LoadShaders(RendererAPI* api, ShaderModuleHandle& vsHandle, ShaderModuleHandle& fsHandle) {\n";
-        out << "    // Vertex Shader\n";
-        out << "    {\n";
-        out << "        std::ifstream vsFile(\"" << vertexPath << "\", std::ios::binary | std::ios::ate);\n";
-        out << "        if (!vsFile) throw std::runtime_error(\"Failed to open vertex shader file\");\n";
-        out << "        size_t size = vsFile.tellg();\n";
-        out << "        vsFile.seekg(0);\n";
-        out << "        std::vector<char> data(size);\n";
-        out << "        vsFile.read(data.data(), size);\n";
-        out << "        ShaderModuleDesc desc { ShaderStage::Vertex, data.data(), (uint32_t)data.size(), 0 };\n";
-        out << "        vsHandle = api->create_shader_module(&desc);\n";
-        out << "    }\n\n";
-        out << "    // Pixel Shader\n";
-        out << "    {\n";
-        out << "        std::ifstream psFile(\"" << pixelPath << "\", std::ios::binary | std::ios::ate);\n";
-        out << "        if (!psFile) throw std::runtime_error(\"Failed to open pixel shader file\");\n";
-        out << "        size_t size = psFile.tellg();\n";
-        out << "        psFile.seekg(0);\n";
-        out << "        std::vector<char> data(size);\n";
-        out << "        psFile.read(data.data(), size);\n";
-        out << "        ShaderModuleDesc desc { ShaderStage::Fragment, data.data(), (uint32_t)data.size(), 0 };\n";
-        out << "        fsHandle = api->create_shader_module(&desc);\n";
-        out << "    }\n";
-        out << "}\n";
-
-        // Inline function to create all pipeline-related resources
-        out << "\ninline void CreatePipelineResources(RendererAPI* api, PipelineReflectionResources& out) {\n";
-
-        // Load shaders using previously generated inline function
-        out << "    LoadShaders(api, out.vs, out.fs);\n";
-        out << "    auto vlh = api->create_vertex_layout(&ShaderReflection::vertexLayout);\n\n";
-
-        // Create graphics pipeline
-        out << "    GraphicsPipelineDesc pipelineDesc {\n";
-        out << "        .vs = out.vs,\n";
-        out << "        .fs = out.fs,\n";
-        out << "        .topology = PrimitiveTopology::TriangleList,\n";
-        out << "        .vertex_layout = vlh,\n";
-        out << "        .color_format = TextureFormat::RGBA8_UNORM,\n";
-        out << "        .depth_stencil = {}\n";
-        out << "    };\n";
-        out << "    out.pipeline = api->create_graphics_pipeline(&pipelineDesc);\n\n";
-
-        // Create uniform buffer
-        const UINT cbSize = 256;
-        out << "    BufferDesc bufferDesc { " << cbSize << ", BufferUsage_Uniform };\n";
-        out << "    out.uniformBuffer = api->create_buffer(&bufferDesc, nullptr);\n\n";
-
-        // Create texture
-        out << "    TextureDesc texDesc { TextureFormat::RGBA8_UNORM, 256, 256, 1, 1, 0 };\n";
-        out << "    out.texture = api->create_texture(&texDesc, nullptr);\n\n";
-
-        // Create sampler
-        out << "    SamplerDesc samplerDesc { SamplerFilter::Linear, AddressMode::Repeat, AddressMode::Repeat, AddressMode::Repeat,\n";
-        out << "        0.0f, 0.0f, 1.0f, {0, 0, 0, 0} };\n";
-        out << "    out.sampler = api->create_sampler(&samplerDesc);\n\n";
-
-        // Create bind group layout
-        out << "    out.bindGroupLayout = api->create_bind_group_layout(&ShaderReflection::bindGroupLayout);\n\n";
-
-        // Create bind group entries
-        out << "    BindGroupEntry entries[] = {\n";
-        out << "        { BindGroupEntryType::UniformBuffer, out.uniformBuffer, 0, " << cbSize << ", {}, {} },\n";
-        out << "        { BindGroupEntryType::Sampler, {}, 0, 0, {}, out.sampler },\n";
-        out << "        { BindGroupEntryType::Texture, {}, 0, 0, out.texture, {} }\n";
-        out << "    };\n";
-        out << "    BindGroupDesc bindGroupDesc { out.bindGroupLayout, entries, " << (rd.vsBindings.size() + rd.psBindings.size()) << " };\n";
-        out << "    out.bindGroup = api->create_bind_group(&bindGroupDesc);\n";
         out << "}\n";
 
         out.close();
