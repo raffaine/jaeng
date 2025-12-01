@@ -152,10 +152,14 @@ private:
 };
 
 // -------------------- Macros --------------------
+#define CONCAT_IMPL(x, y) x##y
+#define CONCAT(x, y) CONCAT_IMPL(x, y)
+#define UNIQUE_NAME(base) CONCAT(base, __LINE__)
+
 #define JAENG_TRY_ASSIGN(decl, expr) \
-    auto _tmp_##__COUNTER__ = (expr); \
-    if (_tmp_##__COUNTER__.hasError()) return _tmp_##__COUNTER__; \
-    decl = std::move(_tmp_##__COUNTER__).logError().value()
+    auto UNIQUE_NAME(_tmp_) = (expr); \
+    if (UNIQUE_NAME(_tmp_).hasError()) return UNIQUE_NAME(_tmp_); \
+    decl = std::move(UNIQUE_NAME(_tmp_)).logError().value()
 
 #define JAENG_TRY(expr) \
     { auto _tmp = (expr); if (_tmp.hasError()) return _tmp; }
