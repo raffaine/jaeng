@@ -69,6 +69,8 @@ add_executable(sandbox WIN32
   engine/storage/win/filestorage.cpp
   engine/material/imaterialsys.h
   engine/material/materialsys.cpp
+  engine/mesh/imeshsys.h
+  engine/mesh/meshsys.cpp
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})

@@ -31,7 +31,7 @@ public:
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
-        const std::string* requiredSemantics, // count should match attributes on vertex layout
+        const char* requiredSemantics[], // count should match attributes on vertex layout
         const BindGroupLayoutDesc* bindGroups,
         size_t bindGroupCount
     ) override;
@@ -68,5 +68,5 @@ private:
     // Common Logic
     jaeng::result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
     jaeng::result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
-                                             const std::string* requiredSemantics, const BindGroupLayoutDesc* bindGroups, size_t bindGroupCount);
+                                             const char* requiredSemantics[], const BindGroupLayoutDesc* bindGroups, size_t bindGroupCount);
 };

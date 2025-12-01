@@ -81,7 +81,7 @@ public:
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
-        const std::string* requiredSemantics, // count should match attributes on vertex layout
+        const char* requiredSemantics[], // count should match attributes on vertex layout
         const BindGroupLayoutDesc* bindGroups,
         size_t bindGroupCount
     ) = 0;

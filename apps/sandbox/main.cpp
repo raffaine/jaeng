@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -9,6 +9,7 @@
 #include "render/graph/render_graph.h"
 #include "storage/win/filestorage.h"
 #include "material/materialsys.h"
+#include "mesh/meshsys.h"
 
 #include "basic_reflect.h"
 
@@ -65,6 +66,30 @@ static const char* materialFileData = R"(
 }
 )";
 
+std::vector<uint8_t> createQuadMeshBinary() {
+    RAWFormatHeader header{4, 6};
+
+    RAWFormatVertex vertices[4] = {
+        {{-0.5f,-0.5f,0.0f},{1,0,0},{0,1}},
+        {{-0.5f, 0.5f,0.0f},{0,1,0},{0,0}},
+        {{ 0.5f, 0.5f,0.0f},{0,0,1},{1,0}},
+        {{ 0.5f,-0.5f,0.0f},{1,1,1},{1,1}}
+    };
+
+    uint32_t indices[6] = {0,1,2,0,2,3};
+
+    size_t totalSize = sizeof(header) + sizeof(vertices) + sizeof(indices);
+    std::vector<uint8_t> buffer(totalSize);
+
+    uint8_t* ptr = buffer.data();
+    std::memcpy(ptr, &header, sizeof(header));
+    ptr += sizeof(header);
+    std::memcpy(ptr, vertices, sizeof(vertices));
+    ptr += sizeof(vertices);
+    std::memcpy(ptr, indices, sizeof(indices));
+
+    return buffer;
+}
 
 using Microsoft::WRL::ComPtr;
 
@@ -132,7 +157,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         return -2;
     }
 
-    // File Manager
+    // SwapChain and Default Depth Buffer
+    DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
+    SwapchainDesc    swapDesc{{1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo};
+    swap = renderer->create_swapchain(&swapDesc);
+
+    // --- File Manager and Data Setup ---
     std::shared_ptr<IFileManager> fileMan = std::make_shared<FileManager>();
 
     // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
@@ -151,54 +181,41 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     // Stores the material description in the File Manager
     fileMan->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
-    // SwapChain and Default Depth Buffer
-    DepthStencilDesc depthDesc {
-        .depth_enable = true,
-        .depth_format = TextureFormat::D32F
-    };
-    SwapchainDesc swapDesc { {1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo };
-    swap = renderer->create_swapchain(&swapDesc);
-
-    // Mesh: a colored quad (two triangles)
-    struct Vtx { float px, py, pz; float r, g, b; float u,v; };
-    const std::array<Vtx,4> vertices = {{
-        { -0.5f, -0.5f, .0f, 1,0,0, 0,0 },
-        {  0.5f, -0.5f, .0f, 0,1,0, 1,0 },
-        {  0.5f,  0.5f, .0f, 0,0,1, 1,1 },
-        { -0.5f,  0.5f, .0f, 1,1,0, 0,1 },
-    }};
-    const std::array<uint32_t,6> indices = {{ 0,1,2, 0,2,3 }};
-
-    // Vertex and Index Buffer Resources
-    BufferDesc vbd{};
-    vbd.size_bytes = sizeof(vertices);
-    vbd.usage      = BufferUsage_Vertex;
-    BufferHandle vb = renderer->create_buffer(&vbd, vertices.data());
-
-    BufferDesc ibd{};
-    ibd.size_bytes = sizeof(indices);
-    ibd.usage      = BufferUsage_Index;
-    BufferHandle ib = renderer->create_buffer(&ibd, indices.data());
-
-    // Constant Buffer for VS/PS
-    const CBTransform cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
-                                   Translate(-0.25f, 0.25f, 0.5), Translate(0.25f, 0.25f, 0.5)};
+    // Stores the mesh in the File Manager
+    auto meshRawData = createQuadMeshBinary();
+    fileMan->registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
 
     // --- Material System setup ---
     MaterialSystem matSys(fileMan, renderer.gfx);
 
     // Creates Test Checkerboard Textured Material with precompiled shaders and reflected header layouts
-    std::string semantics[] = {"POSITION", "COLOR", "TEXCOORD"};
-    MaterialHandle matHandle = matSys.createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, semantics, &ShaderReflection::bindGroupLayout, 1).orValue({});
+    MaterialHandle matHandle = matSys.createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics, &ShaderReflection::bindGroupLayout, 1).orValue({});
 
     // Retrieve Material Created and Convenience Variables for Constant Buffer and Bind Group
     const MaterialBindings* matBg = matSys.getBindData(matHandle).orValue(nullptr);
     const BufferHandle      cb    = matBg->constantBuffers[0];
     const BindGroupHandle   bg    = matBg->bindGroup;
 
+    // ---- Mesh System Setup ---
+    MeshSystem meshSys(fileMan, renderer.gfx);
+
+    // Loads the test mesh into Mesh Sys
+    auto meshHandle = meshSys.loadMesh("/mem/mesh-test.raw").orValue({});
+
+    // Retrieves the Created Mesh and Convenience Variables
+    const Mesh* testMesh = meshSys.getMesh(meshHandle).orValue(nullptr);
+    const BufferHandle vb = testMesh->vertexBuffer;
+    const BufferHandle ib = testMesh->indexBuffer;
+
+    // --- Pipeline Setup ---
+
     // Creates the Required Pipelines (Involves Geometry aside from Material)
     GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, PrimitiveTopology::TriangleList, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
     PipelineHandle       pso = renderer->create_graphics_pipeline(&pdesc);
+
+    // Constant Buffer for VS/PS
+    const CBTransform cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
+                                   Translate(-0.25f, 0.25f, 0.5), Translate(0.25f, 0.25f, 0.5)};
 
     // ---- Main Loop ----
     bool running = true;
