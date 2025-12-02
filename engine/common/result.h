@@ -133,7 +133,7 @@ public:
     // r-value only methods
     template<typename F>
     void orElse(F&& fallback) && {
-        if (auto e_ = std::move(*this).logError(); e_.has_value() ) {
+        if (auto e_ = std::move(*this).logError(); !e_.has_value() ) {
             fallback(std::move(e_.error()));
         }
     }
@@ -144,7 +144,7 @@ public:
             // Replace with logging system
             OutputDebugStringA(std::format("Error [{}]: {}\n", m_expected.error().code, m_expected.error().message).c_str());
         }
-        return std::move(m_expected);
+        return m_expected;
     }
 
 private:
