@@ -6,7 +6,7 @@
 
 class FileManager : public IFileManager {
 public:
-    FileManager() = default;
+    FileManager();
     virtual ~FileManager() = default;
 
     FileManager(const FileManager&) = delete;
@@ -22,9 +22,12 @@ public:
     void registerMemoryFile(const std::string& path, const void* data, uint64_t byteSize) override;
 
     bool exists(const std::string& path) const override;
+    
+    std::unique_ptr<SubscriptionT> track(const std::string& path, std::function<void(const FileChangedEvent&)> callback) override;
 
 private:
     std::unordered_map<std::string, std::vector<uint8_t>> memoryFiles;
+    std::shared_ptr<EventBus> eventBus;
 
     std::vector<uint8_t> loadFromDisk(const std::string& path);
 };

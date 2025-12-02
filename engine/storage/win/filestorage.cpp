@@ -3,6 +3,9 @@
 
 #include "filestorage.h"
 
+FileManager::FileManager() : eventBus(std::make_unique<EventBus>()) {
+}
+
 jaeng::result<> FileManager::initialize() {
     return {};
 }
@@ -25,6 +28,11 @@ void FileManager::registerMemoryFile(const std::string& path, const void* data, 
 
 bool FileManager::exists(const std::string& path) const {
     return memoryFiles.contains(path) || std::filesystem::exists(path);
+}
+
+std::unique_ptr<FileManager::SubscriptionT> FileManager::track(const std::string& path, std::function<void(const FileChangedEvent&)> callback) {
+    // TODO: Install a tracking mechanism to detect changes on a path
+    return eventBus->subscribe(callback);
 }
 
 std::vector<uint8_t> FileManager::loadFromDisk(const std::string& path) {

@@ -164,6 +164,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // --- File Manager and Data Setup ---
     std::shared_ptr<IFileManager> fileMan = std::make_shared<FileManager>();
+    fileMan->initialize().orElse([](auto){
+        MessageBox(NULL, L"Failed to initialize FileManager. Continuing but on limited capacity", L"Error", MB_ICONERROR);
+    }); // Ensures monitoring threads are setup and running
 
     // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
     const uint32_t W = 256, H = 256, CS = 32;
@@ -190,6 +193,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // Creates Test Checkerboard Textured Material with precompiled shaders and reflected header layouts
     MaterialHandle matHandle = matSys.createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics, &ShaderReflection::bindGroupLayout, 1).orValue({});
+    // Enable Hot Reloading for the Material
+    auto materialSub = fileMan->track("/mem/material-test.json", [&matSys, matHandle](const FileChangedEvent& e) {
+        if (e.change == FileChangedEvent::ChangeType::Modified) matSys.reloadMaterial(matHandle).orElse([](auto){}); //ugly ... but logError here still produces nodiscard warning
+    });
 
     // Retrieve Material Created and Convenience Variables for Constant Buffer and Bind Group
     const MaterialBindings* matBg = matSys.getBindData(matHandle).orValue(nullptr);

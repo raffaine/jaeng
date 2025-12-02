@@ -63,6 +63,7 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 # Sandbox app
 add_executable(sandbox WIN32
   apps/sandbox/main.cpp
+  engine/common/pubsub.h
   engine/render/frontend/renderer.h
   engine/render/graph/render_graph.h
   engine/storage/ifstorage.h

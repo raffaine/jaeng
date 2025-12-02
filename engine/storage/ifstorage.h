@@ -3,6 +3,15 @@
 #include <string>
 #include <vector>
 #include "common/result.h"
+#include "common/pubsub.h"
+
+struct FileChangedEvent {
+    enum class ChangeType {
+        Created = 0,
+        Modified,
+        Deleted
+    } change;
+};
 
 class IFileManager {
 public:
@@ -18,4 +27,8 @@ public:
 
     // Check if file exists
     virtual bool exists(const std::string& path) const = 0;
+
+    // Tracks changes to a path
+    using SubscriptionT = EventBus::Subscription<FileChangedEvent>;
+    virtual std::unique_ptr<SubscriptionT> track(const std::string& path, std::function<void(const FileChangedEvent&)> callback) = 0;
 };
