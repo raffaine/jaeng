@@ -33,6 +33,7 @@ jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
         .vertexBuffer = vb, .indexBuffer = ib,
         .semantics = {"POSITION", "COLOR", "TEXCOORD"},
         .topology = PrimitiveTopology::TriangleList,
+        .indexCount = header->index_count
     };
     meshes.emplace(h, std::move(m));
 

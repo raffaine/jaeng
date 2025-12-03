@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -255,7 +255,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 for (int i=0; i<4; i++) {
                     ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(CBTransform));
                     ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
-                    ctx.gfx->cmd_draw_indexed(ctx.cmd, 6, 1, 0, 0, 0);
+                    ctx.gfx->cmd_draw_indexed(ctx.cmd, testMesh->indexCount, 1, 0, 0, 0);
                 }
             }
         );
