@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -12,6 +12,9 @@
 #include "mesh/meshsys.h"
 
 #include "basic_reflect.h"
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #define USE_PIX
 #include "pix3.h"  // provided by winpixevent package
@@ -113,16 +116,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
-struct CBTransform {
-    float m[16]; // column-major 4x4
-};
-
 // Simple function to build a translation matrix
-CBTransform Translate(float x, float y, float z = 0.0f) {
-    CBTransform cb{};
-    cb.m[0]=1; cb.m[5]=1; cb.m[10]=1; cb.m[15]=1;
-    cb.m[12]=x; cb.m[13]=y;  cb.m[14]=z;  // translation components
-    return cb;
+glm::mat4 Translate(float x, float y, float z = 0.0f) {
+    glm::mat4 cb = glm::identity<glm::mat4>();
+    return glm::translate(cb, {x,y,z});
 }
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
@@ -221,7 +218,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     PipelineHandle       pso = renderer->create_graphics_pipeline(&pdesc);
 
     // Constant Buffer for VS/PS
-    const CBTransform cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
+    const glm::mat4 cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
                                    Translate(-0.25f, 0.25f, 0.5), Translate(0.25f, 0.25f, 0.5)};
 
     // ---- Main Loop ----
@@ -253,7 +250,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 ctx.gfx->cmd_set_index_buffer(ctx.cmd, ib, true, 0);
 
                 for (int i=0; i<4; i++) {
-                    ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(CBTransform));
+                    ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(glm::mat4));
                     ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, testMesh->indexCount, 1, 0, 0, 0);
                 }
