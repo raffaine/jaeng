@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -10,6 +10,9 @@
 #include "storage/win/filestorage.h"
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
+#include "entity/entity.h"
+#include "scene/scene.h"
+#include "scene/grid_partition.h"
 
 #include "basic_reflect.h"
 
@@ -116,39 +119,36 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
-// Simple function to build a translation matrix
-glm::mat4 Translate(float x, float y, float z = 0.0f) {
-    glm::mat4 cb = glm::identity<glm::mat4>();
-    return glm::translate(cb, {x,y,z});
+static HWND CreateMainWindow(HINSTANCE hInstance) {
+    // Register window class
+    WNDCLASSEX wc{sizeof(WNDCLASSEX)};
+    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = hInstance;
+    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+    wc.lpszClassName = kWndClass;
+    RegisterClassEx(&wc);
+
+    // Create window
+    RECT r{0, 0, 1280, 720};
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    HWND hwnd =
+        CreateWindowEx(0, kWndClass, L"Pluggable Renderer - Sandbox", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
+                       CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, hInstance, nullptr);
+    return hwnd;
 }
 
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     HMODULE hGpuCap = PIXLoadLatestWinPixGpuCapturerLibrary();
     if (!hGpuCap) {
         MessageBox(nullptr, L"Failed to load WinPixGpuCapturer.dll", L"Error", MB_ICONERROR);
         return -1;
     }
 
-    // Register window class
-    WNDCLASSEX wc{ sizeof(WNDCLASSEX) };
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInstance;
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.lpszClassName = kWndClass;
-    RegisterClassEx(&wc);
-
-    // Create window
-    RECT r{0,0,1280,720};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    HWND hwnd = CreateWindowEx(0, kWndClass, L"Pluggable Renderer - Sandbox",
-    WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-    r.right - r.left, r.bottom - r.top,
-    nullptr, nullptr, hInstance, nullptr);
-
+    HWND hwnd = CreateMainWindow(hInstance);
     if (!hwnd) return -1;
 
-    // Renderer
+    /// ---  Renderer ---
     if (!renderer.initialize(GfxBackend::D3D12, hwnd, 3)) {
         MessageBox(hwnd, L"Failed to initialize renderer.", L"Error", MB_ICONERROR);
         return -2;
@@ -165,61 +165,70 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         MessageBox(NULL, L"Failed to initialize FileManager. Continuing but on limited capacity", L"Error", MB_ICONERROR);
     }); // Ensures monitoring threads are setup and running
 
-    // Create a checkerboard texture (RGBA8) + sampler + bind group (set 0)
-    const uint32_t W = 256, H = 256, CS = 32;
-    std::vector<uint32_t> pixels(W * H);
-    for (uint32_t y=0; y<H; ++y) {
-        for (uint32_t x=0; x<W; ++x) {
-            bool on = ((x/CS) ^ (y/CS)) & 1;
-            uint8_t c = on ? 255 : 30;
-            pixels[y*W + x] = (0xFFu<<24) | (c<<16) | (c<<8) | c;
+    // Create a checkerboard texture (RGBA8) and store it as Custom type on File Manager
+    {
+        const uint32_t        W = 256, H = 256, CS = 32;
+        std::vector<uint32_t> pixels(W * H);
+        for (uint32_t y = 0; y < H; ++y) {
+            for (uint32_t x = 0; x < W; ++x) {
+                bool    on        = ((x / CS) ^ (y / CS)) & 1;
+                uint8_t c         = on ? 255 : 30;
+                pixels[y * W + x] = (0xFFu << 24) | (c << 16) | (c << 8) | c;
+            }
         }
+        // Stores it on File Manager
+        fileMan->registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size() * sizeof(uint32_t));
     }
-    // Stores it on File Manager
-    fileMan->registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size()*sizeof(uint32_t));
 
-    // Stores the material description in the File Manager
+    // Stores the test material description in the File Manager
     fileMan->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
-    // Stores the mesh in the File Manager
+    // Stores the test mesh in the File Manager
     auto meshRawData = createQuadMeshBinary();
     fileMan->registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
 
-    // --- Material System setup ---
-    MaterialSystem matSys(fileMan, renderer.gfx);
+    /// --- Brings up Entity Manager, Material and Mesh Systems ---
+    std::shared_ptr<EntityManager> entityMan = std::make_shared<EntityManager>();
+    std::shared_ptr<MaterialSystem> matSys  = std::make_shared<MaterialSystem>(fileMan, renderer.gfx);
+    std::shared_ptr<MeshSystem>     meshSys = std::make_shared<MeshSystem>(fileMan, renderer.gfx);
 
-    // Creates Test Checkerboard Textured Material with precompiled shaders and reflected header layouts
-    MaterialHandle matHandle = matSys.createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics, &ShaderReflection::bindGroupLayout, 1).orValue({});
-    // Enable Hot Reloading for the Material
-    auto materialSub = fileMan->track("/mem/material-test.json", [&matSys, matHandle](const FileChangedEvent& e) {
-        if (e.change == FileChangedEvent::ChangeType::Modified) matSys.reloadMaterial(matHandle).orElse([](auto){}); //ugly ... but logError here still produces nodiscard warning
-    });
+    /// --- Scene Manager ---
+    SceneManager sceneMan(meshSys, matSys, renderer.gfx);
 
-    // Retrieve Material Created and Convenience Variables for Constant Buffer and Bind Group
-    const MaterialBindings* matBg = matSys.getBindData(matHandle).orValue(nullptr);
-    const BufferHandle      cb    = matBg->constantBuffers[0];
-    const BindGroupHandle   bg    = matBg->bindGroup;
+    // Creates a Test Scene with a simple Grid Partitioner
+    if (!sceneMan.createScene("Test", std::make_unique<GridPartitioner>(entityMan)).logError()) {
+        MessageBox(NULL, L"Failed to create Test Scene. Aborting.", L"Error", MB_ICONERROR);
+        return -1;
+    }
 
-    // ---- Mesh System Setup ---
-    MeshSystem meshSys(fileMan, renderer.gfx);
+    /// --- Test Entities Setup ---
 
-    // Loads the test mesh into Mesh Sys
-    auto meshHandle = meshSys.loadMesh("/mem/mesh-test.raw").orValue({});
+    // Creates 4 entities
+    EntityID testEntities[4] = { entityMan->createEntity(), entityMan->createEntity(), entityMan->createEntity(), entityMan->createEntity() };
 
-    // Retrieves the Created Mesh and Convenience Variables
-    const Mesh* testMesh = meshSys.getMesh(meshHandle).orValue(nullptr);
-    const BufferHandle vb = testMesh->vertexBuffer;
-    const BufferHandle ib = testMesh->indexBuffer;
+    // Loads the test mesh into Mesh Sys and associate with all entities
+    if (auto meshHandle = meshSys->loadMesh("/mem/mesh-test.raw").logError()) {
+        for (int i = 0; i < 4; i++) entityMan->addComponent<MeshHandle>(testEntities[i]) = meshHandle.value();
+    }
 
-    // --- Pipeline Setup ---
+    // Creates Test Textured Material with precompiled shaders and reflected header layouts and associate with all
+    std::unique_ptr<IFileManager::SubscriptionT> materialSub;
+    if (auto matHandle = matSys->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics, &ShaderReflection::bindGroupLayout, 1).logError()) {
+        for (int i = 0; i < 4; i++) entityMan->addComponent<MaterialHandle>(testEntities[i]) = matHandle.value();
+        // Enable Hot Reloading for the Material
+        materialSub = fileMan->track("/mem/material-test.json", [matSys, h = matHandle.value()](const FileChangedEvent& e) {
+            if (e.change == FileChangedEvent::ChangeType::Modified) matSys->reloadMaterial(h).orElse([](auto){}); //ugly ... but logError here still produces nodiscard warning
+        });
+    }
 
-    // Creates the Required Pipelines (Involves Geometry aside from Material)
-    GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, PrimitiveTopology::TriangleList, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
-    PipelineHandle       pso = renderer->create_graphics_pipeline(&pdesc);
+    // Positions the 4 entities
+    entityMan->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0.5}};
+    entityMan->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0.5}};
+    entityMan->addComponent<Transform>(testEntities[2]) = Transform{.position = {-0.25f,  0.25f, 0.5}};
+    entityMan->addComponent<Transform>(testEntities[3]) = Transform{.position = { 0.25f,  0.25f, 0.5}};
 
-    // Constant Buffer for VS/PS
-    const glm::mat4 cbData[4] = {Translate(-0.25f, -0.25f, 0.5), Translate(0.25f, -0.25f, 0.5),
-                                   Translate(-0.25f, 0.25f, 0.5), Translate(0.25f, 0.25f, 0.5)};
+    // Now that entities are positioned, builts the partitions for the scene (no op on this version)
+    sceneMan.getScene("Test")->getPartitioner()->build();
 
     // ---- Main Loop ----
     bool running = true;
@@ -236,28 +245,17 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Build a small render graph: Clear -> Forward
         RenderGraph graph;
 
-        // 1) Clear pass
-        graph.add_pass("Clear", { {
-            .tex = renderer->get_current_backbuffer(swap),
-            .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
-        } }, { .tex = 1, .clear_depth = 1.0f }, nullptr);
-        // 2) Forward pass
-        graph.add_pass("Forward", 
-            { { .tex = renderer->get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
-            [&](const RGPassContext& ctx) {
-                ctx.gfx->cmd_set_pipeline(ctx.cmd, pso);
-                ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, vb, 0);
-                ctx.gfx->cmd_set_index_buffer(ctx.cmd, ib, true, 0);
+        // Gets the Test Scene Created
+        Scene* scene = sceneMan.getScene("Test");
+        if (!scene) continue;
 
-                for (int i=0; i<4; i++) {
-                    ctx.gfx->update_buffer(cb, 0, &cbData[i], sizeof(glm::mat4));
-                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, bg);
-                    ctx.gfx->cmd_draw_indexed(ctx.cmd, testMesh->indexCount, 1, 0, 0, 0);
-                }
-            }
-        );
+        // Build a Draw List based on given AABB (an empty one for now)
+        scene->buildDrawList({});
 
-        // Validate
+        // Creates the Required Passes on the Graph
+        scene->renderScene(graph, swap);
+
+        // Validate (No op for now)
         graph.compile();
 
         // Execute Render Passes

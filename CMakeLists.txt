@@ -72,6 +72,9 @@ add_executable(sandbox WIN32
   engine/material/materialsys.cpp
   engine/mesh/imeshsys.h
   engine/mesh/meshsys.cpp
+  engine/entity/entity.h
+  engine/scene/scene.cpp
+  engine/scene/grid_partition.cpp
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})
