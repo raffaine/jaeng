@@ -8,29 +8,21 @@
 ## Layout
 
 ```
-/engine
-  /render
+/engine    # Jaeng (src and headers)
+  /common    # Header-only utilities, such as a result object and pub-sub support
+    /math        # General Use Math utilities
+  /entity    # Entity Component System
+  /material  # Material System
+  /mesh      # Mesh (Geometric data) System
+  /render    # Renderer (Pluggable)
     /public      # Stable renderer API and plugin loader
-      renderer_api.h
-      renderer_plugin.h
-    /frontend     # RAII wrapper used by the app/engine
-      renderer.h
-  /plugins
-    /renderer_d3d12     # D3D12 backend (DLL)
-      d3d12_bind.h/cpp
-      d3d12_commands.h/cpp
-      d3d12_descriptors.h/cpp
-      d3d12_device.h/cpp
-      d3d12_pipeline.h/cpp
-      d3d12_renderer.h/cpp
-      d3d12_resources.h/cpp
-      d3d12_swapchain.h/cpp
-      d3d12_upload.h/cpp
-      d3d12_utils.h
-      d3d12_renderer.h/cpp
-/apps
-  /sandbox     # Win32 app that loads the renderer and clears the screen
-    main.cpp
+    /frontend    # RAII wrapper used by the app/engine
+  /scene     # Scene Management and Space Partition
+  /storage   # File (Physical or Virtual) Management
+/plugins   # Available Renderer Plugins
+  /renderer_d3d12  # D3D12 backend (DLL)
+/apps      # Apps using Jaeng
+  /sandbox      # Win32 app that loads the D3D12 renderer, builds and renders a scene
 ```
 
 ## Build (Windows, Visual Studio)
