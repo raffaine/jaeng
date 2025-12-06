@@ -1,12 +1,15 @@
 #include "scene.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/quaternion.hpp>
 
 #include "render/graph/render_graph.h"
 
-Scene::Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, PipelineCache* pc, std::weak_ptr<IMeshSystem> mes, std::weak_ptr<IMaterialSystem> mas, std::weak_ptr<RendererAPI> r) 
+Scene::Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera, PipelineCache* pc, std::weak_ptr<IMeshSystem> mes, std::weak_ptr<IMaterialSystem> mas, std::weak_ptr<RendererAPI> r) 
     : name(name)
     , partitioner(std::move(partitioner))
+    , camera(std::move(camera))
     , pipelineCache(pc)
     , meshSys(mes)
     , matSys(mas)
@@ -44,9 +47,17 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
             pipelineCache->storePipeline(pk, *pso);
         }
 
+        // Create the transform matrix for entity
+        auto worldMat = glm::identity<glm::mat4>();
+        if (e.transform) {
+            worldMat = glm::translate(worldMat, e.transform->position);
+            worldMat *= glm::toMat4(e.transform->rotation);
+            worldMat = glm::scale(worldMat, e.transform->scale);
+        }
+
         // TODO: Sort data in a way that shared pipeline and group bindings are grouped together in the same DrawBatch
         // for now just create Batches with one packet on it
-        DrawPacket dp{.worldMatrix = (e.transform) ? glm::translate(glm::identity<glm::mat4>(), e.transform->position) : glm::identity<glm::mat4>(),
+        DrawPacket dp{.worldMatrix  = std::move(worldMat),
                       .vertexBuffer = mesh->vertexBuffer,
                       .indexBuffer  = mesh->indexBuffer,
                       .indexCount   = static_cast<uint32_t>(mesh->indexCount)};
@@ -92,8 +103,9 @@ void Scene::renderScene(RenderGraph& rg, SwapchainHandle swap)
 SceneManager::SceneManager(std::shared_ptr<IMeshSystem> mes, std::shared_ptr<IMaterialSystem> mas, std::shared_ptr<RendererAPI> r)
     : meshSys(mes), matSys(mas), renderer(r), pipelineCache(std::make_unique<PipelineCache>()) {}
    
-jaeng::result<Scene*> SceneManager::createScene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner) {
-    auto scene = std::make_unique<Scene>(name, std::move(partitioner), pipelineCache.get(), meshSys, matSys, renderer);
+jaeng::result<Scene*> SceneManager::createScene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera) {
+    JAENG_ERROR_IF(!partitioner || !camera, jaeng::error_code::invalid_args, "[Scene Manager] A Camera and Partitioner is required for a scene");
+    auto scene = std::make_unique<Scene>(name, std::move(partitioner), std::move(camera), pipelineCache.get(), meshSys, matSys, renderer);
     scenes[name] = std::move(scene);
     return scenes[name].get();
 }

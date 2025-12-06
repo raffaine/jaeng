@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "ipartition.h"
+#include "icamera.h"
 #include "pipelinecache.h"
 #include "render/public/renderer_api.h"
 #include "material/imaterialsys.h"
@@ -18,7 +19,7 @@ class RenderGraph;
 // Represents a logical rendering context
 class Scene {
 public:
-    Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, PipelineCache* pc, std::weak_ptr<IMeshSystem>, std::weak_ptr<IMaterialSystem>, std::weak_ptr<RendererAPI>);
+    Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera, PipelineCache* pc, std::weak_ptr<IMeshSystem>, std::weak_ptr<IMaterialSystem>, std::weak_ptr<RendererAPI>);
 
     const std::string& getName() const { return name; }
     
@@ -31,11 +32,16 @@ public:
     // Access partitioner for queries
     ISpatialPartitioner* getPartitioner() const { return partitioner.get(); }
 
+    // Access camera
+    ICamera* getCamera() const { return camera.get(); }
+
 private:
     std::string name;
     
     // Partitioner decides how to cluster entities 
     std::unique_ptr<ISpatialPartitioner> partitioner;
+    // Camera for the scene
+    std::unique_ptr<ICamera> camera;
 
     // Per-Instance Resources for Drawing
     struct DrawPacket {
@@ -69,7 +75,7 @@ class SceneManager {
 public:
     SceneManager(std::shared_ptr<IMeshSystem>, std::shared_ptr<IMaterialSystem>, std::shared_ptr<RendererAPI>);
 
-    jaeng::result<Scene*> createScene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner);
+    jaeng::result<Scene*> createScene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera);
 
     void destroyScene(const std::string& name);
 

@@ -75,6 +75,7 @@ add_executable(sandbox WIN32
   engine/entity/entity.h
   engine/scene/scene.cpp
   engine/scene/grid_partition.cpp
+  engine/scene/perspective_cam.cpp
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})

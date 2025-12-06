@@ -47,18 +47,10 @@ private:
 };
 
 struct Transform {
-    glm::vec3 position;
-    glm::quat rotation;
-    glm::vec3 scale;
+    glm::vec3 position = {0, 0, 0};
+    glm::quat rotation = {1, 0, 0, 0};
+    glm::vec3 scale    = {1, 1, 1};
 };
-
-// struct MeshComponent {
-//     MeshHandle mesh;
-// };
-
-// struct MaterialComponent {
-//     MaterialHandle material;
-// };
 
 class EntityManager {
 public:

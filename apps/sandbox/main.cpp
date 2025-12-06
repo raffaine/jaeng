@@ -13,11 +13,14 @@
 #include "entity/entity.h"
 #include "scene/scene.h"
 #include "scene/grid_partition.h"
+#include "scene/perspective_cam.h"
 
 #include "basic_reflect.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/quaternion.hpp>
 
 #define USE_PIX
 #include "pix3.h"  // provided by winpixevent package
@@ -94,6 +97,81 @@ std::vector<uint8_t> createQuadMeshBinary() {
     ptr += sizeof(vertices);
     std::memcpy(ptr, indices, sizeof(indices));
 
+    return buffer;
+}
+
+// NOTE: This code assumes RAWFormatHeader { uint32_t vertexCount; uint32_t indexCount; }
+// and RAWFormatVertex { float pos[3]; float color[3]; float uv[2]; }
+std::vector<uint8_t> createCubeMeshBinary() {
+    RAWFormatHeader header{24, 36};
+
+    RAWFormatVertex v[24];
+    // Per-face color, simple UVs (0..1). Unit cube centered at origin, size 1.
+    auto V = [&](int i, float x, float y, float z, float r, float g, float b, float u, float vv) {
+        v[i].position[0]=x; v[i].position[1]=y; v[i].position[2]=z;
+        v[i].color[0]=r; v[i].color[1]=g; v[i].color[2]=b;
+        v[i].uv[0]=u; v[i].uv[1]=vv;
+    };
+
+    // +X face (red)
+    V(0, +0.5f,-0.5f,-0.5f, 1,0,0, 0,1);
+    V(1, +0.5f,-0.5f,+0.5f, 1,0,0, 0,0);
+    V(2, +0.5f,+0.5f,+0.5f, 1,0,0, 1,0);
+    V(3, +0.5f,+0.5f,-0.5f, 1,0,0, 1,1);
+
+    // -X face (green)
+    V(4, -0.5f,-0.5f,+0.5f, 0,1,0, 0,0);
+    V(5, -0.5f,-0.5f,-0.5f, 0,1,0, 0,1);
+    V(6, -0.5f,+0.5f,-0.5f, 0,1,0, 1,1);
+    V(7, -0.5f,+0.5f,+0.5f, 0,1,0, 1,0);
+
+    // +Y face (blue)
+    V(8, -0.5f,+0.5f,-0.5f, 0,0,1, 0,1);
+    V(9, +0.5f,+0.5f,-0.5f, 0,0,1, 1,1);
+    V(10,+0.5f,+0.5f,+0.5f, 0,0,1, 1,0);
+    V(11,-0.5f,+0.5f,+0.5f, 0,0,1, 0,0);
+
+    // -Y face (yellow)
+    V(12,-0.5f,-0.5f,+0.5f, 1,1,0, 0,0);
+    V(13,+0.5f,-0.5f,+0.5f, 1,1,0, 1,0);
+    V(14,+0.5f,-0.5f,-0.5f, 1,1,0, 1,1);
+    V(15,-0.5f,-0.5f,-0.5f, 1,1,0, 0,1);
+
+    // +Z face (magenta)
+    V(16,+0.5f,-0.5f,+0.5f, 1,0,1, 1,1);
+    V(17,-0.5f,-0.5f,+0.5f, 1,0,1, 0,1);
+    V(18,-0.5f,+0.5f,+0.5f, 1,0,1, 0,0);
+    V(19,+0.5f,+0.5f,+0.5f, 1,0,1, 1,0);
+
+    // -Z face (cyan)
+    V(20,-0.5f,-0.5f,-0.5f, 0,1,1, 1,1);
+    V(21,+0.5f,-0.5f,-0.5f, 0,1,1, 0,1);
+    V(22,+0.5f,+0.5f,-0.5f, 0,1,1, 0,0);
+    V(23,-0.5f,+0.5f,-0.5f, 0,1,1, 1,0);
+
+    uint32_t idx[36] = {
+        // +X
+        0,1,2, 0,2,3,
+        // -X
+        4,5,6, 4,6,7,
+        // +Y
+        8,9,10, 8,10,11,
+        // -Y
+        12,13,14, 12,14,15,
+        // +Z
+        16,17,18, 16,18,19,
+        // -Z
+        20,21,22, 20,22,23
+    };
+
+    size_t totalSize = sizeof(RAWFormatHeader) + sizeof(v) + sizeof(idx);
+    std::vector<uint8_t> buffer(totalSize);
+    uint8_t* ptr = buffer.data();
+    std::memcpy(ptr, &header, sizeof(RAWFormatHeader));
+    ptr += sizeof(RAWFormatHeader);
+    std::memcpy(ptr, v, sizeof(v));
+    ptr += sizeof(v);
+    std::memcpy(ptr, idx, sizeof(idx));
     return buffer;
 }
 
@@ -184,7 +262,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     fileMan->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
     // Stores the test mesh in the File Manager
-    auto meshRawData = createQuadMeshBinary();
+    auto meshRawData = createCubeMeshBinary(); // createQuadMeshBinary();
     fileMan->registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
 
     /// --- Brings up Entity Manager, Material and Mesh Systems ---
@@ -196,7 +274,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     SceneManager sceneMan(meshSys, matSys, renderer.gfx);
 
     // Creates a Test Scene with a simple Grid Partitioner
-    if (!sceneMan.createScene("Test", std::make_unique<GridPartitioner>(entityMan)).logError()) {
+    const auto aspect = 1280.f/720.f;
+    if (!sceneMan.createScene("Test", std::make_unique<GridPartitioner>(entityMan), std::make_unique<PerspectiveCamera>(aspect)).logError()) {
         MessageBox(NULL, L"Failed to create Test Scene. Aborting.", L"Error", MB_ICONERROR);
         return -1;
     }
@@ -222,15 +301,16 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     }
 
     // Positions the 4 entities
-    entityMan->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0.5}};
-    entityMan->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0.5}};
-    entityMan->addComponent<Transform>(testEntities[2]) = Transform{.position = {-0.25f,  0.25f, 0.5}};
-    entityMan->addComponent<Transform>(testEntities[3]) = Transform{.position = { 0.25f,  0.25f, 0.5}};
+    entityMan->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
+    entityMan->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};
+    entityMan->addComponent<Transform>(testEntities[2]) = Transform{.position = {-0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0, 1, 0})};
+    entityMan->addComponent<Transform>(testEntities[3]) = Transform{.position = { 0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0,-1, 0}), .scale = {.5,.5,.5}};
 
     // Now that entities are positioned, builts the partitions for the scene (no op on this version)
     sceneMan.getScene("Test")->getPartitioner()->build();
 
-    // ---- Main Loop ----
+
+    /// ---- Main Loop ----
     bool running = true;
     MSG msg{};
     while (running) {

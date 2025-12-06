@@ -13,8 +13,8 @@ jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
     // Assumes RAWFormat for now
     JAENG_TRY_ASSIGN(std::vector<uint8_t> rawData, fm->load(path));    
     auto header = reinterpret_cast<const RAWFormatHeader*>(rawData.data());
-    auto vertices = reinterpret_cast<const RAWFormatVertex*>(rawData.data() + sizeof(RAWFormatHeader));
-    auto indices = reinterpret_cast<const uint32_t*>(rawData.data() + sizeof(RAWFormatHeader) + (sizeof(RAWFormatVertex)*header->vertex_count));
+    auto* vertices = reinterpret_cast<const RAWFormatVertex*>(rawData.data() + sizeof(RAWFormatHeader));
+    auto* indices = reinterpret_cast<const uint32_t*>(rawData.data() + sizeof(RAWFormatHeader) + (sizeof(RAWFormatVertex)*header->vertex_count));
 
     // Creates Resources on Renderer
     BufferDesc vbd{
