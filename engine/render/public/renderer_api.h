@@ -237,6 +237,8 @@ typedef struct RendererAPI {
     CommandListHandle (*begin_commands)();
     void (*cmd_begin_rendering_ops)(CommandListHandle, LoadOp load_op, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
     void (*cmd_end_rendering)(CommandListHandle);
+    void (*cmd_set_frame_cb)(CommandListHandle, BufferHandle);    
+    void (*cmd_set_object_cb)(CommandListHandle, BufferHandle);    
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);

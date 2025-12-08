@@ -16,6 +16,11 @@ jaeng::result<> FrameContext::init(ID3D12Device* dev)
 
 void FrameContext::reset()
 {
+    cbvBaseCpu = {};
+    cbvBaseGpu = {};
+    cbvObjCpu = {};
+    cbvObjGpu = {};
+
     HR_CHECK(alloc_->Reset());
     HR_CHECK(cmd_->Reset(alloc_.Get(), /*pso*/nullptr));
 }

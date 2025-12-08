@@ -275,7 +275,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     // Creates a Test Scene with a simple Grid Partitioner
     const auto aspect = 1280.f/720.f;
-    if (!sceneMan.createScene("Test", std::make_unique<GridPartitioner>(entityMan), std::make_unique<PerspectiveCamera>(aspect)).logError()) {
+    auto       camera = std::make_unique<PerspectiveCamera>(glm::vec3{3, 3, 3}, glm::vec3{0, 0, 0}, glm::vec3{0, 1, 0}, aspect);
+    if (!sceneMan.createScene("Test", std::make_unique<GridPartitioner>(entityMan), std::move(camera)).logError()) {
         MessageBox(NULL, L"Failed to create Test Scene. Aborting.", L"Error", MB_ICONERROR);
         return -1;
     }

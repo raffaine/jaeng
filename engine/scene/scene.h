@@ -68,6 +68,7 @@ private:
     std::weak_ptr<IMeshSystem> meshSys;
     std::weak_ptr<IMaterialSystem> matSys;
     std::weak_ptr<RendererAPI> renderer;
+    BufferHandle cbFrame {};
 };
 
 // Orchestrates multiple scenes

@@ -5,6 +5,9 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include "render/graph/render_graph.h"
+#include "common/math/conventions.h"
+
+const auto SceneConvention = jaeng::math::ClipSpaceConvention{ .handed = jaeng::math::Handedness::Left, .depth = jaeng::math::DepthRange::ZeroToOne };
 
 Scene::Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera, PipelineCache* pc, std::weak_ptr<IMeshSystem> mes, std::weak_ptr<IMaterialSystem> mas, std::weak_ptr<RendererAPI> r) 
     : name(name)
@@ -26,6 +29,14 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
     auto matSystem = matSys.lock();
     if (!meshSystem || !matSystem) return;
 
+    // Ensures scene has a Constant Buffer for Frame globals
+    if (!cbFrame) {
+        auto gfx = renderer.lock();
+        if (!gfx) return; // no point in continuing without the renderer
+        BufferDesc   cbDesc{sizeof(glm::mat4), BufferUsage_Uniform};
+        cbFrame = gfx->create_buffer(&cbDesc, nullptr);
+    }
+
     // Collect the ComponentPack of all entities in the volume and iterate
     auto entities = partitioner->queryVisible(volume);
     for (auto& e : entities) {
@@ -43,6 +54,7 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
             if (!gfx) return; // no point in continuing without the renderer
             // Creates Pipeline and Stores it in the cache
             GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, mesh->topology, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
+            pdesc.depth_stencil.enableDepth = true; // always enable depth for now (TODO: material should tell this)
             pso = gfx->create_graphics_pipeline(&pdesc);
             pipelineCache->storePipeline(pk, *pso);
         }
@@ -87,12 +99,17 @@ void Scene::renderScene(RenderGraph& rg, SwapchainHandle swap)
             for (auto& db : drawList) {
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);
 
+                auto viewProj = camera->getViewProj(SceneConvention);
+                ctx.gfx->update_buffer(cbFrame, 0, &viewProj, sizeof(glm::mat4));
+                ctx.gfx->cmd_set_frame_cb(ctx.cmd, cbFrame);
+
                 for (auto& dp : db.packets) {
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, dp.vertexBuffer, 0);
                     ctx.gfx->cmd_set_index_buffer(ctx.cmd, dp.indexBuffer, true, 0);
 
                     ctx.gfx->update_buffer(db.constant, 0, &dp.worldMatrix, sizeof(glm::mat4));
-                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, db.materialBindGroup);
+                    ctx.gfx->cmd_set_object_cb(ctx.cmd, db.constant); // b1
+                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, db.materialBindGroup); // texture srv + sampler
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, dp.indexCount, 1, 0, 0, 0);
                 }
             }

@@ -53,11 +53,11 @@ void PipelineTable::del_pipeline(PipelineHandle h)
 ComPtr<ID3D12RootSignature>
 CreateRootSignature_BindTables(ID3D12Device* dev, /*out*/ D3D_ROOT_SIGNATURE_VERSION* usedVer)
 {
-    // CBV table (b0, space0), SRV table (t0, space0) & Sampler table (s0, space0)
+    // CBV table (b0 and b1, space0), SRV table (t0, space0) & Sampler table (s0, space0)
     D3D12_DESCRIPTOR_RANGE ranges[3]{};
 
     ranges[0].RangeType                         = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-    ranges[0].NumDescriptors                    = 1;
+    ranges[0].NumDescriptors                    = 2;
     ranges[0].BaseShaderRegister                = 0;
     ranges[0].RegisterSpace                     = 0;
     ranges[0].OffsetInDescriptorsFromTableStart = 0;

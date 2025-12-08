@@ -4,9 +4,9 @@
 
 class PerspectiveCamera : public ICamera {
 public:
-    PerspectiveCamera(float aspect, float fovDeg = 60.0f);
+    PerspectiveCamera(glm::vec3 position, glm::vec3 lookAt, glm::vec3 up, float aspect, float fovDeg = 60.0f);
 
-    glm::mat4 getViewProj() const override;
+    glm::mat4 getViewProj(jaeng::math::ClipSpaceConvention) const override;
     jaeng::math::AABB getViewedVolume() const override;
 
 private:

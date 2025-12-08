@@ -14,6 +14,9 @@ struct BufferRec {
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     uint32_t usage = 0;
     UINT64   size = 0;
+    // Cached CPU CBV for Uniform buffers
+    D3D12_CPU_DESCRIPTOR_HANDLE cbvCpu{};
+    bool cbvCpuValid = false;
 };
 
 struct TextureRec {
