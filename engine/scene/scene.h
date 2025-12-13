@@ -50,6 +50,7 @@ private:
         BufferHandle vertexBuffer;
         BufferHandle indexBuffer;
         uint32_t indexCount;
+        BufferHandle constant;
         BindGroupHandle instanceBindGroup; // Per-object resources (optional if instancing)
     };
 
@@ -58,6 +59,7 @@ private:
         PipelineHandle pipeline;
         MaterialHandle material;
         BufferHandle   constant;
+        BufferHandle   cbFrame;
         BindGroupHandle materialBindGroup; // Shared resources
         std::vector<DrawPacket> packets;
     };
@@ -68,7 +70,6 @@ private:
     std::weak_ptr<IMeshSystem> meshSys;
     std::weak_ptr<IMaterialSystem> matSys;
     std::weak_ptr<RendererAPI> renderer;
-    BufferHandle cbFrame {};
 };
 
 // Orchestrates multiple scenes

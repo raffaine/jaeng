@@ -133,13 +133,18 @@ enum class BindGroupEntryType {
     UniformBuffer = 0,
     Texture = 1,
     Sampler = 2,
+    StructuredBuffer = 4,
+    ByteAddressBuffer = 8,
+    UnorderedAccess = 16,
+    Unknown = -1
 };
 
 // Bind groups
 struct BindGroupLayoutEntry {
-    uint32_t binding; // 0..3
-    BindGroupEntryType type;
-    uint32_t stages;  // ShaderStage bitmask
+    uint32_t binding;   // e.g. b0 (0), b1 (1), t0 (0)
+    uint32_t space;     // e.g. space0, space1 ... (if applicable, may be D3D12 specific)
+    BindGroupEntryType type;    // e.g. UniformBuffer, SRV, Sampler
+    uint32_t stages;  // ShaderStage bitmask (which shader stage has access)
 };
 
 struct BindGroupLayoutDesc {

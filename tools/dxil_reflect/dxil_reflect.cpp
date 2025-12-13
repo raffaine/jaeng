@@ -9,6 +9,11 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <map>
+#undef max
+#include <numeric>
+
+#include "render/public/renderer_api.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -29,20 +34,74 @@ struct ReflectData {
     };
 
     struct BoundResource {
-        uint32_t bindPoint;
-        std::string type;
+        BindGroupEntryType type;      // UniformBuffer, Texture, Sampler, UAV, Structured, ByteAddress
+        uint32_t bindPoint;           // e.g., 0 for b0/t0/s0/u0
+        uint32_t space;               // e.g., 0 or 1
+        uint32_t arrayCount;          // BindCount
+        uint32_t stageMask;           // bitmask: Vertex|Fragment|Geometry|Hull|Domain|Compute
         std::string name;
     };
 
     std::string name;
     std::vector<VSParam> vsParams;
     uint32_t stride;
-    std::vector<BoundResource> vsBindings;
-    std::vector<BoundResource> psBindings;
+    std::vector<BoundResource> bindings;
 };
+
+static uint32_t stage_bit_vertex()   { return 1u << 0; }
+static uint32_t stage_bit_fragment() { return 1u << 1; }
+
+BindGroupEntryType map_type(D3D_SHADER_INPUT_TYPE t) {
+    switch (t) {
+        case D3D_SIT_CBUFFER:         return BindGroupEntryType::UniformBuffer;
+        case D3D_SIT_TEXTURE:         return BindGroupEntryType::Texture;
+        case D3D_SIT_SAMPLER:         return BindGroupEntryType::Sampler;
+        case D3D_SIT_STRUCTURED:      return BindGroupEntryType::StructuredBuffer;
+        case D3D_SIT_BYTEADDRESS:     return BindGroupEntryType::ByteAddressBuffer;
+        case D3D_SIT_UAV_RWTYPED:
+        case D3D_SIT_UAV_RWSTRUCTURED:
+        case D3D_SIT_UAV_RWBYTEADDRESS:
+        case D3D_SIT_UAV_APPEND_STRUCTURED:
+        case D3D_SIT_UAV_CONSUME_STRUCTURED:
+        case D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER:
+            return BindGroupEntryType::UnorderedAccess;
+        default:                      return BindGroupEntryType::Unknown;
+    }
+};
+
+const char* get_typename(BindGroupEntryType t) {
+    switch(t) {
+        case BindGroupEntryType::UniformBuffer:
+            return "BindGroupEntryType::UniformBuffer";
+        case BindGroupEntryType::Texture:
+            return "BindGroupEntryType::Texture";
+        case BindGroupEntryType::Sampler:
+            return "BindGroupEntryType::Sampler";
+        case BindGroupEntryType::StructuredBuffer:
+            return "BindGroupEntryType::StructuredBuffer";
+        case BindGroupEntryType::ByteAddressBuffer:
+            return "BindGroupEntryType::ByteAddressBuffer";
+        default:
+            return "BindGroupEntryType::Texture";
+    }
+}
 
 ReflectData fromReflection(ID3D12ShaderReflection* vsr, ID3D12ShaderReflection* psr, const std::string& name) {
     ReflectData r { .name = name };
+
+    std::map<std::tuple<BindGroupEntryType,uint32_t/*space*/,uint32_t/*bindPoint*/>, ReflectData::BoundResource> entries;
+
+    // Helper to add/merge an entry
+    auto add_binding = [&](BindGroupEntryType ty, uint32_t space, uint32_t slot, uint32_t count, uint32_t stage, std::string name) {
+        auto it = entries.find({ty, space, slot});
+        if (it == entries.end()) {
+            entries[{ty, space, slot}] = ReflectData::BoundResource{ty, slot, space, count, stage, std::move(name)};
+        } else {
+            it->second.stageMask |= stage;
+            it->second.arrayCount = std::max(it->second.arrayCount, count);
+            // keep first name or choose a canonical one 
+        }
+    };
     
     D3D12_SHADER_DESC vsDesc, psDesc;
     vsr->GetDesc(&vsDesc);
@@ -58,18 +117,29 @@ ReflectData fromReflection(ID3D12ShaderReflection* vsr, ID3D12ShaderReflection* 
         stride += componentCount * 4;
     }
     r.stride = stride;
-    
+
+    // VS-bound resources
     for (UINT i = 0; i < vsDesc.BoundResources; ++i) {
-        D3D12_SHADER_INPUT_BIND_DESC bind;
-        vsr->GetResourceBindingDesc(i, &bind);
-        r.vsBindings.emplace_back(bind.BindPoint, "uniform", bind.Name);
+        D3D12_SHADER_INPUT_BIND_DESC b{};
+        vsr->GetResourceBindingDesc(i, &b);
+        add_binding(map_type(b.Type), b.Space, b.BindPoint, b.BindCount, stage_bit_vertex(),
+                    b.Name ? std::string(b.Name) : std::string{});
     }
+    
+    // PS-bound resources
     for (UINT i = 0; i < psDesc.BoundResources; ++i) {
-        D3D12_SHADER_INPUT_BIND_DESC bind;
-        psr->GetResourceBindingDesc(i, &bind);
-        std::string name(bind.Name);
-        r.psBindings.emplace_back(bind.BindPoint, name.starts_with("t")?"texture":"sampler", std::move(name));
+        D3D12_SHADER_INPUT_BIND_DESC b{};
+        psr->GetResourceBindingDesc(i, &b);
+        add_binding(map_type(b.Type), b.Space, b.BindPoint, b.BindCount, stage_bit_fragment(),
+                    b.Name ? std::string(b.Name) : std::string{});
     }
+
+    // Flatten map into vector
+    r.bindings.reserve(entries.size());
+    for (auto& [key, br] : entries) {
+        r.bindings.push_back(std::move(br));
+    }
+
     return r;
 }
 
@@ -88,15 +158,17 @@ void outputJSON(const ReflectData& reflect, const char* outPath) {
     out <<    "  ],\n";
     out <<    "  \"stride\": " << reflect.stride << ",\n";
     // Bind Groups
-    out <<    "  \"bindGroups\": [\n";
+    out <<    "  \"bindings\": [\n";
     i = 0;
-    const auto sz = reflect.vsBindings.size() + reflect.psBindings.size();
-    for (auto p : reflect.vsBindings) {
-        out << "   { \"name\": \"" << p.name << "\", \"binding\": \"" << p.bindPoint << "\", \"type\": \"" << p.type <<"\", \"stage\": \"vertex\"}";
-        out << ((++i == sz)? "\n" : ",\n");
-    }
-    for (auto p : reflect.psBindings) {
-        out << "   { \"name\": \"" << p.name << "\", \"binding\": \"" << p.bindPoint << "\", \"type\": \"" << p.type <<"\", \"stage\": \"pixel\"}";
+    const auto sz = reflect.bindings.size();
+    for (auto b : reflect.bindings) {        
+        out << "    { \"name\": \"" << b.name
+            << "\", \"type\": " << (int)b.type
+            << ", \"bindPoint\": " << b.bindPoint
+            << ", \"space\": " << b.space
+            << ", \"arrayCount\": " << b.arrayCount
+            << ", \"stageMask\": " << b.stageMask << " }";
+        //out << "   { \"name\": \"" << b.name << "\", \"binding\": \"" << b.bindPoint << "\", \"type\": \"" << typeStr <<"\", \"stage\": \"vertex\"}";
         out << ((++i == sz)? "\n" : ",\n");
     }
     out <<    "  ]\n}\n\n";
@@ -106,8 +178,17 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
         std::ofstream out(headerPath);
         out << "#pragma once\n#include \"renderer_api.h\"\n\n";
         out << "#include <fstream>\n#include <vector>\n#include <stdexcept>\n#include <string>\n\n";
-        out << "// Auto-generated pipeline reflection\nnamespace ShaderReflection {\n";
-
+        out << "// Auto-generated pipeline reflection\nnamespace ShaderReflection {\n\n";
+        // Stage bits (match your engine)
+        out << "    enum : uint32_t {\n";
+        out << "        Stage_None     = 0,\n";
+        out << "        Stage_Vertex   = 1 << 0,\n";
+        out << "        Stage_Fragment = 1 << 1,\n";
+        out << "        Stage_Geometry = 1 << 2,\n";
+        out << "        Stage_Hull     = 1 << 3,\n";
+        out << "        Stage_Domain   = 1 << 4,\n";
+        out << "        Stage_Compute  = 1 << 5\n";
+        out << "    };\n\n";
         // Vertex layout
         out << "    static constexpr VertexAttributeDesc vertexAttributes[] = {\n";
         for (int i = 0; i < rd.vsParams.size(); i++) {
@@ -125,18 +206,19 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
         }
         out << "    };\n\n";
 
-        // Combined resources
+        // Bindings
         out << "    static constexpr BindGroupLayoutEntry bindGroupEntries[] = {\n";
-        for (auto& bind : rd.vsBindings) {
-            out << "        { " << bind.bindPoint << ", BindGroupEntryType::UniformBuffer, (uint32_t)ShaderStage::Vertex }, // " << bind.name << "\n";
-        }
-        for (auto& bind : rd.psBindings) {
-            out << "        { " << bind.bindPoint << ", " << (bind.type.starts_with("texture") ? "BindGroupEntryType::Texture" : "BindGroupEntryType::Sampler") << ", (uint32_t)ShaderStage::Fragment }, // " << bind.name << "\n";
+        for (auto& bind : rd.bindings) {
+            out << "        { " 
+                << bind.bindPoint << ", "
+                << bind.space << ", "
+                << get_typename(bind.type) << ", "
+                << bind.stageMask << " }, // " << bind.name << "\n";
         }
         out << "    };\n\n";
         out << "    static constexpr BindGroupLayoutDesc bindGroupLayout = {\n";
         out << "        .entries = bindGroupEntries,\n";
-        out << "        .entry_count = " << (rd.vsBindings.size() + rd.psBindings.size()) << "\n";
+        out << "        .entry_count = " << rd.bindings.size() << "\n";
         out << "    };\n\n";
         out << "    const char* vsPath = \"" << vertexPath << "\";\n";
         out << "    const char* psPath = \"" << pixelPath  << "\";\n\n";

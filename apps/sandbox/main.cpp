@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include <tchar.h>
 #include <stdint.h>
 #include <array>
@@ -52,9 +52,19 @@ static const char* materialFileData = R"(
   },
   "constantBuffers": [
     {
-      "name": "CBTransform",
+      "name": "CBObject",
       "size": 64,
       "binding": 0
+    },
+    {
+      "name": "CBFrame",
+      "size": 64,
+      "binding": 1
+    },
+    {
+      "name": "CBMaterial",
+      "size": 256,
+      "binding": 2
     }
   ],
   "pipelineStates": {

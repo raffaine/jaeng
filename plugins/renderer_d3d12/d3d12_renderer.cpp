@@ -791,23 +791,40 @@ void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, Bi
         if (auto* tex = resources_->get_tex(bg->texture)) srvCpu = tex->srvCpu;
         if (auto* smp = resources_->get_samp(bg->sampler)) sampCpu = smp->cpu;
 
-        // SRV at root 1
-        D3D12_CPU_DESCRIPTOR_HANDLE srvGpuCpu{};
-        D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
+        // --- SRV at root 1 (t0, space 1) ---
+        D3D12_CPU_DESCRIPTOR_HANDLE srvGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
         fc.gpuDescs->alloc_srv(&srvGpuCpu, &srvGpu); // slot for SRV
         if (srvCpu.ptr) {
             device_->dev()->CopyDescriptorsSimple(1, srvGpuCpu, srvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         }
         cl->SetGraphicsRootDescriptorTable(1, srvGpu); // t0
 
-        // Allocate Sampler slot
-        D3D12_CPU_DESCRIPTOR_HANDLE sampGpuCpu{};
-        D3D12_GPU_DESCRIPTOR_HANDLE sampGpu{};
+        // --- Sampler at root 2 (s0, space1) ---
+        D3D12_CPU_DESCRIPTOR_HANDLE sampGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE sampGpu{};
         fc.gpuDescs->alloc_samp(&sampGpuCpu, &sampGpu); // slot for Sampler
         if (sampCpu.ptr) {
             device_->dev()->CopyDescriptorsSimple(1, sampGpuCpu, sampCpu, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
         }
         cl->SetGraphicsRootDescriptorTable(2, sampGpu); // s0
+
+        // --- Material CB (root 3: b0, space1) ---
+        D3D12_CPU_DESCRIPTOR_HANDLE matGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE matGpu{};
+        fc.gpuDescs->alloc_srv(&matGpuCpu, &matGpu);
+        if (bg->cb.present && bg->cb.cpuValid) {
+            // Copy the material's persistent CPU CBV into a GPU-visible slot and set root 3
+            device_->dev()->CopyDescriptorsSimple(1, matGpuCpu, bg->cb.cpuCbv, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+            // Ensure the underlying buffer is in CBV-readable state (safe if it was updated earlier)
+            if (auto* b = resources_->get_buf(bg->cb.buf)) {
+                Barrier(cl, b->res.Get(), b->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+                b->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+            }
+        } else {
+            // Optional: fallback CBV if material CB isn't valid
+            device_->dev()->CopyDescriptorsSimple(1, matGpuCpu, binds_->fallback_cbv_cpu(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        }
+
+        cl->SetGraphicsRootDescriptorTable(3, matGpu); // root 3 → CBV table (space1: b0)
     }
 }
 

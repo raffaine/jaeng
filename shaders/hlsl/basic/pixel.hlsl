@@ -1,5 +1,5 @@
-Texture2D t0 : register(t0);
-SamplerState s0 : register(s0);
+Texture2D t0 : register(t0, space1);
+SamplerState s0 : register(s0, space1);
 
 struct PSIn {
     float4 pos: SV_Position;
