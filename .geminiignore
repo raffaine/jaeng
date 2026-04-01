@@ -1,0 +1,19 @@
+# Exclude build artifacts
+build/
+bin/
+obj/
+*.exe
+*.pdb
+*.dll
+
+# Exclude large assets/textures
+assets/textures/
+*.fbx
+*.obj
+
+# Exclude local environment/logs
+.env
+*.log
+
+# Optional: exclude the .git folder if not needed for context
+.git/
