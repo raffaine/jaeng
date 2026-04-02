@@ -51,18 +51,17 @@ private:
         BufferHandle indexBuffer;
         uint32_t indexCount;
         BufferHandle constant;
-        BindGroupHandle instanceBindGroup; // Per-object resources (optional if instancing)
     };
 
     // Shared Instance Resources for Drawing
     struct DrawBatch {
         PipelineHandle pipeline;
         MaterialHandle material;
-        BufferHandle   constant;
+        BufferHandle   constant; // general uniform
         BufferHandle   cbFrame;
-        BindGroupHandle materialBindGroup; // Shared resources
         std::vector<DrawPacket> packets;
     };
+
 
     // Draw List created for Frame (follows latest build command)
     std::vector<DrawBatch> drawList;

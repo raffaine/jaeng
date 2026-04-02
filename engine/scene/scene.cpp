@@ -72,7 +72,7 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
             dp.constant = matBg->constantBuffers[2];
         }
 
-        DrawBatch db { .pipeline = *pso, .material = *e.material, .constant = matBg->constantBuffers[0], .materialBindGroup = matBg->bindGroup };
+        DrawBatch db { .pipeline = *pso, .material = *e.material, .constant = matBg->constantBuffers[0] };
         // In case shader expects frame constant buffer
         if (matBg->constantBuffers.size() >= 2) {
             db.cbFrame = matBg->constantBuffers[1];
@@ -105,24 +105,36 @@ void Scene::renderScene(RenderGraph& rg, SwapchainHandle swap)
     rg.add_pass("Forward", 
         { { .tex = gfx->get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
         [&](const RGPassContext& ctx) {
+            auto matSysRef = matSys.lock();
+            if (!matSysRef) return;
+
             for (auto& db : drawList) {
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);
 
                 if (db.cbFrame) {
                     auto viewProj = camera->getViewProj(SceneConvention);
                     ctx.gfx->update_buffer(db.cbFrame, 0, &viewProj, sizeof(glm::mat4));
-                    ctx.gfx->cmd_set_frame_cb(ctx.cmd, db.cbFrame);
+                    // Bind Frame CB to slot 0 (register b1)
+                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
+
+                auto* matBg = matSysRef->getBindData(db.material).orValue(nullptr);
 
                 for (auto& dp : db.packets) {
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, dp.vertexBuffer, 0);
                     ctx.gfx->cmd_set_index_buffer(ctx.cmd, dp.indexBuffer, true, 0);
 
-                    ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, db.materialBindGroup); // texture srv + sampler
+                    // Push Bindless Indices (Texture and Sampler)
+                    if (matBg) {
+                        uint32_t indices[2] = { 0, 0 };
+                        if (!matBg->textureIndices.empty()) indices[0] = matBg->textureIndices[0];
+                        if (!matBg->samplerIndices.empty()) indices[1] = matBg->samplerIndices[0];
+                        ctx.gfx->cmd_push_constants(ctx.cmd, 0, 2, indices);
+                    }
                     
-                    // Update and bind Object CB (b2)
+                    // Update and bind Object CB to slot 1 (register b2)
                     ctx.gfx->update_buffer(db.constant, 0, &dp.worldMatrix, sizeof(glm::mat4));
-                    ctx.gfx->cmd_set_object_cb(ctx.cmd, db.constant);
+                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, db.constant, 0);
 
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, dp.indexCount, 1, 0, 0, 0);
                 }

@@ -26,14 +26,12 @@ public:
 
     jaeng::result<MaterialHandle> createMaterial(const std::string& path) override;
 
-    // Create Material from a virtual path but with hardcoded layout descritors (from reflection)
+    // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
     jaeng::result<MaterialHandle> createMaterial(
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
-        const char* requiredSemantics[], // count should match attributes on vertex layout
-        const BindGroupLayoutDesc* bindGroups,
-        size_t bindGroupCount
+        const char* requiredSemantics[] // count should match attributes on vertex layout
     ) override;
 
     // Destroy material
@@ -68,5 +66,5 @@ private:
     // Common Logic
     jaeng::result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
     jaeng::result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
-                                             const char* requiredSemantics[], const BindGroupLayoutDesc* bindGroups, size_t bindGroupCount);
+                                             const char* requiredSemantics[]);
 };

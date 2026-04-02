@@ -303,7 +303,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     // Creates Test Textured Material with precompiled shaders and reflected header layouts and associate with all
     std::unique_ptr<IFileManager::SubscriptionT> materialSub;
-    if (auto matHandle = matSys->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics, &ShaderReflection::bindGroupLayout, 1).logError()) {
+    if (auto matHandle = matSys->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         for (int i = 0; i < 4; i++) entityMan->addComponent<MaterialHandle>(testEntities[i]) = matHandle.value();
         // Enable Hot Reloading for the Material
         materialSub = fileMan->track("/mem/material-test.json", [matSys, h = matHandle.value()](const FileChangedEvent& e) {

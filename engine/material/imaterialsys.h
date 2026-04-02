@@ -19,8 +19,10 @@ struct MaterialBindings {
     std::vector<TextureHandle> textures;
     std::vector<SamplerHandle> samplers;
     std::vector<BufferHandle>  constantBuffers;
-    BindGroupLayoutHandle bindGroupLayout;
-    BindGroupHandle bindGroup;
+    
+    // Bindless indices
+    std::vector<uint32_t> textureIndices;
+    std::vector<uint32_t> samplerIndices;
 };
 
 struct CBData {
@@ -76,14 +78,12 @@ public:
     // Create material from a virtual path (disk, memory, etc.)
     virtual jaeng::result<MaterialHandle> createMaterial(const std::string& path) = 0;
 
-    // Create Material from a virtual path but with hardcoded layout descritors (from reflection)
+    // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
     virtual jaeng::result<MaterialHandle> createMaterial(
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
-        const char* requiredSemantics[], // count should match attributes on vertex layout
-        const BindGroupLayoutDesc* bindGroups,
-        size_t bindGroupCount
+        const char* requiredSemantics[]
     ) = 0;
 
     // Destroy material

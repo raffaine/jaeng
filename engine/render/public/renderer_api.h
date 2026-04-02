@@ -20,8 +20,6 @@ typedef RendererHandle TextureHandle;
 typedef RendererHandle SamplerHandle;
 typedef RendererHandle ShaderModuleHandle;
 typedef RendererHandle VertexLayoutHandle;
-typedef RendererHandle BindGroupLayoutHandle;
-typedef RendererHandle BindGroupHandle;
 typedef RendererHandle PipelineHandle;
 typedef RendererHandle SwapchainHandle;
 typedef RendererHandle CommandListHandle;
@@ -59,7 +57,7 @@ struct SwapchainDesc {
     PresentMode present_mode;
 };
 
-// --- New: buffers, shaders, pipelines ---
+// --- Buffers, shaders, pipelines ---
 enum BufferUsage : uint32_t {
     BufferUsage_Vertex  = 1 << 0,
     BufferUsage_Index   = 1 << 1,
@@ -72,7 +70,6 @@ struct BufferDesc {
     uint32_t usage;
 };
 
-// Textures & samplers (Step 4)
 struct TextureDesc {
     TextureFormat format;
     uint32_t      width, height;
@@ -90,7 +87,6 @@ struct SamplerDesc {
     float         border_color[4]; // used if AddressMode::Border
 };
 
-// 0 = D3D blob (DXBC/DXIL) for this sample
 struct ShaderModuleDesc {
   ShaderStage stage;
   const void* data;
@@ -98,11 +94,10 @@ struct ShaderModuleDesc {
   uint32_t    format; // 0 = D3D blob
 };
 
-// ------- Input Layout for Vertex Shaders ---------
 struct VertexAttributeDesc {
-  uint32_t location;  // 0=POSITION, 1=COLOR in sample
-  uint32_t format;    // 0 = R32G32B32_FLOAT
-  uint32_t offset;    // byte offset
+  uint32_t location;
+  uint32_t format;
+  uint32_t offset;
 };
 
 struct VertexLayoutDesc {
@@ -117,7 +112,6 @@ struct DepthStencilOptions {
     float clearDepth = 1.0f;
     uint8_t clearStencil = 0;
     enum class DepthFunc { Less, LessEqual, Greater, Always } depthFunc = DepthFunc::Less;
-    // Future: stencil ops, masks, etc    // Future: stencil ops, masks, etc.
 };
 
 struct GraphicsPipelineDesc {
@@ -139,50 +133,6 @@ enum class BindGroupEntryType {
     Unknown = -1
 };
 
-// Bind groups
-struct BindGroupLayoutEntry {
-    uint32_t binding;   // e.g. b0 (0), b1 (1), t0 (0)
-    uint32_t space;     // e.g. space0, space1 ... (if applicable, may be D3D12 specific)
-    BindGroupEntryType type;    // e.g. UniformBuffer, SRV, Sampler
-    uint32_t stages;  // ShaderStage bitmask (which shader stage has access)
-};
-
-struct BindGroupLayoutDesc {
-    const BindGroupLayoutEntry* entries;
-    uint32_t                    entry_count;
-};
-
-struct BindGroupEntry {
-    BindGroupEntryType type;
-    BufferHandle  buffer;
-    uint64_t      offset;
-    uint64_t      size;   // for CBV/SSBO (reserved)
-    TextureHandle texture;
-    SamplerHandle sampler;
-};
-
-struct BindGroupDesc {
-    BindGroupLayoutHandle layout;
-    const BindGroupEntry* entries;
-    uint32_t              entry_count;
-};
-
-// Used on Reflection Generated Headers
-struct PipelineReflectionResources {
-    ShaderModuleHandle vs;
-    ShaderModuleHandle fs;
-    PipelineHandle pipeline;
-
-    BufferHandle uniformBuffer;
-    TextureHandle texture;
-    SamplerHandle sampler;
-
-    BindGroupLayoutHandle bindGroupLayout;
-    BindGroupHandle bindGroup;
-
-    // Optional: offsets for uniform data, descriptor indices, etc.
-};
-
 enum class LoadOp : uint32_t { Load, Clear, DontCare };
 struct ColorAttachmentDesc {
     TextureHandle tex;
@@ -190,16 +140,12 @@ struct ColorAttachmentDesc {
 };
 struct DepthAttachmentDesc {
     float clear_d;
-    /* stencil optional */
 };
 
 // --- Renderer function table ---
 typedef struct RendererAPI {
     // frame lifecycle
-    // Call once per frame before encoding commands; the backend ensures the previous GPU work
-    // for this frame index is complete and resets per-frame transient state (upload ring, etc.).
     void (*begin_frame)();
-    // Call once after presenting (or at the end of command submission) to mark end-of-frame.
     void (*end_frame)();
 
     // lifecycle
@@ -210,21 +156,22 @@ typedef struct RendererAPI {
     SwapchainHandle (*create_swapchain)(const SwapchainDesc*);
     void (*resize_swapchain)(SwapchainHandle, Extent2D);
     void (*destroy_swapchain)(SwapchainHandle);
-    TextureHandle (*get_current_backbuffer)(SwapchainHandle); // helper for sample
+    TextureHandle (*get_current_backbuffer)(SwapchainHandle);
      
     // resources
     BufferHandle (*create_buffer)(const BufferDesc*, const void* initial_data);
     void         (*destroy_buffer)(BufferHandle);
-    // Queue a CPU->GPU update into a DEFAULT-heap buffer. Data is staged into a per-frame
-    // persistently-mapped upload ring and copied with CopyBufferRegion in the current cmd list.
-    // Returns false if the request cannot be satisfied (e.g., ring overflow).
     bool         (*update_buffer)(BufferHandle, uint64_t dst_offset, const void* data, uint64_t size);
 
-    // Step 4: textures & samplers
+    // textures & samplers
     TextureHandle (*create_texture)(const TextureDesc*, const void* initial_data);
     void (*destroy_texture)(TextureHandle);
     SamplerHandle (*create_sampler)(const SamplerDesc*);
     void (*destroy_sampler)(SamplerHandle);
+
+    // Bindless index access
+    uint32_t (*get_texture_index)(TextureHandle);
+    uint32_t (*get_sampler_index)(SamplerHandle);
 
     ShaderModuleHandle (*create_shader_module)(const ShaderModuleDesc*);
     void              (*destroy_shader_module)(ShaderModuleHandle);
@@ -232,25 +179,19 @@ typedef struct RendererAPI {
     PipelineHandle (*create_graphics_pipeline)(const GraphicsPipelineDesc*);
     void           (*destroy_pipeline)(PipelineHandle);
 
-    // Step 4: bind groups
-    BindGroupLayoutHandle (*create_bind_group_layout)(const BindGroupLayoutDesc*);
-    void (*destroy_bind_group_layout)(BindGroupLayoutHandle);
-    BindGroupHandle (*create_bind_group)(const BindGroupDesc*);
-    void (*destroy_bind_group)(BindGroupHandle);
-
-    // command encoding (subset sufficient to clear)
+    // command encoding
     CommandListHandle (*begin_commands)();
-    void (*cmd_begin_rendering_ops)(CommandListHandle, LoadOp load_op, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
-    void (*cmd_end_rendering)(CommandListHandle);
-    void (*cmd_set_frame_cb)(CommandListHandle, BufferHandle);    
-    void (*cmd_set_object_cb)(CommandListHandle, BufferHandle);    
+    void (*cmd_begin_pass)(CommandListHandle, LoadOp load_op, const ColorAttachmentDesc* colors, uint32_t count, const DepthAttachmentDesc* depth);
+    void (*cmd_end_pass)(CommandListHandle);
+    
+    void (*cmd_bind_uniform)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);    
     void (*cmd_push_constants)(CommandListHandle, uint32_t offset, uint32_t count, const void* data);
-    void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
+    
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
     void (*cmd_set_index_buffer)(CommandListHandle, BufferHandle, bool index32, uint64_t offset);
     void (*cmd_draw)(CommandListHandle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance);
-    void (*cmd_draw_indexed)(CommandListHandle, uint32_t idx_count, uint32_t instance_count, uint32_t first_idx, uint32_t vtx_offset, uint32_t first_instance);
+    void (*cmd_draw_indexed)(CommandListHandle, uint32_t idx_count, uint32_t inst_count, uint32_t first_idx, int32_t vtx_offset, uint32_t first_instance);
     void (*end_commands)(CommandListHandle);
 
     // submit/present
@@ -259,7 +200,6 @@ typedef struct RendererAPI {
     void (*wait_idle)();
 } RendererAPI;
 
-// Plugin factory symbol name: "LoadRenderer"
 typedef bool (*PFN_LoadRenderer)(RendererAPI* out_api);
 
 } // extern "C"

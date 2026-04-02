@@ -17,7 +17,6 @@ class DescriptorAllocatorGPU;
 class UploadRing;               
 class ResourceTable;            
 class PipelineTable;            
-class BindSpace;                
 class FrameContext;
 class DepthManager;
 class GlobalDescriptorHeap;
@@ -49,8 +48,11 @@ public:
 
     jaeng::result<TextureHandle> create_texture(const TextureDesc*, const void* initial);
     void destroy_texture(TextureHandle);
-    jaeng::result<SamplerHandle> create_sampler(const SamplerDesc*);
+    SamplerHandle create_sampler(const SamplerDesc*);
     void destroy_sampler(SamplerHandle);
+
+    uint32_t get_texture_index(TextureHandle);
+    uint32_t get_sampler_index(SamplerHandle);
 
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc*);
     void destroy_shader_module(ShaderModuleHandle);
@@ -58,22 +60,17 @@ public:
     PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc*);
     void destroy_pipeline(PipelineHandle);
 
-    BindGroupLayoutHandle create_bind_group_layout(const BindGroupLayoutDesc*);
-    void destroy_bind_group_layout(BindGroupLayoutHandle);
-    BindGroupHandle create_bind_group(const BindGroupDesc*);
-    void destroy_bind_group(BindGroupHandle);
-
     CommandListHandle begin_commands();
-    void cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
-                                 const ColorAttachmentDesc* colors, uint32_t count,
-                                 const DepthAttachmentDesc* depth);
-    void cmd_end_rendering(CommandListHandle);
+    void cmd_begin_pass(CommandListHandle, LoadOp load_op,
+                        const ColorAttachmentDesc* colors, uint32_t count,
+                        const DepthAttachmentDesc* depth);
+    void cmd_end_pass(CommandListHandle);
 
-    void cmd_set_frame_cb(CommandListHandle, BufferHandle);
-    void cmd_set_object_cb(CommandListHandle, BufferHandle);
+    void cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
     void cmd_push_constants(CommandListHandle, uint32_t offset, uint32_t count, const void* data);
-    void cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle);
+
     void cmd_set_pipeline(CommandListHandle, PipelineHandle);
+
     void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
     void cmd_set_index_buffer(CommandListHandle, BufferHandle, bool index32, uint64_t offset);
 
@@ -111,7 +108,6 @@ private:
     std::unique_ptr<ResourceTable> resources_; // buffers, textures, samplers, shader blobs
     std::vector<InputLayout>  vertexLayouts_;  // vertex layout descriptors
     std::unique_ptr<PipelineTable> pipelines_; // root signatures, PSOs
-    std::unique_ptr<BindSpace>     binds_;     // layouts + bind groups (+ fallback CBV)
 
     std::unique_ptr<DescriptorAllocatorCPU> dsvDesc_;
     std::unique_ptr<DepthManager>  depthManager_;    // manages depth buffer resources

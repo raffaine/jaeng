@@ -135,21 +135,6 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
     }
     out << "    };\n\n";
 
-    if (!rd.bindings.empty()) {
-        out << "    static constexpr BindGroupLayoutEntry bindGroupEntries[] = {\n";
-        for (auto& bind : rd.bindings) {
-            out << "        { " 
-                << bind.resourceIndex << ", "
-                << bind.space << ", "
-                << get_typename(bind.type) << ", "
-                << bind.stageMask << " }, // " << bind.name << "\n";
-        }
-        out << "    };\n";
-        out << "    static constexpr BindGroupLayoutDesc bindGroupLayout = { bindGroupEntries, " << (uint32_t)rd.bindings.size() << " };\n";
-    } else {
-        out << "    static constexpr BindGroupLayoutDesc bindGroupLayout = { nullptr, 0 };\n";
-    }
-
     out << "    const char* vsPath = \"" << vertexPath << "\";\n";
     out << "    const char* psPath = \"" << pixelPath  << "\";\n\n";
     out << "}\n";

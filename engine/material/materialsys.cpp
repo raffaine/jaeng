@@ -85,9 +85,7 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
     MaterialSystem::Storage& material,
     const VertexLayoutDesc* vtxLayout,
     size_t vtxLayoutCount,
-    const char* requiredSemantics[], // count should match attributes on vertex layout
-    const BindGroupLayoutDesc* bindGroups,
-    size_t bindGroupCount)
+    const char* requiredSemantics[])
 {
     auto gfx = renderer.lock();
     JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Material] Renderer is not available.");
@@ -106,16 +104,17 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
 
     // Parse Input Layout for required Semantics and Register on Renderer
     material.bg.vertexLayout = gfx->create_vertex_layout(vtxLayout);
-    for (int i = 0; i < vtxLayout[0].attribute_count; i++) {
+    for (int i = 0; i < (int)vtxLayout[0].attribute_count; i++) {
         material.bg.requiredSemantics.emplace_back(requiredSemantics[i]);
     }
 
-    // Create Texture and Sampler Resources (TODO: Check for errors)
+    // Create Texture and Sampler Resources
     for (auto t : material.mat.textures) {
         JAENG_TRY_ASSIGN(auto pixels, fm.load(t.path));
         TextureDesc td{ TextureFormat::RGBA8_UNORM, t.width, t.height, 1, 1, 0 };
         TextureHandle tex = gfx->create_texture(&td, pixels.data());
         material.bg.textures.emplace_back(std::move(tex));
+        
         SamplerDesc sd{
             .filter = SamplerFilter::Linear,
             .address_u = AddressMode::Repeat, .address_v = AddressMode::Repeat, .address_w = AddressMode::Repeat,
@@ -124,6 +123,10 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
         };
         SamplerHandle samp = gfx->create_sampler(&sd);
         material.bg.samplers.emplace_back(std::move(samp));
+
+        // Store Bindless Indices
+        material.bg.textureIndices.push_back(gfx->get_texture_index(tex));
+        material.bg.samplerIndices.push_back(gfx->get_sampler_index(samp));
     }
 
     // Create Constant Buffers
@@ -132,21 +135,6 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
         BufferHandle cb = gfx->create_buffer(&cbDesc, nullptr);
         material.bg.constantBuffers.emplace_back(std::move(cb));
     }
-
-    // Create Bind Group Layout (assume one only for now) on the renderer
-    material.bg.bindGroupLayout = gfx->create_bind_group_layout(bindGroups);
-
-    // Create Bind Group
-    std::vector<BindGroupEntry> bges;
-    for (auto& tex : material.bg.textures)
-        bges.push_back(BindGroupEntry { .type = BindGroupEntryType::Texture, .texture = tex });
-    for (auto& smp : material.bg.samplers)
-        bges.push_back(BindGroupEntry { .type = BindGroupEntryType::Sampler, .sampler = smp });
-    for (int i = 0; i < material.bg.constantBuffers.size(); i++)
-        bges.push_back(BindGroupEntry { .type = BindGroupEntryType::UniformBuffer, .buffer = material.bg.constantBuffers[i], .offset = 0, .size = material.mat.constantBuffers[i].size});
-
-    BindGroupDesc bgd{material.bg.bindGroupLayout, bges.data(), static_cast<uint32_t>(bges.size())};
-    material.bg.bindGroup = gfx->create_bind_group(&bgd);
 
     return {};
 }
@@ -174,11 +162,9 @@ jaeng::result<MaterialHandle> MaterialSystem::createMaterial(
     const std::string& path,
     const VertexLayoutDesc* vertexLayout,
     size_t vertexLayoutCount,
-    const char* requiredSemantics[], // count should match attributes on vertex layout
-    const BindGroupLayoutDesc* bindGroups,
-    size_t bindGroupCount)
+    const char* requiredSemantics[]) // count should match attributes on vertex layout
 {
-    JAENG_ERROR_IF((bindGroupCount == 0) || (vertexLayoutCount == 0), jaeng::error_code::invalid_args, "[Material] No Bind Group or Vertex Layout passed.");
+    JAENG_ERROR_IF((vertexLayoutCount == 0), jaeng::error_code::invalid_args, "[Material] No Vertex Layout passed.");
 
     auto fm = fileManager.lock();
     JAENG_ERROR_IF(!fm, jaeng::error_code::resource_not_ready, "[Material] File Manager is not available");
@@ -187,7 +173,7 @@ jaeng::result<MaterialHandle> MaterialSystem::createMaterial(
     
     auto& material = storage[h];
     // Shader Reflection provided, Pass it to Renderer
-    JAENG_TRY(_createMaterialResources(*fm, material, vertexLayout, vertexLayoutCount, requiredSemantics, bindGroups, bindGroupCount));
+    JAENG_TRY(_createMaterialResources(*fm, material, vertexLayout, vertexLayoutCount, requiredSemantics));
 
     return h;
 }

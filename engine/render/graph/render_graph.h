@@ -73,8 +73,8 @@ public:
 
     // Execute the graph for the current frame.
     void execute(RendererAPI& gfx, SwapchainHandle swap, TextureHandle defaultDepth = 0, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
-        if (!gfx.begin_frame || !gfx.begin_commands || !gfx.cmd_begin_rendering_ops ||
-            !gfx.cmd_end_rendering || !gfx.end_commands || !gfx.submit ||
+        if (!gfx.begin_frame || !gfx.begin_commands || !gfx.cmd_begin_pass ||
+            !gfx.cmd_end_pass || !gfx.end_commands || !gfx.submit ||
             !gfx.present || !gfx.end_frame) {
             // Missing function pointers; fail fast in debug builds.
             return;
@@ -110,7 +110,7 @@ public:
             }
 
             // Begin color and depth rendering against provided RTs.
-            gfx.cmd_begin_rendering_ops(cmd, load, atts.data(), static_cast<uint32_t>(atts.size()), useDepth ? &depthOps : nullptr);
+            gfx.cmd_begin_pass(cmd, load, atts.data(), static_cast<uint32_t>(atts.size()), useDepth ? &depthOps : nullptr);
 
             if (pass.record) {
                 RGPassContext ctx;
@@ -122,7 +122,7 @@ public:
                 pass.record(ctx);
             }
 
-            gfx.cmd_end_rendering(cmd);
+            gfx.cmd_end_pass(cmd);
         }
 
         gfx.end_commands(cmd);

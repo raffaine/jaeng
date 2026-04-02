@@ -34,7 +34,6 @@ target_include_directories(renderer_api INTERFACE ${ENGINE_ROOT}/render/public)
 # D3D12 plugin (DLL)
 add_library(renderer_d3d12 SHARED
   plugins/renderer_d3d12/d3d12_renderer.cpp
-  plugins/renderer_d3d12/d3d12_bind.cpp
   plugins/renderer_d3d12/d3d12_device.cpp
   plugins/renderer_d3d12/d3d12_descriptors.cpp
   plugins/renderer_d3d12/d3d12_depthmanager.cpp

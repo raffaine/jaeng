@@ -1,7 +1,6 @@
 #define RENDERER_BUILD
 #include "d3d12_renderer.h"
 
-#include "d3d12_bind.h"
 #include "d3d12_commands.h"
 #include "d3d12_depthmanager.h"
 #include "d3d12_descriptors.h"
@@ -142,8 +141,6 @@ jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 
     resources_ = std::make_unique<ResourceTable>();
     pipelines_ = std::make_unique<PipelineTable>();
-    binds_     = std::make_unique<BindSpace>();
-    JAENG_TRY(binds_->init(device_->dev(), cpuDesc_.get()));
 
     // Frames
     frames_.resize(frameCount_);
@@ -176,8 +173,7 @@ void RendererD3D12::shutdown()
     // Ensure GPU is idle before tearing dow
     wait_idle();
 
-    // Order: bind space, pipelines/resources, per-frame, swapchain, descriptors, device
-    if (binds_) binds_->shutdown();
+    // Order: pipelines/resources, per-frame, swapchain, descriptors, device
     pipelines_.reset();
     resources_.reset();
 
@@ -509,7 +505,7 @@ void RendererD3D12::destroy_texture(TextureHandle h)
     }
 }
 
-jaeng::result<SamplerHandle> RendererD3D12::create_sampler(const SamplerDesc* sd)
+SamplerHandle RendererD3D12::create_sampler(const SamplerDesc* sd)
 {
     D3D12_SAMPLER_DESC d{};
     d.Filter   = (sd->filter == SamplerFilter::Nearest) ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -542,6 +538,18 @@ jaeng::result<SamplerHandle> RendererD3D12::create_sampler(const SamplerDesc* sd
 void RendererD3D12::destroy_sampler(SamplerHandle)
 {
     // linear CPU heap => no free; TODO: resource table should release records
+}
+
+uint32_t RendererD3D12::get_texture_index(TextureHandle h)
+{
+    if (auto* tex = resources_->get_tex(h)) return tex->descriptorIndex;
+    return 0;
+}
+
+uint32_t RendererD3D12::get_sampler_index(SamplerHandle h)
+{
+    if (auto* smp = resources_->get_samp(h)) return smp->descriptorIndex;
+    return 0;
 }
 
 ShaderModuleHandle RendererD3D12::create_shader_module(const ShaderModuleDesc* d)
@@ -639,26 +647,6 @@ void RendererD3D12::destroy_pipeline(PipelineHandle h)
     pipelines_->del_pipeline(h);
 }
 
-BindGroupLayoutHandle RendererD3D12::create_bind_group_layout(const BindGroupLayoutDesc* d)
-{
-    return binds_->add_layout(d);
-}
-
-void RendererD3D12::destroy_bind_group_layout(BindGroupLayoutHandle h)
-{
-    binds_->del_layout(h);
-}
-
-BindGroupHandle RendererD3D12::create_bind_group(const BindGroupDesc* d)
-{
-    return binds_->add_group(d, device_->dev(), resources_.get(), cpuDesc_.get());
-}
-
-void RendererD3D12::destroy_bind_group(BindGroupHandle h)
-{
-    binds_->del_group(h);
-}
-
 CommandListHandle RendererD3D12::begin_commands()
 {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -666,9 +654,9 @@ CommandListHandle RendererD3D12::begin_commands()
     return 1; // single list in this backend (FrameContext::cmd())
 }
 
-void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
-                                            const ColorAttachmentDesc* colors, uint32_t count,
-                                            const DepthAttachmentDesc* depth)
+void RendererD3D12::cmd_begin_pass(CommandListHandle, LoadOp load_op,
+                                  const ColorAttachmentDesc* colors, uint32_t count,
+                                  const DepthAttachmentDesc* depth)
 {
     JAENG_ASSERT(count >= 1 && colors);
     auto& fc = curFrame();
@@ -679,16 +667,7 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
     cl->SetDescriptorHeaps(2, heaps);
 
     // For now we only support rendering to the swapchain backbuffer.
-    // If the pass specifies a different texture, warn and still use the backbuffer.
-    TextureHandle bbHandle = 0;
-    {
-        bbHandle = get_current_backbuffer(/*swapchain*/1);
-        if (colors[0].tex && colors[0].tex != bbHandle) {
-            OutputDebugStringA("[jaeng:d3d12] cmd_begin_rendering_ops(): ColorAttachmentDesc.tex != backbuffer; "
-                               "rendering will target the swapchain backbuffer.\n");
-        }
-    }
-
+    TextureHandle bbHandle = get_current_backbuffer(/*swapchain*/1);
     auto* tex = resources_->get_tex(bbHandle);
     if (!tex || !tex->res) return;
 
@@ -732,12 +711,12 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
     }
 }
 
-void RendererD3D12::cmd_end_rendering(CommandListHandle)
+void RendererD3D12::cmd_end_pass(CommandListHandle)
 {
-    // No-op for single-list backbuffer rendering; transitions happen in begin_ops/end_commands
+    // No-op for single-list backbuffer rendering
 }
 
-void RendererD3D12::cmd_set_frame_cb(CommandListHandle, BufferHandle h)
+void RendererD3D12::cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHandle h, uint64_t offset)
 {
     auto& fc = curFrame();
     auto* cl = fc.cmd();
@@ -745,25 +724,13 @@ void RendererD3D12::cmd_set_frame_cb(CommandListHandle, BufferHandle h)
     BufferRec* buf = resources_->get_buf(h);
     if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform)) return;
 
-    // Use direct Root CBV for Frame CB (register b1)
-    cl->SetGraphicsRootConstantBufferView(1, buf->res->GetGPUVirtualAddress());
+    // slot 0 -> register b1, slot 1 -> register b2
+    UINT rootParam = slot + 1;
+    if (rootParam > 2) return; 
+
+    cl->SetGraphicsRootConstantBufferView(rootParam, buf->res->GetGPUVirtualAddress() + offset);
 
     // Make sure the buffer is in CBV-readable state
-    Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-    buf->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
-}
-
-void RendererD3D12::cmd_set_object_cb(CommandListHandle, BufferHandle h)
-{
-    auto& fc = curFrame();
-    auto* cl = fc.cmd();
-
-    BufferRec* buf = resources_->get_buf(h);
-    if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform)) return;
-
-    // Use direct Root CBV for Object CB (register b2)
-    cl->SetGraphicsRootConstantBufferView(2, buf->res->GetGPUVirtualAddress());
-
     Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     buf->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
 }
@@ -772,49 +739,6 @@ void RendererD3D12::cmd_push_constants(CommandListHandle, uint32_t offset, uint3
 {
     auto* cl = curFrame().cmd();
     cl->SetGraphicsRoot32BitConstants(0, count, data, offset);
-}
-
-void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h)
-{
-    // For bindless, we ignore set_index (mostly) and just push the indices 
-    // from the bind group as root constants.
-    auto* cl = curFrame().cmd();
-
-    auto* bg = binds_->get_group(h);
-    if (!bg) return;
-
-    auto* layout = binds_->get_layout(bg->layout);
-    if (!layout) return;
-
-    uint32_t indices[32]{}; // Support up to 32 dwords of push constants
-    bool modified = false;
-
-    // Use the BindGroupLayout to know WHERE (which index) to put the descriptor index
-    for (size_t i = 0; i < layout->entries.size() && i < bg->entries.size(); ++i) {
-        const auto& le = layout->entries[i];
-        const auto& ge = bg->entries[i];
-
-        // The 'binding' in BindGroupLayoutEntry is the 'slot' (resourceIndex)
-        uint32_t targetIdx = le.binding;
-        if (targetIdx >= 32) continue;
-
-        if (ge.type == BindGroupEntryType::Texture) {
-            if (auto* tex = resources_->get_tex(ge.texture)) {
-                indices[targetIdx] = tex->descriptorIndex;
-                modified = true;
-            }
-        } else if (ge.type == BindGroupEntryType::Sampler) {
-            if (auto* smp = resources_->get_samp(ge.sampler)) {
-                indices[targetIdx] = smp->descriptorIndex;
-                modified = true;
-            }
-        }
-    }
-
-    if (modified) {
-        // We only push the indices (textureIndex, samplerIndex) at the start of PushConstants
-        cl->SetGraphicsRoot32BitConstants(0, 2, indices, 0);
-    }
 }
 
 void RendererD3D12::cmd_set_pipeline(CommandListHandle, PipelineHandle h)
@@ -966,8 +890,11 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
 
     api.create_texture = [](const TextureDesc* d, const void* p) { return g_renderer->create_texture(d,p).orValue(0); };
     api.destroy_texture= [](TextureHandle h) { g_renderer->destroy_texture(h); };
-    api.create_sampler = [](const SamplerDesc* d) { return g_renderer->create_sampler(d).orValue(0); };
+    api.create_sampler = [](const SamplerDesc* d) { return g_renderer->create_sampler(d); };
     api.destroy_sampler= [](SamplerHandle h) { g_renderer->destroy_sampler(h); };
+
+    api.get_texture_index = [](TextureHandle h) { return g_renderer->get_texture_index(h); };
+    api.get_sampler_index = [](SamplerHandle h) { return g_renderer->get_sampler_index(h); };
 
     api.create_shader_module = [](const ShaderModuleDesc* d) { return g_renderer->create_shader_module(d); };
     api.destroy_shader_module= [](ShaderModuleHandle h) { g_renderer->destroy_shader_module(h); };
@@ -975,22 +902,15 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.create_graphics_pipeline = [](const GraphicsPipelineDesc* d) { return g_renderer->create_graphics_pipeline(d); };
     api.destroy_pipeline= [](PipelineHandle h) { g_renderer->destroy_pipeline(h); };
 
-    api.create_bind_group_layout = [](const BindGroupLayoutDesc* d) { return g_renderer->create_bind_group_layout(d); };
-    api.destroy_bind_group_layout = [](BindGroupLayoutHandle h) { g_renderer->destroy_bind_group_layout(h); };
-    api.create_bind_group = [](const BindGroupDesc* d) { return g_renderer->create_bind_group(d); };
-    api.destroy_bind_group = [](BindGroupHandle h) { g_renderer->destroy_bind_group(h); };
-
     api.begin_commands = []{ return g_renderer->begin_commands(); };
-    api.cmd_begin_rendering_ops = [](CommandListHandle c, LoadOp op, const ColorAttachmentDesc* cs, uint32_t n, const DepthAttachmentDesc* dp){
-        g_renderer->cmd_begin_rendering_ops(c, op, cs, n, dp);
+    api.cmd_begin_pass = [](CommandListHandle c, LoadOp op, const ColorAttachmentDesc* cs, uint32_t n, const DepthAttachmentDesc* dp){
+        g_renderer->cmd_begin_pass(c, op, cs, n, dp);
     };
-    api.cmd_end_rendering = [](CommandListHandle c) { g_renderer->cmd_end_rendering(c); };
+    api.cmd_end_pass = [](CommandListHandle c) { g_renderer->cmd_end_pass(c); };
 
-    api.cmd_set_frame_cb = [](CommandListHandle c, BufferHandle h) { g_renderer->cmd_set_frame_cb(c, h); };
-    api.cmd_set_object_cb = [](CommandListHandle c, BufferHandle h) { g_renderer->cmd_set_object_cb(c, h); };
+    api.cmd_bind_uniform = [](CommandListHandle c, uint32_t s, BufferHandle h, uint64_t o) { g_renderer->cmd_bind_uniform(c, s, h, o); };
     api.cmd_push_constants = [](CommandListHandle c, uint32_t off, uint32_t count, const void* d) { g_renderer->cmd_push_constants(c, off, count, d); };
 
-    api.cmd_set_bind_group = [](CommandListHandle c, uint32_t i, BindGroupHandle h) { g_renderer->cmd_set_bind_group(c,i,h); };
     api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };
     api.cmd_set_vertex_buffer = [](CommandListHandle c, uint32_t s, BufferHandle b, uint64_t o) { g_renderer->cmd_set_vertex_buffer(c,s,b,o); };
     api.cmd_set_index_buffer = [](CommandListHandle c, BufferHandle b, bool i32, uint64_t o) { g_renderer->cmd_set_index_buffer(c,b,i32,o); };
@@ -998,7 +918,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.cmd_draw = [](CommandListHandle c, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t first) {
         g_renderer->cmd_draw(c, vc, ic, fv, first);
     };
-    api.cmd_draw_indexed = [](CommandListHandle c, uint32_t in, uint32_t ic, uint32_t fi, uint32_t o, uint32_t first) {
+    api.cmd_draw_indexed = [](CommandListHandle c, uint32_t in, uint32_t ic, uint32_t fi, int32_t o, uint32_t first) {
         g_renderer->cmd_draw_indexed(c, in, ic, fi, o, first);
     };
 
