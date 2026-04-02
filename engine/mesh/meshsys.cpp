@@ -14,17 +14,17 @@ jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
     JAENG_TRY_ASSIGN(std::vector<uint8_t> rawData, fm->load(path));    
     auto header = reinterpret_cast<const RAWFormatHeader*>(rawData.data());
     auto* vertices = reinterpret_cast<const RAWFormatVertex*>(rawData.data() + sizeof(RAWFormatHeader));
-    auto* indices = reinterpret_cast<const uint32_t*>(rawData.data() + sizeof(RAWFormatHeader) + (sizeof(RAWFormatVertex)*header->vertex_count));
+    auto* indices = reinterpret_cast<const uint32_t*>(rawData.data() + sizeof(RAWFormatHeader) + (sizeof(RAWFormatVertex)*header->vertexCount));
 
     // Creates Resources on Renderer
     BufferDesc vbd{
-        .size_bytes = sizeof(RAWFormatVertex) * header->vertex_count,
+        .size_bytes = sizeof(RAWFormatVertex) * header->vertexCount,
         .usage      = BufferUsage_Vertex
     };
     BufferHandle vb = gfx->create_buffer(&vbd, vertices);
 
     BufferDesc ibd{
-        .size_bytes = sizeof(uint32_t) * header->index_count,
+        .size_bytes = sizeof(uint32_t) * header->indexCount,
         .usage      = BufferUsage_Index
     };
     BufferHandle ib = gfx->create_buffer(&ibd, indices);
@@ -33,7 +33,7 @@ jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
         .vertexBuffer = vb, .indexBuffer = ib,
         .semantics = {"POSITION", "COLOR", "TEXCOORD"},
         .topology = PrimitiveTopology::TriangleList,
-        .indexCount = header->index_count
+        .indexCount = header->indexCount
     };
     meshes.emplace(h, std::move(m));
 

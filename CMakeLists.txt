@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.23)
 project(PluggableRenderer CXX)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -62,7 +62,14 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 # Sandbox app
 add_executable(sandbox WIN32
   apps/sandbox/main.cpp
+  apps/sandbox/sandbox_app.cpp
+  apps/sandbox/sandbox_app.h
+  apps/sandbox/mesh_utils.cpp
+  apps/sandbox/mesh_utils.h
   engine/common/pubsub.h
+  engine/platform/public/platform_api.h
+  engine/platform/win32/win32_platform.h
+  engine/platform/win32/win32_platform.cpp
   engine/render/frontend/renderer.h
   engine/render/graph/render_graph.h
   engine/storage/ifstorage.h
@@ -78,6 +85,7 @@ add_executable(sandbox WIN32
 )
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
 target_include_directories(sandbox PRIVATE ${ENGINE_ROOT})
+target_include_directories(sandbox PRIVATE apps/sandbox)
 target_link_libraries(sandbox PRIVATE renderer_api glm::glm-header-only)
 target_link_libraries(sandbox PRIVATE nlohmann_json::nlohmann_json nlohmann_json_schema_validator::validator)
 add_dependencies(sandbox dxil_reflect compile_shaders renderer_d3d12)

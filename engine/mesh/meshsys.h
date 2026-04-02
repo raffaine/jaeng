@@ -8,16 +8,8 @@
 #include <string>
 #include <unordered_map>
 
-struct RAWFormatHeader {
-    uint32_t vertex_count;
-    uint32_t index_count;
-};
-
-struct RAWFormatVertex {
-    float position[3];
-    float color[3];
-    float uv[2];
-};
+// Structs should be in imeshsys.h or common/math/conventions.h or similar.
+// For now, they are in imeshsys.h.
 
 class MeshSystem : public IMeshSystem {
 public:

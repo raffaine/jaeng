@@ -8,6 +8,17 @@
 
 using MeshHandle = uint32_t;
 
+struct RAWFormatHeader {
+    uint32_t vertexCount;
+    uint32_t indexCount;
+};
+
+struct RAWFormatVertex {
+    float position[3];
+    float color[3];
+    float uv[2];
+};
+
 struct Mesh {
     BufferHandle vertexBuffer;
     BufferHandle indexBuffer;
