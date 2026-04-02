@@ -1,6 +1,6 @@
 #pragma once
 
-#ifndef _DEBUG
+#ifdef _DEBUG
 #   define JAENG_ASSERT(x) do { if(!(x)) { __debugbreak(); } } while(0)
 #   define HR_CHECK(x) do { HRESULT _hr = (x); JAENG_ASSERT(SUCCEEDED(_hr)); } while(0)
 #else

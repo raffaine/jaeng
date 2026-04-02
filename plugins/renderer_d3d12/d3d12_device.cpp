@@ -11,14 +11,21 @@ jaeng::result<> D3D12Device::create(IDXGIFactory6* factory) {
         DXGI_ADAPTER_DESC1 desc1{};
         adapter->GetDesc1(&desc1);
         if (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)))) {
+        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device_)))) {
             break;
         }
     }
     if (!device_) {
         // fallback WARP
         JAENG_CHECK_HRESULT(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));
-        JAENG_CHECK_HRESULT(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)));
+        JAENG_CHECK_HRESULT(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device_)));
+    }
+
+    // Check for SM 6.6 support
+    D3D12_FEATURE_DATA_SHADER_MODEL sm{};
+    sm.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+    if (FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) || sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
+        JAENG_ERROR(jaeng::error_code::invalid_operation, "Hardware does not support Shader Model 6.6");
     }
 
     // Command queue

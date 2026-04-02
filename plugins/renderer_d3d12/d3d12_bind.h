@@ -15,8 +15,7 @@ struct BindGroupLayoutRec {
 
 struct BindGroupRec {
     BindGroupLayoutHandle layout{};
-    TextureHandle texture{};
-    SamplerHandle sampler{};
+    std::vector<BindGroupEntry> entries;
     struct { BufferHandle buf{}; UINT64 offset{}, size{}; bool present=false;
              D3D12_CPU_DESCRIPTOR_HANDLE cpuCbv{}; bool cpuValid=false; } cb;
 };
@@ -37,6 +36,7 @@ public:
     void del_group(BindGroupHandle);
 
     BindGroupRec* get_group(BindGroupHandle);
+    BindGroupLayoutRec* get_layout(BindGroupLayoutHandle);
 
 private:
     Microsoft::WRL::ComPtr<ID3D12Resource> fallbackCb_;

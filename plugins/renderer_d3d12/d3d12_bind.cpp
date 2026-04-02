@@ -34,19 +34,12 @@ BindGroupHandle BindSpace::add_group(const BindGroupDesc* d, ID3D12Device* devic
 {
     BindGroupRec bg{};
     bg.layout = d->layout;
+    bg.entries.assign(d->entries, d->entries + d->entry_count);
 
     for (uint32_t i = 0; i < d->entry_count; ++i)
     {
         const BindGroupEntry& e = d->entries[i];
-        switch (e.type)
-        {
-        case BindGroupEntryType::Texture:
-            bg.texture = e.texture;
-            break;
-        case BindGroupEntryType::Sampler:
-            bg.sampler = e.sampler;
-            break;
-        case BindGroupEntryType::UniformBuffer:
+        if (e.type == BindGroupEntryType::UniformBuffer)
         {
             bg.cb.present = true;
             bg.cb.buf     = e.buffer;
@@ -67,13 +60,10 @@ BindGroupHandle BindSpace::add_group(const BindGroupDesc* d, ID3D12Device* devic
 
                 bg.cb.cpuValid = true;
             }
-        } break;
-        default:
-            break;
         }
     }
 
-    groups_.push_back(bg);
+    groups_.push_back(std::move(bg));
     return (BindGroupHandle)groups_.size();
 }
 
@@ -87,6 +77,13 @@ BindGroupRec* BindSpace::get_group(BindGroupHandle h)
     if (h == 0) return nullptr;
     size_t idx = size_t(h - 1);
     return (idx < groups_.size()) ? &groups_[idx] : nullptr;
+}
+
+BindGroupLayoutRec* BindSpace::get_layout(BindGroupLayoutHandle h)
+{
+    if (h == 0) return nullptr;
+    size_t idx = size_t(h - 1);
+    return (idx < layouts_.size()) ? &layouts_[idx] : nullptr;
 }
 
 jaeng::result<> BindSpace::create_fallback_cbv(ID3D12Device* dev, DescriptorAllocatorCPU* cpu)

@@ -8,6 +8,7 @@
 struct UploadSlice {
     ID3D12Resource* resource;   // UPLOAD heap, caller treats as non-owning
     UINT64          offset;     // byte offset into resource
+    UINT64          gpuAddress; // GPU virtual address of the slice
     void*           cpu;        // mapped CPU address (optional)
 };
 

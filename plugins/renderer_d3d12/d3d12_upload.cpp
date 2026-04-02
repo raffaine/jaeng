@@ -60,7 +60,7 @@ jaeng::result<UploadSlice> UploadRing::stage(const void* src, UINT64 size, UINT6
     memcpy(mapped_ + aligned, src, (size_t)size);
     head_ = aligned + size;
 
-    return UploadSlice{ buffer_.Get(), aligned, mapped_ + aligned };
+    return UploadSlice{ buffer_.Get(), aligned, buffer_->GetGPUVirtualAddress() + aligned, mapped_ + aligned };
 }
 
 jaeng::result<UploadSlice> UploadRing::stage_pitched(const uint8_t* src, int rows, int pitch, D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp)
@@ -71,8 +71,9 @@ jaeng::result<UploadSlice> UploadRing::stage_pitched(const uint8_t* src, int row
     for (UINT y = 0; y < rows; ++y) {
         std::memcpy(mapped_ + head_ + fp.Offset + y * fp.Footprint.RowPitch, src + y * pitch, pitch);
     }
-    head_ = fp.Offset + rows * fp.Footprint.RowPitch;
+    UINT64 offset = head_ + fp.Offset;
+    head_ = offset + rows * fp.Footprint.RowPitch;
     
-    return UploadSlice{ buffer_.Get(), 0, mapped_ + head_ };
+    return UploadSlice{ buffer_.Get(), offset, buffer_->GetGPUVirtualAddress() + offset, mapped_ + offset };
 }
 

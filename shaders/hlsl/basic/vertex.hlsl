@@ -1,9 +1,16 @@
-cbuffer CBFrame : register(b0, space0)
+// vertex.hlsl
+cbuffer PushConstants : register(b0, space0)
+{
+    uint textureIndex;
+    uint samplerIndex;
+};
+
+cbuffer CBFrame : register(b1, space0)
 {
     float4x4 ViewProj;
 };
 
-cbuffer CBObject : register(b1, space0)
+cbuffer CBObject : register(b2, space0)
 {
     float4x4 World;
 };

@@ -32,4 +32,4 @@ private:
 
 // RootSignatureBuilder creates CBV table (b0), SRV table (t0), Sampler table (s0)
 Microsoft::WRL::ComPtr<ID3D12RootSignature>
-CreateRootSignature_BindTables(ID3D12Device*, /*out*/ D3D_ROOT_SIGNATURE_VERSION* usedVer);
+CreateGlobalRootSignature(ID3D12Device*, /*out*/ D3D_ROOT_SIGNATURE_VERSION* usedVer);

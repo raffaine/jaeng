@@ -244,6 +244,7 @@ typedef struct RendererAPI {
     void (*cmd_end_rendering)(CommandListHandle);
     void (*cmd_set_frame_cb)(CommandListHandle, BufferHandle);    
     void (*cmd_set_object_cb)(CommandListHandle, BufferHandle);    
+    void (*cmd_push_constants)(CommandListHandle, uint32_t offset, uint32_t count, const void* data);
     void (*cmd_set_bind_group)(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);

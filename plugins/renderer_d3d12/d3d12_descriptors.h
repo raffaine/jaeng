@@ -40,3 +40,30 @@ private:
     UINT srvUsed_ = 0, sampUsed_ = 0;
     UINT srvCap_ = 0, sampCap_ = 0;
 };
+
+// ------------------ Global Descriptor Heap (Bindless) ------------------
+
+class GlobalDescriptorHeap {
+public:
+    jaeng::result<> create(ID3D12Device* dev, UINT srvCount, UINT sampCount);
+    
+    // Persistent allocation (returns an index)
+    UINT allocate_srv();
+    UINT allocate_samp();
+
+    // Get handles for a given index
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_srv(UINT index) const;
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_srv(UINT index) const;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_samp(UINT index) const;
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_samp(UINT index) const;
+
+    ID3D12DescriptorHeap* srv_heap() const { return srvHeap_.Get(); }
+    ID3D12DescriptorHeap* samp_heap() const { return sampHeap_.Get(); }
+
+private:
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvHeap_;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> sampHeap_;
+    UINT srvInc_ = 0, sampInc_ = 0;
+    UINT srvUsed_ = 0, sampUsed_ = 0;
+    UINT srvCap_ = 0, sampCap_ = 0;
+};

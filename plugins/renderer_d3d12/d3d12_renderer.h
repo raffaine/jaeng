@@ -20,6 +20,7 @@ class PipelineTable;
 class BindSpace;                
 class FrameContext;
 class DepthManager;
+class GlobalDescriptorHeap;
 
 class RendererD3D12 {
 public:
@@ -70,6 +71,7 @@ public:
 
     void cmd_set_frame_cb(CommandListHandle, BufferHandle);
     void cmd_set_object_cb(CommandListHandle, BufferHandle);
+    void cmd_push_constants(CommandListHandle, uint32_t offset, uint32_t count, const void* data);
     void cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle);
     void cmd_set_pipeline(CommandListHandle, PipelineHandle);
     void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
@@ -97,6 +99,8 @@ private:
 
     std::unique_ptr<DescriptorAllocatorCPU> cpuDesc_;
     std::unique_ptr<DescriptorAllocatorCPU> samplerHeapCpu_;
+    std::unique_ptr<GlobalDescriptorHeap>   globalHeap_;
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> globalRootSig_;
     std::vector<std::unique_ptr<DescriptorAllocatorGPU>> gpuDescPerFrame_;
     std::vector<std::unique_ptr<UploadRing>> uploadPerFrame_;
 

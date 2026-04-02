@@ -1,5 +1,12 @@
-Texture2D t0 : register(t0, space1);
-SamplerState s0 : register(s0, space1);
+// pixel.hlsl
+Texture2D textures[] : register(t0, space0);
+SamplerState samplers[] : register(s0, space0);
+
+cbuffer PushConstants : register(b0, space0)
+{
+    uint textureIndex;
+    uint samplerIndex;
+};
 
 struct PSIn {
     float4 pos: SV_Position;
@@ -8,6 +15,6 @@ struct PSIn {
 };
 
 float4 main(PSIn i) : SV_Target {
-    float4 tex = t0.Sample(s0, i.uv);
+    float4 tex = textures[textureIndex].Sample(samplers[samplerIndex], i.uv);
     return float4(i.col, 1.0) * tex;
 }

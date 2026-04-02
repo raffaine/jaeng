@@ -19,11 +19,6 @@ public:
     
     UINT64  fenceValue = 0;
 
-    // CBV table slots reserved at pass begin
-    D3D12_CPU_DESCRIPTOR_HANDLE cbvBaseCpu{}; // slot for b0 (frame)
-    D3D12_GPU_DESCRIPTOR_HANDLE cbvBaseGpu{};
-    D3D12_CPU_DESCRIPTOR_HANDLE cbvObjCpu{};  // slot for b1 (object)
-    D3D12_GPU_DESCRIPTOR_HANDLE cbvObjGpu{};
 private:
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> alloc_;
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> cmd_;

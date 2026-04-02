@@ -26,8 +26,8 @@ foreach(PIPELINE ${PIPELINES})
         set(REFLECT_OUT ${REFLECT_DIR}/${PIPELINE})
 
         add_custom_command(TARGET compile_shaders POST_BUILD
-            COMMAND ${DXC_EXECUTABLE} -T vs_6_0 -E main -Fo ${VERTEX_DXIL} ${VERTEX_SHADER}
-            COMMAND ${DXC_EXECUTABLE} -T ps_6_0 -E main -Fo ${PIXEL_DXIL} ${PIXEL_SHADER}
+            COMMAND ${DXC_EXECUTABLE} -T vs_6_6 -E main -Fo ${VERTEX_DXIL} ${VERTEX_SHADER}
+            COMMAND ${DXC_EXECUTABLE} -T ps_6_6 -E main -Fo ${PIXEL_DXIL} ${PIXEL_SHADER}
             COMMAND dxil_reflect ${VERTEX_DXIL} ${PIXEL_DXIL} ${PIPELINE} ${REFLECT_OUT}
 
             COMMENT "Pipeline ${PIPELINE}: Compiling Vertex & Pixel shaders and generating reflection"

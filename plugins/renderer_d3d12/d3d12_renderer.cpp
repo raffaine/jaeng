@@ -134,6 +134,12 @@ jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
     samplerHeapCpu_ = std::make_unique<DescriptorAllocatorCPU>();
     JAENG_TRY(samplerHeapCpu_->create(device_->dev(), D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256));
 
+    globalHeap_ = std::make_unique<GlobalDescriptorHeap>();
+    JAENG_TRY(globalHeap_->create(device_->dev(), 65536 /*srv*/, 2048 /*sampler*/));
+
+    globalRootSig_ = CreateGlobalRootSignature(device_->dev(), nullptr);
+    JAENG_ERROR_IF(!globalRootSig_, jaeng::error_code::invalid_operation, "Failed to create Global Root Signature");
+
     resources_ = std::make_unique<ResourceTable>();
     pipelines_ = std::make_unique<PipelineTable>();
     binds_     = std::make_unique<BindSpace>();
@@ -489,6 +495,10 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
     device_->dev()->CreateShaderResourceView(t.res.Get(), &srv, cpu);
     t.srvCpu = cpu;
 
+    // Create SRV in Global Heap (Persistent)
+    t.descriptorIndex = globalHeap_->allocate_srv();
+    device_->dev()->CreateShaderResourceView(t.res.Get(), &srv, globalHeap_->cpu_srv(t.descriptorIndex));
+
     return resources_->add_texture(std::move(t));
 }
 
@@ -521,6 +531,11 @@ jaeng::result<SamplerHandle> RendererD3D12::create_sampler(const SamplerDesc* sd
 
     SamplerRec s{};
     s.cpu = cpu;
+
+    // Create Sampler in Global Heap (Persistent)
+    s.descriptorIndex = globalHeap_->allocate_samp();
+    device_->dev()->CreateSampler(&d, globalHeap_->cpu_samp(s.descriptorIndex));
+
     return resources_->add_sampler(std::move(s));
 }
 
@@ -563,9 +578,8 @@ VertexLayoutHandle RendererD3D12::create_vertex_layout(const VertexLayoutDesc* v
 
 PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDesc* gp)
 {
-    // Build root signature with tables (CBV b0, b1 / SRV t0 / Sampler s0) via helper
-    D3D_ROOT_SIGNATURE_VERSION usedVer{};
-    ComPtr<ID3D12RootSignature> root = CreateRootSignature_BindTables(device_->dev(), &usedVer);
+    // Use Global Root Signature
+    ComPtr<ID3D12RootSignature> root = globalRootSig_;
     if (!root) return 0;
 
     auto* vsb = pipelines_->get_shader(gp->vs);
@@ -582,7 +596,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
 
     D3D12_RASTERIZER_DESC rast{};
     rast.FillMode = D3D12_FILL_MODE_SOLID;
-    rast.CullMode = D3D12_CULL_MODE_NONE;
+    rast.CullMode = D3D12_CULL_MODE_FRONT; // Flip to see if it fixes inversion
     rast.DepthClipEnable = TRUE;
 
     D3D12_DEPTH_STENCIL_DESC depth{};
@@ -605,7 +619,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     pso.InputLayout      = { vld.ieds.data(), (UINT)vld.ieds.size() };
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1;
-    pso.RTVFormats[0]    = swapchain_ ? swapchain_->rtv_format() : DXGI_FORMAT_B8G8R8A8_UNORM;
+    pso.RTVFormats[0]    = DXGI_FORMAT_B8G8R8A8_UNORM; // Force format for now to ensure it matches swapchain
     pso.SampleDesc.Count = 1;
 
     PipelineRec rec{};
@@ -660,34 +674,45 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
     auto& fc = curFrame();
     auto* cl = fc.cmd();
 
+    // Set Global Heaps
+    ID3D12DescriptorHeap* heaps[2] = { globalHeap_->srv_heap(), globalHeap_->samp_heap() };
+    cl->SetDescriptorHeaps(2, heaps);
+
     // For now we only support rendering to the swapchain backbuffer.
     // If the pass specifies a different texture, warn and still use the backbuffer.
+    TextureHandle bbHandle = 0;
     {
-        auto bbHandle = get_current_backbuffer(/*swapchain*/1);
+        bbHandle = get_current_backbuffer(/*swapchain*/1);
         if (colors[0].tex && colors[0].tex != bbHandle) {
             OutputDebugStringA("[jaeng:d3d12] cmd_begin_rendering_ops(): ColorAttachmentDesc.tex != backbuffer; "
                                "rendering will target the swapchain backbuffer.\n");
         }
     }
 
-    // Transition PRESENT -> RENDER_TARGET on current backbuffer
-    const uint32_t idx = swapchain_->current_index();
-    ID3D12Resource* res = swapchain_->rtv_resource(idx);
-    Barrier(cl, res, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto* tex = resources_->get_tex(bbHandle);
+    if (!tex || !tex->res) return;
 
-    // Bind RTV (and optionally depth if you decide to add a DSV path later)
+    // Transition to RENDER_TARGET if needed
+    Barrier(cl, tex->res.Get(), tex->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    tex->state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+    // Bind RTV and Depth
+    const uint32_t idx = swapchain_->current_index();
     auto rtv = swapchain_->rtv_handle(idx);
-    cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
 
     if (depthManager_ && depth) {
-        auto dsv = depthManager_->get_dsv();
+        dsv = depthManager_->get_dsv();
         Barrier(cl, depthManager_->dsv_resource(), depthManager_->resState, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         depthManager_->resState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-        cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        dsvPtr = &dsv;
     }
+    
+    cl->OMSetRenderTargets(1, &rtv, FALSE, dsvPtr);
 
     // Viewport/scissor from backbuffer size
-    D3D12_RESOURCE_DESC texDesc = res->GetDesc();
+    D3D12_RESOURCE_DESC texDesc = tex->res->GetDesc();
     D3D12_VIEWPORT vp{};
     vp.TopLeftX = 0.0f; vp.TopLeftY = 0.0f;
     vp.Width    = float(texDesc.Width);
@@ -709,13 +734,7 @@ void RendererD3D12::cmd_begin_rendering_ops(CommandListHandle, LoadOp load_op,
 
 void RendererD3D12::cmd_end_rendering(CommandListHandle)
 {
-    auto& fc = curFrame();
-    auto* cl = fc.cmd();
-
-    // Transition RENDER_TARGET -> PRESENT
-    const uint32_t idx = swapchain_->current_index();
-    ID3D12Resource* res = swapchain_->rtv_resource(idx);
-    Barrier(cl, res, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    // No-op for single-list backbuffer rendering; transitions happen in begin_ops/end_commands
 }
 
 void RendererD3D12::cmd_set_frame_cb(CommandListHandle, BufferHandle h)
@@ -723,25 +742,11 @@ void RendererD3D12::cmd_set_frame_cb(CommandListHandle, BufferHandle h)
     auto& fc = curFrame();
     auto* cl = fc.cmd();
 
-    // Lazy allocate b0/b1 slots if not set yet (e.g., called before begin pass)
-    if (fc.cbvBaseGpu.ptr == 0) {
-        ID3D12DescriptorHeap* heaps[2] = { fc.gpuDescs->srv_heap(), fc.gpuDescs->samp_heap() };
-        cl->SetDescriptorHeaps(2, heaps);
-        fc.gpuDescs->alloc_srv(&fc.cbvBaseCpu, &fc.cbvBaseGpu);
-        fc.gpuDescs->alloc_srv(&fc.cbvObjCpu,  &fc.cbvObjGpu);
-        cl->SetGraphicsRootDescriptorTable(0, fc.cbvBaseGpu);
-    }
-
     BufferRec* buf = resources_->get_buf(h);
-    if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform) || !buf->cbvCpuValid) {
-        // Fallback CBV (256B upload buffer) — safe, no barrier needed
-        device_->dev()->CopyDescriptorsSimple(1, fc.cbvBaseCpu, binds_->fallback_cbv_cpu(),
-                                              D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        return;
-    }
+    if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform)) return;
 
-    // Copy the cached CPU CBV into the GPU-visible slot for b0
-    device_->dev()->CopyDescriptorsSimple(1, fc.cbvBaseCpu, buf->cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    // Use direct Root CBV for Frame CB (register b1)
+    cl->SetGraphicsRootConstantBufferView(1, buf->res->GetGPUVirtualAddress());
 
     // Make sure the buffer is in CBV-readable state
     Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
@@ -753,78 +758,62 @@ void RendererD3D12::cmd_set_object_cb(CommandListHandle, BufferHandle h)
     auto& fc = curFrame();
     auto* cl = fc.cmd();
 
-    if (fc.cbvBaseGpu.ptr == 0) { // same lazy path
-        ID3D12DescriptorHeap* heaps[2] = { fc.gpuDescs->srv_heap(), fc.gpuDescs->samp_heap() };
-        cl->SetDescriptorHeaps(2, heaps);
-        fc.gpuDescs->alloc_srv(&fc.cbvBaseCpu, &fc.cbvBaseGpu);
-        fc.gpuDescs->alloc_srv(&fc.cbvObjCpu,  &fc.cbvObjGpu);
-        cl->SetGraphicsRootDescriptorTable(0, fc.cbvBaseGpu);
-    }
-
     BufferRec* buf = resources_->get_buf(h);
-    if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform) || !buf->cbvCpuValid) {
-        device_->dev()->CopyDescriptorsSimple(1, fc.cbvObjCpu, binds_->fallback_cbv_cpu(),
-                                              D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        return;
-    }
+    if (!buf || !buf->res || !(buf->usage & BufferUsage_Uniform)) return;
 
-    // Copy the cached CPU CBV into the GPU-visible slot for b1
-    device_->dev()->CopyDescriptorsSimple(1, fc.cbvObjCpu, buf->cbvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    // Use direct Root CBV for Object CB (register b2)
+    cl->SetGraphicsRootConstantBufferView(2, buf->res->GetGPUVirtualAddress());
 
     Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     buf->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
 }
 
+void RendererD3D12::cmd_push_constants(CommandListHandle, uint32_t offset, uint32_t count, const void* data)
+{
+    auto* cl = curFrame().cmd();
+    cl->SetGraphicsRoot32BitConstants(0, count, data, offset);
+}
+
 void RendererD3D12::cmd_set_bind_group(CommandListHandle, uint32_t set_index, BindGroupHandle h)
 {
-    // Minimal set 0: copy CBV/SRV to this frame's GPU-visible heaps and set root tables
-    if (set_index != 0) return;
-    auto& fc = curFrame();
-    auto* cl = fc.cmd();
+    // For bindless, we ignore set_index (mostly) and just push the indices 
+    // from the bind group as root constants.
+    auto* cl = curFrame().cmd();
 
-    // Let BindSpace perform CPU->GPU descriptor copies and set root descriptor tables:
-    // - b0 CBV (fallback if group has no CB)
-    // - t0 SRV and s0 Sampler
-    if (auto* bg = binds_->get_group(h)) {
-        // Allocate next slots & copy descriptors (1 SRV, 1 Sampler)
-        D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{}, sampCpu{};
-        if (auto* tex = resources_->get_tex(bg->texture)) srvCpu = tex->srvCpu;
-        if (auto* smp = resources_->get_samp(bg->sampler)) sampCpu = smp->cpu;
+    auto* bg = binds_->get_group(h);
+    if (!bg) return;
 
-        // --- SRV at root 1 (t0, space 1) ---
-        D3D12_CPU_DESCRIPTOR_HANDLE srvGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
-        fc.gpuDescs->alloc_srv(&srvGpuCpu, &srvGpu); // slot for SRV
-        if (srvCpu.ptr) {
-            device_->dev()->CopyDescriptorsSimple(1, srvGpuCpu, srvCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        }
-        cl->SetGraphicsRootDescriptorTable(1, srvGpu); // t0
+    auto* layout = binds_->get_layout(bg->layout);
+    if (!layout) return;
 
-        // --- Sampler at root 2 (s0, space1) ---
-        D3D12_CPU_DESCRIPTOR_HANDLE sampGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE sampGpu{};
-        fc.gpuDescs->alloc_samp(&sampGpuCpu, &sampGpu); // slot for Sampler
-        if (sampCpu.ptr) {
-            device_->dev()->CopyDescriptorsSimple(1, sampGpuCpu, sampCpu, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-        }
-        cl->SetGraphicsRootDescriptorTable(2, sampGpu); // s0
+    uint32_t indices[32]{}; // Support up to 32 dwords of push constants
+    bool modified = false;
 
-        // --- Material CB (root 3: b0, space1) ---
-        D3D12_CPU_DESCRIPTOR_HANDLE matGpuCpu{}; D3D12_GPU_DESCRIPTOR_HANDLE matGpu{};
-        fc.gpuDescs->alloc_srv(&matGpuCpu, &matGpu);
-        if (bg->cb.present && bg->cb.cpuValid) {
-            // Copy the material's persistent CPU CBV into a GPU-visible slot and set root 3
-            device_->dev()->CopyDescriptorsSimple(1, matGpuCpu, bg->cb.cpuCbv, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    // Use the BindGroupLayout to know WHERE (which index) to put the descriptor index
+    for (size_t i = 0; i < layout->entries.size() && i < bg->entries.size(); ++i) {
+        const auto& le = layout->entries[i];
+        const auto& ge = bg->entries[i];
 
-            // Ensure the underlying buffer is in CBV-readable state (safe if it was updated earlier)
-            if (auto* b = resources_->get_buf(bg->cb.buf)) {
-                Barrier(cl, b->res.Get(), b->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-                b->state = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        // The 'binding' in BindGroupLayoutEntry is the 'slot' (resourceIndex)
+        uint32_t targetIdx = le.binding;
+        if (targetIdx >= 32) continue;
+
+        if (ge.type == BindGroupEntryType::Texture) {
+            if (auto* tex = resources_->get_tex(ge.texture)) {
+                indices[targetIdx] = tex->descriptorIndex;
+                modified = true;
             }
-        } else {
-            // Optional: fallback CBV if material CB isn't valid
-            device_->dev()->CopyDescriptorsSimple(1, matGpuCpu, binds_->fallback_cbv_cpu(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        } else if (ge.type == BindGroupEntryType::Sampler) {
+            if (auto* smp = resources_->get_samp(ge.sampler)) {
+                indices[targetIdx] = smp->descriptorIndex;
+                modified = true;
+            }
         }
+    }
 
-        cl->SetGraphicsRootDescriptorTable(3, matGpu); // root 3 → CBV table (space1: b0)
+    if (modified) {
+        // We only push the indices (textureIndex, samplerIndex) at the start of PushConstants
+        cl->SetGraphicsRoot32BitConstants(0, 2, indices, 0);
     }
 }
 
@@ -832,7 +821,13 @@ void RendererD3D12::cmd_set_pipeline(CommandListHandle, PipelineHandle h)
 {
     if (auto* p = pipelines_->get_pipeline(h)) {
         auto* cl = curFrame().cmd();
-        cl->SetGraphicsRootSignature(p->root.Get());
+        cl->SetGraphicsRootSignature(globalRootSig_.Get());
+        
+        // Root parameters are undefined after SetGraphicsRootSignature!
+        // Re-bind descriptor tables
+        cl->SetGraphicsRootDescriptorTable(3, globalHeap_->gpu_srv(0));
+        cl->SetGraphicsRootDescriptorTable(4, globalHeap_->gpu_samp(0));
+
         cl->IASetPrimitiveTopology(p->topo);
         cl->SetPipelineState(p->pso.Get());
         currentVertexStride_ = p->vertexStride;
@@ -890,7 +885,20 @@ void RendererD3D12::cmd_draw_indexed(CommandListHandle, uint32_t idx_count, uint
 }
 
 void RendererD3D12::end_commands(CommandListHandle) {
-    curFrame().cmd()->Close();
+    auto* cl = curFrame().cmd();
+
+    // Final backbuffer transition to PRESENT
+    {
+        auto bbHandle = get_current_backbuffer(/*swapchain*/1);
+        if (auto* tex = resources_->get_tex(bbHandle)) {
+            if (tex->res) {
+                Barrier(cl, tex->res.Get(), tex->state, D3D12_RESOURCE_STATE_PRESENT);
+                tex->state = D3D12_RESOURCE_STATE_PRESENT;
+            }
+        }
+    }
+
+    cl->Close();
 
     // Reflect implicit decay to COMMON for buffers after ExecuteCommandLists
     // (We will submit right after, so the cache should match the runtime.)
@@ -905,19 +913,22 @@ void RendererD3D12::end_commands(CommandListHandle) {
 
 void RendererD3D12::submit(CommandListHandle* /*lists*/, uint32_t /*list_count*/)
 {
-    ID3D12CommandList* one[] = { curFrame().cmd() };
+    auto* cl = curFrame().cmd();
+    
+    ID3D12CommandList* one[] = { cl };
     device_->queue()->ExecuteCommandLists(1, one);
-
+    
     // Signal fence and store value for this frame, so begin_frame can wait next time
+    auto fv = device_->signal();
     auto& fc = curFrame();
-    fc.fenceValue = device_->signal();
+    fc.fenceValue = fv;
 }
 
 void RendererD3D12::present(SwapchainHandle)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     state_ = RendererState::Presenting;
-    // Present (vsync on by default; can add a flag in RendererDesc if desired)
+    // Present (respect tearing flag)
     UINT syncInterval = (tearing_)? 0 : 1;
     swapchain_->swap()->Present(syncInterval, (tearing_)? DXGI_PRESENT_ALLOW_TEARING : 0);
     state_ = RendererState::Rendering;
@@ -977,6 +988,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
 
     api.cmd_set_frame_cb = [](CommandListHandle c, BufferHandle h) { g_renderer->cmd_set_frame_cb(c, h); };
     api.cmd_set_object_cb = [](CommandListHandle c, BufferHandle h) { g_renderer->cmd_set_object_cb(c, h); };
+    api.cmd_push_constants = [](CommandListHandle c, uint32_t off, uint32_t count, const void* d) { g_renderer->cmd_push_constants(c, off, count, d); };
 
     api.cmd_set_bind_group = [](CommandListHandle c, uint32_t i, BindGroupHandle h) { g_renderer->cmd_set_bind_group(c,i,h); };
     api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };

@@ -22,12 +22,14 @@ struct BufferRec {
 struct TextureRec {
     Microsoft::WRL::ComPtr<ID3D12Resource> res;
     D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
+    uint32_t descriptorIndex = 0xFFFFFFFF;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     UINT width=0, height=0;
 };
 
 struct SamplerRec {
     D3D12_CPU_DESCRIPTOR_HANDLE cpu{};
+    uint32_t descriptorIndex = 0xFFFFFFFF;
 };
 
 class ResourceTable {

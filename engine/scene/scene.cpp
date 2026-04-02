@@ -118,13 +118,12 @@ void Scene::renderScene(RenderGraph& rg, SwapchainHandle swap)
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, dp.vertexBuffer, 0);
                     ctx.gfx->cmd_set_index_buffer(ctx.cmd, dp.indexBuffer, true, 0);
 
-                    if (dp.constant) {
-                        CBMaterial matBuf{ {1.f,1.f,1.f,1.f}, 100.f, 1.f };
-                        ctx.gfx->update_buffer(dp.constant, 0, &matBuf, sizeof(CBMaterial));
-                    }
-                    ctx.gfx->update_buffer(db.constant, 0, &dp.worldMatrix, sizeof(glm::mat4));
-                    ctx.gfx->cmd_set_object_cb(ctx.cmd, db.constant); // b1
                     ctx.gfx->cmd_set_bind_group(ctx.cmd, 0, db.materialBindGroup); // texture srv + sampler
+                    
+                    // Update and bind Object CB (b2)
+                    ctx.gfx->update_buffer(db.constant, 0, &dp.worldMatrix, sizeof(glm::mat4));
+                    ctx.gfx->cmd_set_object_cb(ctx.cmd, db.constant);
+
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, dp.indexCount, 1, 0, 0, 0);
                 }
             }

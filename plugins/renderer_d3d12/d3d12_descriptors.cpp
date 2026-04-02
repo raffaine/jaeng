@@ -100,3 +100,68 @@ void DescriptorAllocatorGPU::alloc_samp(D3D12_CPU_DESCRIPTOR_HANDLE* outCpu, D3D
     if (outCpu) *outCpu = cpu;
     if (outGpu) *outGpu = gpu;
 }
+
+// ------------------ Global Descriptor Heap (Bindless) ------------------
+
+jaeng::result<> GlobalDescriptorHeap::create(ID3D12Device* dev, UINT srvCount, UINT sampCount) {
+    // Persistent SRV/CBV/UAV heap
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC dh{};
+        dh.NumDescriptors = srvCount;
+        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&srvHeap_)));
+
+        srvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        srvCap_ = srvCount;
+        srvUsed_= 0;
+    }
+    // Persistent Sampler heap
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC dh{};
+        dh.NumDescriptors = sampCount;
+        dh.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+        dh.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        JAENG_CHECK_HRESULT(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&sampHeap_)));
+
+        sampInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        sampCap_ = sampCount;
+        sampUsed_= 0;
+    }
+
+    return {};
+}
+
+UINT GlobalDescriptorHeap::allocate_srv() {
+    JAENG_ASSERT(srvUsed_ < srvCap_);
+    return srvUsed_++;
+}
+
+UINT GlobalDescriptorHeap::allocate_samp() {
+    JAENG_ASSERT(sampUsed_ < sampCap_);
+    return sampUsed_++;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE GlobalDescriptorHeap::cpu_srv(UINT index) const {
+    D3D12_CPU_DESCRIPTOR_HANDLE h = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += SIZE_T(index) * SIZE_T(srvInc_);
+    return h;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE GlobalDescriptorHeap::gpu_srv(UINT index) const {
+    D3D12_GPU_DESCRIPTOR_HANDLE h = srvHeap_->GetGPUDescriptorHandleForHeapStart();
+    h.ptr += SIZE_T(index) * SIZE_T(srvInc_);
+    return h;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE GlobalDescriptorHeap::cpu_samp(UINT index) const {
+    D3D12_CPU_DESCRIPTOR_HANDLE h = sampHeap_->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += SIZE_T(index) * SIZE_T(sampInc_);
+    return h;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE GlobalDescriptorHeap::gpu_samp(UINT index) const {
+    D3D12_GPU_DESCRIPTOR_HANDLE h = sampHeap_->GetGPUDescriptorHandleForHeapStart();
+    h.ptr += SIZE_T(index) * SIZE_T(sampInc_);
+    return h;
+}
