@@ -1,20 +1,31 @@
-add_executable(sandbox WIN32
+set(SANDBOX_SOURCES
   main.cpp
   sandbox_app.cpp
   sandbox_app.h
-  mesh_utils.cpp
-  mesh_utils.h
 )
 
-target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE=)
-target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(sandbox PRIVATE jaeng)
-add_dependencies(sandbox dxil_reflect compile_shaders renderer_d3d12)
-
-# Include generated reflection headers for the app
-target_include_directories(sandbox PRIVATE ${CMAKE_BINARY_DIR}/include)
+if(WIN32)
+  list(APPEND SANDBOX_SOURCES
+    mesh_utils.cpp
+    mesh_utils.h
+  )
+endif()
 
 if(WIN32)
+  add_executable(sandbox WIN32 ${SANDBOX_SOURCES})
+else()
+  add_executable(sandbox ${SANDBOX_SOURCES})
+endif()
+
+target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_DEF})
+target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(sandbox PRIVATE jaeng)
+
+if(WIN32)
+  add_dependencies(sandbox dxil_reflect compile_shaders renderer_d3d12)
+  # Include generated reflection headers for the app
+  target_include_directories(sandbox PRIVATE ${CMAKE_BINARY_DIR}/include)
+
   # vcpkg provides a config package for WinPixEventRuntime
   find_package(winpixevent CONFIG REQUIRED)
 

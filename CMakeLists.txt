@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-project(jaeng CXX)
+project(jaeng C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,17 +24,42 @@ find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 
+if(UNIX AND NOT APPLE)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(WAYLAND REQUIRED wayland-client wayland-protocols xkbcommon libdecor-0)
+  find_program(WAYLAND_SCANNER NAMES wayland-scanner REQUIRED)
+endif()
+
 set(ENGINE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/engine)
 
+if(WIN32)
+  set(JAENG_PLATFORM_DEF JAENG_WIN32)
+elseif(UNIX AND NOT APPLE)
+  set(JAENG_PLATFORM_DEF JAENG_LINUX)
+endif()
+
 # Tools
-add_subdirectory(tools/dxil_reflect)
+if(WIN32)
+  add_subdirectory(tools/dxil_reflect)
+endif()
 
 # Shaders
-add_subdirectory(shaders)
+if(WIN32)
+  add_subdirectory(shaders)
+else()
+  find_program(DXC_EXECUTABLE NAMES dxc)
+  if(DXC_EXECUTABLE)
+    add_subdirectory(shaders)
+  else()
+    message(WARNING "dxc not found, skipping shaders")
+  endif()
+endif()
 
 # Engine Core & Plugins
 add_subdirectory(engine)
-add_subdirectory(plugins/renderer_d3d12)
+if(WIN32)
+  add_subdirectory(plugins/renderer_d3d12)
+endif()
 
 # Options
 option(JAENG_BUILD_SANDBOX "Build the sandbox application" ON)

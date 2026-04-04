@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <fstream>
+#include <cstring>
 
 #include "filestorage.h"
 

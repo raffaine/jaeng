@@ -1,10 +1,16 @@
-
 #pragma once
 #include <expected>
 #include <string>
 #include <utility>
 #include <format>
+#include "logging.h"
+
+#ifdef JAENG_WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
+#endif
 
 namespace jaeng {
 
@@ -13,7 +19,8 @@ enum class error_code {
     invalid_args,
     invalid_operation,
     no_resource,
-    resource_not_ready
+    resource_not_ready,
+    platform_error
 };
 
 // -------------------- Error Type --------------------
@@ -25,6 +32,7 @@ struct Error {
         return { code, msg };
     }
 
+#ifdef JAENG_WIN32
     static Error fromHRESULT(HRESULT hr) {
         char buffer[512];
         FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -39,6 +47,7 @@ struct Error {
                        nullptr, err, 0, buffer, sizeof(buffer), nullptr);
         return { static_cast<int>(err), std::string(buffer) };
     }
+#endif
 };
 
 // -------------------- Result Type --------------------
@@ -64,7 +73,7 @@ public:
         } else {
             // To allow value conversion, handle here
             // For now, assume only error propagation
-            OutputDebugStringA("Only supports Error Propagation");
+            JAENG_LOG_WARN("Only supports Error Propagation");
         }
     }
 
@@ -73,7 +82,7 @@ public:
     bool hasError() const noexcept { return !m_expected.has_value(); }
 
     // r-value only methods
-    T&& orValue(T&& defaultValue) && {
+    T orValue(T&& defaultValue) && {
         if (auto e_ = std::move(*this).logError(); e_.has_value() ) {
             return std::move(e_.value());
         } else {
@@ -82,20 +91,19 @@ public:
     }
 
     template<typename F>
-    T&& orElse(F&& fallback) && {
+    T orElse(F&& fallback) && {
         auto e_ = std::move(*this).logError(); 
         if (e_.has_value()) {
             return std::move(e_.value());
         } else {
-            return std::move(fallback(std::move(e_.error())));
+            return fallback(std::move(e_.error()));
         }
     }
 
     // Log error and move out expected
     std::expected<T, Error> logError() && {
         if (!m_expected.has_value()) {
-            // Replace with logging system
-            OutputDebugStringA(std::format("Error [{}]: {}\n", m_expected.error().code, m_expected.error().message).c_str());
+            JAENG_LOG_ERROR("Error [{}]: {}", m_expected.error().code, m_expected.error().message);
         }
         return std::move(m_expected);
     }
@@ -141,8 +149,7 @@ public:
     // Log error and move out expected
     std::expected<void, Error> logError() && {
         if (!m_expected.has_value()) {
-            // Replace with logging system
-            OutputDebugStringA(std::format("Error [{}]: {}\n", m_expected.error().code, m_expected.error().message).c_str());
+            JAENG_LOG_ERROR("Error [{}]: {}", m_expected.error().code, m_expected.error().message);
         }
         return m_expected;
     }
@@ -165,6 +172,7 @@ private:
     { auto _tmp = (expr); if (_tmp.hasError()) return _tmp; }
 
 // -------------------- Error Macros --------------------
+#ifdef JAENG_WIN32
 #define JAENG_CHECK_HRESULT(hr) \
     if (FAILED(hr)) return jaeng::Error::fromHRESULT(hr)
 
@@ -173,6 +181,7 @@ private:
 
 #define JAENG_CHECK_LASTERROR_(res) \
     if (res < 0) return jaeng::Error::fromLastError()
+#endif
 
 #define JAENG_ERROR_IF(predicate, code, msg) \
     if (predicate) return jaeng::Error::fromMessage(static_cast<int>(code), msg)

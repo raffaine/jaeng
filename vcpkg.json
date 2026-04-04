@@ -2,8 +2,8 @@
     "name": "jaeng",
     "version-string": "0.1.0",
     "dependencies": [
-        { "name": "winpixevent" },
-        { "name": "directx-dxc"},
+        { "name": "winpixevent", "platform": "windows" },
+        { "name": "directx-dxc", "platform": "windows" },
         { "name": "glm"},
         "nlohmann-json",
         "json-schema-validator"

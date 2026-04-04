@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(ENGINE_ROOT ${CMAKE_SOURCE_DIR}/engine)
 
 add_executable(dxil_reflect dxil_reflect.cpp)
+target_compile_definitions(dxil_reflect PRIVATE ${JAENG_PLATFORM_DEF})
 target_include_directories(dxil_reflect PRIVATE ${ENGINE_ROOT})
 target_link_libraries(dxil_reflect PRIVATE dxcompiler.lib d3dcompiler.lib)
 

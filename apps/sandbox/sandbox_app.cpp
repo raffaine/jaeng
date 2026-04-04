@@ -1,22 +1,32 @@
 #include "sandbox_app.h"
+#ifdef JAENG_WIN32
 #include "mesh_utils.h"
+#include "pix3.h"
+#endif
+
 #include "storage/win/filestorage.h"
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
 #include "scene/grid_partition.h"
 #include "scene/perspective_cam.h"
+
+#ifdef JAENG_WIN32
 #include "basic_reflect.h"
+#endif
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
+#include <cstring>
 
-#include "pix3.h"
+#include <thread>
+#include <chrono>
 
 using namespace jaeng;
 using namespace jaeng::platform;
 
+#ifdef JAENG_WIN32
 static const char* materialFileData = R"(
 {
   "name": "CheckerboardMaterial",
@@ -76,6 +86,67 @@ static const char* materialFileData = R"(
   }
 }
 )";
+#else
+static const char* materialFileData = R"(
+{
+  "name": "CheckerboardMaterial",
+  "shader": {
+    "vertex": "dummy_vs.dxil",
+    "pixel": "dummy_ps.dxil",
+    "reflection": "dummy_reflect.json"
+  },
+  "textures": [
+    {
+      "path": "/mem/checker.raw",
+      "width": 256,
+      "height": 256,
+      "sampler": {
+        "filter": "linear",
+        "addressModeU": "wrap",
+        "addressModeV": "wrap"
+      }
+    }
+  ],
+  "parameters": {
+    "color": [1.0, 1.0, 1.0, 1.0],
+    "roughness": 0.5,
+    "metallic": 0.0
+  },
+  "constantBuffers": [
+    {
+      "name": "CBObject",
+      "size": 64,
+      "binding": 0
+    },
+    {
+      "name": "CBFrame",
+      "size": 64,
+      "binding": 1
+    },
+    {
+      "name": "CBMaterial",
+      "size": 256,
+      "binding": 2
+    }
+  ],
+  "pipelineStates": {
+    "blend": {
+      "enabled": false,
+      "srcFactor": "one",
+      "dstFactor": "zero"
+    },
+    "rasterizer": {
+      "cullMode": "back",
+      "fillMode": "solid"
+    },
+    "depthStencil": {
+      "depthTest": true,
+      "depthWrite": true
+    }
+  }
+}
+)";
+#endif
 
 SandboxApp::SandboxApp(IPlatform& platform) 
     : platform_(platform) 
@@ -95,7 +166,13 @@ bool SandboxApp::init() {
     }
     window_ = std::move(windowResult).logError().value();
 
-    if (!renderer_.initialize(GfxBackend::D3D12, window_->get_native_handle(), 3)) {
+#ifdef JAENG_WIN32
+    GfxBackend backend = GfxBackend::D3D12;
+#else
+    GfxBackend backend = GfxBackend::Vulkan;
+#endif
+
+    if (!renderer_.initialize(backend, window_->get_native_handle(), 3)) {
         platform_.show_message_box("Error", "Failed to initialize renderer.", MessageBoxType::Error);
         return false;
     }
@@ -130,6 +207,7 @@ bool SandboxApp::init() {
 }
 
 void SandboxApp::update() {
+    if (!window_) return;
     RenderGraph graph;
     Scene* scene = sceneMan_->getScene("Test");
     if (scene) {
@@ -137,7 +215,9 @@ void SandboxApp::update() {
         scene->renderScene(graph, swap_);
         graph.compile();
         graph.execute(*renderer_.gfx, swap_, 0, nullptr);
+        renderer_->present(swap_);
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
 
 void SandboxApp::on_event(const Event& ev) {
@@ -166,8 +246,20 @@ void SandboxApp::setupResources() {
     }
     fileMan_->registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size() * sizeof(uint32_t));
     fileMan_->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
+
+#ifndef JAENG_WIN32
+    // Dummy shader files
+    fileMan_->registerMemoryFile("dummy_vs.dxil", "VS", 2);
+    fileMan_->registerMemoryFile("dummy_ps.dxil", "PS", 2);
+#endif
+
+#ifdef JAENG_WIN32
     auto meshRawData = createCubeMeshBinary();
     fileMan_->registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
+#else
+    // Dummy empty data for now on linux
+    fileMan_->registerMemoryFile("/mem/mesh-test.raw", "DUMMY", 5);
+#endif
 }
 
 void SandboxApp::setupEntities() {
@@ -178,6 +270,7 @@ void SandboxApp::setupEntities() {
         for (int i = 0; i < 4; i++) entityMan_->addComponent<MeshHandle>(testEntities[i]) = meshHandle.value();
     }
 
+#ifdef JAENG_WIN32
     if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
         for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
@@ -187,6 +280,16 @@ void SandboxApp::setupEntities() {
             }
         });
     }
+#else
+    // Still need a dummy layout to satisfy createMaterial
+    VertexAttributeDesc attrs[] = { {0, 0, 0} };
+    VertexLayoutDesc dummyLayout{ sizeof(RAWFormatVertex), attrs, 1 };
+    const char* dummySemantics[] = { "POSITION" };
+    if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &dummyLayout, 1, dummySemantics).logError()) {
+        auto h = matHandle.value();
+        for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
+    }
+#endif
 
     entityMan_->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
     entityMan_->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};

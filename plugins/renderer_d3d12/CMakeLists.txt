@@ -9,6 +9,7 @@ add_library(renderer_d3d12 SHARED
   d3d12_pipeline.cpp
   d3d12_resources.cpp
 )
+target_compile_definitions(renderer_d3d12 PRIVATE ${JAENG_PLATFORM_DEF})
 
 if(WIN32)
   target_compile_definitions(renderer_d3d12 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
