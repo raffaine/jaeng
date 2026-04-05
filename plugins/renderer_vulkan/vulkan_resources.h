@@ -14,6 +14,7 @@ struct VulkanBuffer {
     vk::DeviceMemory memory;
     uint64_t size;
     bool needsBarrier = false;
+    uint32_t dynamicOffset = 0;
 };
 
 struct VulkanTexture {

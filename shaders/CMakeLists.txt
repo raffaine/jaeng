@@ -43,6 +43,12 @@ foreach(PIPELINE ${PIPELINES})
                 COMMAND ${DXC_EXECUTABLE} -spirv -T ps_6_6 -E main -Fo ${PIXEL_SPV} ${PIXEL_SHADER} -D VULKAN -D VULKAN_BGRA
                 COMMENT "Pipeline ${PIPELINE}: Compiling SPIR-V"
             )
+        elseif(GLSLC_EXECUTABLE)
+            add_custom_command(TARGET compile_shaders POST_BUILD
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main ${VERTEX_SHADER} -o ${VERTEX_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main -DVULKAN_BGRA ${PIXEL_SHADER} -o ${PIXEL_SPV}
+                COMMENT "Pipeline ${PIPELINE}: Compiling SPIR-V with glslc"
+            )
         endif()
     endif()
 endforeach()

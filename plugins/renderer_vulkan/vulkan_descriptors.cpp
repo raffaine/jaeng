@@ -10,15 +10,15 @@ jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDes
     // Set 0: Uniforms (b registers)
     std::vector<vk::DescriptorSetLayoutBinding> uBindings;
     for (uint32_t i = 0; i < 8; ++i) {
-        uBindings.push_back({ i, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics });
+        uBindings.push_back({ i, vk::DescriptorType::eUniformBufferDynamic, 1, vk::ShaderStageFlagBits::eAllGraphics });
     }
     
     // Enable UpdateAfterBind for uniforms too to allow mid-frame updates
-    vk::DescriptorBindingFlags uFlags = vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+    vk::DescriptorBindingFlags uFlags = vk::DescriptorBindingFlagBits::ePartiallyBound;
     std::vector<vk::DescriptorBindingFlags> uFlagsList(8, uFlags);
     vk::DescriptorSetLayoutBindingFlagsCreateInfo uFlagsInfo(uFlagsList);
     
-    vk::DescriptorSetLayoutCreateInfo uLayoutInfo(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool, uBindings);
+    vk::DescriptorSetLayoutCreateInfo uLayoutInfo({}, uBindings);
     uLayoutInfo.pNext = &uFlagsInfo;
     layouts.push_back(device_->device.createDescriptorSetLayout(uLayoutInfo));
 
@@ -44,7 +44,7 @@ jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDes
 
     // Create Pool
     std::vector<vk::DescriptorPoolSize> poolSizes = {
-        { vk::DescriptorType::eUniformBuffer, 8 },
+        { vk::DescriptorType::eUniformBufferDynamic, 8 },
         { vk::DescriptorType::eSampledImage, maxDescriptors },
         { vk::DescriptorType::eSampler, maxDescriptors }
     };
@@ -88,7 +88,7 @@ void VulkanDescriptorHeap::updateSampler(uint32_t index, vk::Sampler sampler) {
 
 void VulkanDescriptorHeap::updateUniform(uint32_t binding, vk::Buffer buffer, uint64_t offset, uint64_t range) {
     vk::DescriptorBufferInfo bufferInfo(buffer, offset, range);
-    vk::WriteDescriptorSet write(sets[0], binding, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &bufferInfo);
+    vk::WriteDescriptorSet write(sets[0], binding, 0, 1, vk::DescriptorType::eUniformBufferDynamic, nullptr, &bufferInfo);
     device_->device.updateDescriptorSets(write, nullptr);
 }
 

@@ -71,6 +71,24 @@ static bool vk_init(const RendererDesc* desc) {
     // Bind it once to Set 0 Binding 0 (corresponds to slot 0)
     g_ctx->descriptors.updateUniform(0, g_ctx->pushConstantsBuffer, 0, 256);
 
+    // Fetch device alignment requirement
+    vk::PhysicalDeviceProperties props = g_ctx->device.physicalDevice.getProperties();
+    g_ctx->minUniformBufferOffsetAlignment = props.limits.minUniformBufferOffsetAlignment;
+
+    // Create and Map the Ring Buffer
+    vk::BufferCreateInfo dynBufInfo({}, VulkanContext::DYNAMIC_BUFFER_SIZE, vk::BufferUsageFlagBits::eUniformBuffer);
+    g_ctx->dynamicBuffer = g_ctx->device.device.createBuffer(dynBufInfo);
+    vk::MemoryRequirements dynMemReqs = g_ctx->device.device.getBufferMemoryRequirements(g_ctx->dynamicBuffer);
+    vk::MemoryAllocateInfo dynAlloc(dynMemReqs.size, g_ctx->device.findMemoryType(dynMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    g_ctx->dynamicMemory = g_ctx->device.device.allocateMemory(dynAlloc);
+    g_ctx->device.device.bindBufferMemory(g_ctx->dynamicBuffer, g_ctx->dynamicMemory, 0);
+    g_ctx->mappedDynamicMemory = g_ctx->device.device.mapMemory(g_ctx->dynamicMemory, 0, VulkanContext::DYNAMIC_BUFFER_SIZE);
+
+    // Pre Bind Slots for Dynamic Ring Buffer
+    for (uint32_t i = 1; i < 8; ++i) {
+        g_ctx->descriptors.updateUniform(i, g_ctx->dynamicBuffer, 0, 4096);
+    }
+
     return true;
 }
 
@@ -86,7 +104,15 @@ static void vk_shutdown() {
         if (g_ctx->imageAvailableSemaphore) g_ctx->device.device.destroySemaphore(g_ctx->imageAvailableSemaphore);
         if (g_ctx->renderFinishedSemaphore) g_ctx->device.device.destroySemaphore(g_ctx->renderFinishedSemaphore);
         if (g_ctx->inFlightFence) g_ctx->device.device.destroyFence(g_ctx->inFlightFence);
-        
+
+        if (g_ctx->mappedDynamicMemory) {
+            g_ctx->device.device.unmapMemory(g_ctx->dynamicMemory);
+        }
+        if (g_ctx->dynamicBuffer) {
+            g_ctx->device.device.destroyBuffer(g_ctx->dynamicBuffer);
+            g_ctx->device.device.freeMemory(g_ctx->dynamicMemory);
+        }
+
         for (auto& [h, s] : g_ctx->swapchains) {
             s.shutdown(&g_ctx->device);
         }
@@ -145,6 +171,8 @@ static void vk_begin_frame() {
         if (it != g_ctx->swapchains.end() && it->second.swapchain) {
             it->second.acquireNextImage(&g_ctx->device, g_ctx->imageAvailableSemaphore);
         }
+
+        g_ctx->currentDynamicOffset = 0; // Reset the ring buffer
     } catch (const std::exception& e) {
         JAENG_LOG_ERROR("vk_begin_frame exception: {}", e.what());
     }
@@ -245,10 +273,23 @@ static bool vk_update_buffer(BufferHandle h, uint64_t offset, const void* data, 
     auto it = g_ctx->buffers.find(h);
     if (it == g_ctx->buffers.end()) return false;
     auto& b = it->second;
-    void* mapped = g_ctx->device.device.mapMemory(b.memory, offset, size);
-    memcpy(mapped, data, size);
-    g_ctx->device.device.unmapMemory(b.memory);
-    b.needsBarrier = true;
+
+    // Calculate aligned offset
+    uint32_t alignedSize = (size + g_ctx->minUniformBufferOffsetAlignment - 1) & ~(g_ctx->minUniformBufferOffsetAlignment - 1);
+
+    if (g_ctx->currentDynamicOffset + alignedSize > VulkanContext::DYNAMIC_BUFFER_SIZE) {
+        JAENG_LOG_ERROR("Dynamic buffer overflow!");
+        return false;
+    }
+
+    // Copy to ring buffer
+    void* dest = static_cast<char*>(g_ctx->mappedDynamicMemory) + g_ctx->currentDynamicOffset;
+    memcpy(dest, data, size);
+
+    // Save the offset used for this buffer handle
+    b.dynamicOffset = g_ctx->currentDynamicOffset;
+    g_ctx->currentDynamicOffset += alignedSize;
+
     return true;
 }
 

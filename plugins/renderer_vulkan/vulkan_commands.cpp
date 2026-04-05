@@ -171,7 +171,7 @@ void vk_cmd_set_pipeline(CommandListHandle, PipelineHandle h) {
         g_ctx->descriptors.getSet(1),
         g_ctx->descriptors.getSet(2)
     };
-    g_ctx->commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, p.layout, 0, sets, nullptr);
+    g_ctx->commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, p.layout, 0, sets, g_ctx->dynamicOffsets);
 }
 
 void vk_cmd_push_constants(CommandListHandle, uint32_t offset, uint32_t count, const void* d) {
@@ -210,8 +210,12 @@ void vk_cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHandle h, uint6
     }
     auto& b = it->second;
 
-    // slot maps to HLSL register bN, which maps to binding N in Set 0
-    g_ctx->descriptors.updateUniform(slot + 1, b.buffer, offset, b.size);
+    // Store the dynamic offset for this specific slot
+    g_ctx->dynamicOffsets[slot + 1] = b.dynamicOffset;
+
+    // Re-bind Set 0 with the updated dynamic offsets for the next draw call
+    vk::DescriptorSet set0 = g_ctx->descriptors.getSet(0);
+    g_ctx->commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, g_ctx->currentPipelineLayout, 0, { set0 }, g_ctx->dynamicOffsets);
 }
 
 void vk_cmd_barrier(CommandListHandle, BufferHandle h, uint32_t src_access, uint32_t dst_access) {

@@ -39,7 +39,6 @@ VSOut main(VSIn v) {
     VSOut o;
 #ifdef VULKAN
     o.pos = mul(mul(float4(v.pos, 1.0), World), ViewProj);
-    o.pos.y = -o.pos.y;
 #else
     o.pos = mul(ViewProj, mul(World, float4(v.pos, 1.0)));
 #endif

@@ -53,6 +53,16 @@ struct VulkanContext {
 
     vk::CommandPool oneShotPool;
     vk::CommandBuffer oneShotCmd;
+
+    vk::Buffer dynamicBuffer;
+    vk::DeviceMemory dynamicMemory;
+    void* mappedDynamicMemory = nullptr;
+    uint32_t currentDynamicOffset = 0;
+    static constexpr uint32_t DYNAMIC_BUFFER_SIZE = 1024 * 1024; // 1MB
+    uint32_t minUniformBufferOffsetAlignment = 256; // We will fetch this from device properties
+
+    // Track offsets for the 8 uniform bindings in Set 0
+    uint32_t dynamicOffsets[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 };
 
 extern VulkanContext* g_ctx;
