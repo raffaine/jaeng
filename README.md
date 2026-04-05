@@ -1,58 +1,82 @@
-# Jaeng, Just Another Engine
+# Jaeng (Just Another Engine)
 
-## Current State
- Pluggable Renderer Starter (Win32 + D3D12 plugin)
+## Overview & Current State
+Jaeng is a modern, cross-platform C++ game engine built with a strict focus on data locality, multithreading, and modularity. 
 
- A minimal, upgradeable engine skeleton with a **pluggable renderer**. Started on Windows with a Direct3D 12 backend loaded as a DLL, so later Vulkan/OpenGL implementations can be added without touching game or engine core.
+Currently, the engine features a fully decoupled, lock-free **three-thread architecture** and a **pluggable renderer** system. It supports Windows (Win32) and Linux (Wayland), capable of dynamically loading Direct3D 12 or Vulkan backends without exposing graphics API details to the simulation layer.
+
+### Key Architectural Pillars
+* **Multithreaded Subsystem Worlds**: The engine strictly divides responsibilities. 
+  * *Main Thread*: Exclusively handles OS message pumping and WSI (Window System Integration) events.
+  * *Simulation Thread*: Runs a deterministic, fixed-timestep game loop using a high-performance Sparse Set ECS (Entity Component System).
+  * *Render Thread*: Consumes double-buffered `RenderProxy` command queues lock-free, updating its own spatial partitioner (isolated from the ECS) to dispatch draws to the GPU.
+* **Pluggable Graphics APIs**: Backends (`renderer_d3d12`, `renderer_vulkan`) are compiled as dynamic libraries (DLL/SO) and loaded at runtime via a stable C ABI. 
+* **Data-Oriented ECS**: Components are densely packed in contiguous arrays using Sparse Sets to eliminate pointer-chasing and maximize CPU cache hits.
 
 ## Layout
 
+```text
+/engine               # Core Jaeng Library (src and headers)
+  /common             # Header-only utilities (Math, PubSub, Results, Logging)
+  /entity             # Sparse-Set Entity Component System
+  /material           # Material System & Shader Reflection
+  /mesh               # Mesh & Geometric Data Management
+  /platform           # OS Abstractions (Win32, Wayland)
+  /render             # Rendering Frontend Wrapper & API Contracts
+  /scene              # Render Proxy World & Spatial Partitioning
+  /storage            # File and Memory Storage Management
+/plugins              # Pluggable Graphics Backends
+  /renderer_d3d12     # Windows Direct3D 12 Backend
+  /renderer_vulkan    # Cross-Platform Vulkan Backend
+/apps                 # Applications built on Jaeng
+  /sandbox            # Multithreaded demo app utilizing the engine
 ```
-/engine    # Jaeng (src and headers)
-  /common    # Header-only utilities, such as a result object and pub-sub support
-    /math        # General Use Math utilities
-  /entity    # Entity Component System
-  /material  # Material System
-  /mesh      # Mesh (Geometric data) System
-  /render    # Renderer (Pluggable)
-    /public      # Stable renderer API and plugin loader
-    /frontend    # RAII wrapper used by the app/engine
-  /scene     # Scene Management and Space Partition
-  /storage   # File (Physical or Virtual) Management
-/plugins   # Available Renderer Plugins
-  /renderer_d3d12  # D3D12 backend (DLL)
-/apps      # Apps using Jaeng
-  /sandbox      # Win32 app that loads the D3D12 renderer, builds and renders a scene
+## Building
+
+Jaeng utilizes vcpkg for dependency management and CMakePresets.json to streamline cross-platform compilation.
+
+### Prerequisites
+Windows: Visual Studio 2022 (or newer), Windows SDK, and vcpkg.
+
+Linux (Wayland): GCC/Clang, Wayland development headers, Vulkan SDK, ninja-build, and vcpkg.
+
+### Windows (ARM64 / x64)
+
+Use the included presets from a Developer Command Prompt.
+
+```DOS
+:: Build for Windows using D3D12 (Default)
+cmake --preset arm64-vs
+cmake --build build/arm64-vs --config Debug
+
+:: Build for Windows forcing the Vulkan backend
+cmake --preset arm64-vs-vulkan
+cmake --build build/arm64-vs-vulkan --config Debug
+
+:: Run Sandbox
+build\arm64-vs-vulkan\bin\Debug\sandbox.exe
 ```
 
-## Build (Windows, Visual Studio)
+### Linux (Wayland / Vulkan)
 
-Prereqs: Visual Studio 2022 (or newer) with Desktop development with C++ workload and Windows 10/11 SDK. Direct3D 12 headers/libs are included in the Windows SDK.
+The Linux build leverages Ninja for highly parallelized, fast incremental builds.
 
-```
-:: From a Developer Command Prompt for VS (for an arm64)
-cmake -S . -B build -G "Visual Studio 17 2022" -A arm64 `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=arm64-windows
-cmake --build build --config Debug
+```Bash
+# Configure and build using Ninja
+cmake --preset linux-debug
+cmake --build build/linux-debug
 
-:: Run
-build\bin\Debug\sandbox.exe
-```
-
-For Ninja:
-
-```
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-build\bin\sandbox.exe
+# Run Sandbox
+./build/linux-debug/bin/sandbox
 ```
 
 ## Upgrading Path
 
-*   Add new backends as DLLs under /plugins/renderer_vulkan, /plugins/renderer_opengl and export the same LoadRenderer symbol.
-*   Replace Win32 windowing with SDL/GLFW by changing only RendererDesc::platform_window and the sandbox app.
-*   The C ABI + opaque handles keep engine stable while internals evolve.
+- Simulation Systems: Add Physics or Animation systems directly to the Simulation loop; they will sync with the Render Thread automatically via the Proxy Command Queue.
+
+- New Backends: Add new backends (e.g., Metal) under /plugins/renderer_metal exporting the standard LoadRenderer symbol.
+
+- Windowing: Additional platform layers (e.g., macOS/Cocoa) can be added cleanly under /engine/platform by fulfilling the IApplication and IWindow contracts.
 
 ## License
 
