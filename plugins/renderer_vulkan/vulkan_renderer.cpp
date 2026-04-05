@@ -271,6 +271,9 @@ static void vk_present(SwapchainHandle h) {
                 wl_display_flush(static_cast<wl_display*>(g_ctx->platformDisplay));
             }
 #endif
+        } catch (const vk::OutOfDateKHRError&) {
+            // This is expected during resize. The platform layer will issue a resize event shortly.
+            JAENG_LOG_DEBUG("vk_present: Swapchain out of date, waiting for resize event.");
         } catch (const std::exception& e) {
             JAENG_LOG_ERROR("vk_present exception: {}", e.what());
         }

@@ -40,7 +40,7 @@ static vk::SurfaceKHR create_platform_surface(vk::Instance instance, void* windo
 #endif
 }
 
-jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc) {
+jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc, vk::SwapchainKHR oldSwapchain) {
     try {
         if (!surface) {
             surface = create_platform_surface(device->instance, window, display);
@@ -88,8 +88,11 @@ jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* 
         }
 
         vk::SwapchainCreateInfoKHR swapInfo(
-            {}, surface, minImageCount, format, formats[0].colorSpace, extent, 1, 
-            vk::ImageUsageFlagBits::eColorAttachment
+            {}, surface, minImageCount, format, formats[0].colorSpace, extent, 1,
+            vk::ImageUsageFlagBits::eColorAttachment,
+            vk::SharingMode::eExclusive, {},
+            caps.currentTransform, vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            vk::PresentModeKHR::eFifo, VK_TRUE, oldSwapchain
         );
 
         swapInfo.preTransform = caps.currentTransform;
@@ -149,7 +152,37 @@ void VulkanSwapchain::shutdown(VulkanDevice* device) {
 }
 
 void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
+    // Wait for GPU to finish current operations
     device->device.waitIdle();
+
+    // Save the old swapchain handle
+    vk::SwapchainKHR oldSwapchain = swapchain;
+
+    // Destroy the image views and depth buffer (they depend on the old size)
+    if (depthView) device->device.destroyImageView(depthView);
+    if (depthImage) device->device.destroyImage(depthImage);
+    if (depthMemory) device->device.freeMemory(depthMemory);
+    for (auto v : imageViews) device->device.destroyImageView(v);
+    imageViews.clear();
+
+    // We do NOT destroy the old swapchain yet; we pass it to init()
+    swapchain = nullptr;
+
+    // Re-initialize with the new size
+    SwapchainDesc desc;
+    desc.size = size;
+    desc.format = (format == vk::Format::eR8G8B8A8Unorm) ? TextureFormat::RGBA8_UNORM : TextureFormat::BGRA8_UNORM;
+
+    // Note: window/display are ignored if 'surface' already exists, which it does.
+    auto res = init(device, nullptr, nullptr, &desc, oldSwapchain);
+    if (res.hasError()) {
+        JAENG_LOG_ERROR("Failed to recreate swapchain during resize.");
+    }
+
+    // Finally, destroy the old swapchain
+    if (oldSwapchain) {
+        device->device.destroySwapchainKHR(oldSwapchain);
+    }
 }
 
 void VulkanSwapchain::acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore) {

@@ -23,7 +23,7 @@ struct VulkanSwapchain {
     vk::ImageView depthView;
     vk::Format depthFormat;
 
-    jaeng::result<> init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc);
+    jaeng::result<> init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc, vk::SwapchainKHR oldSwapchain = nullptr);
     void shutdown(VulkanDevice* device);
     
     void resize(VulkanDevice* device, Extent2D size);
