@@ -33,5 +33,6 @@ private:
     std::shared_ptr<IMeshSystem> meshSys_;
     std::unique_ptr<SceneManager> sceneMan_;
     std::unique_ptr<IFileManager::SubscriptionT> materialSub_;
+    BufferHandle cbFrame_ = 0;
     bool shouldClose_ = false;
 };

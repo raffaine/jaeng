@@ -2,14 +2,9 @@ set(SANDBOX_SOURCES
   main.cpp
   sandbox_app.cpp
   sandbox_app.h
+  mesh_utils.cpp
+  mesh_utils.h
 )
-
-if(WIN32)
-  list(APPEND SANDBOX_SOURCES
-    mesh_utils.cpp
-    mesh_utils.h
-  )
-endif()
 
 if(WIN32)
   add_executable(sandbox WIN32 ${SANDBOX_SOURCES})
@@ -18,7 +13,7 @@ else()
 endif()
 
 target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_DEF})
-target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
 
 if(WIN32)

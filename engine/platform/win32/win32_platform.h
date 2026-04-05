@@ -55,6 +55,7 @@ public:
     void set_event_callback(EventCallback cb) override { eventCallback_ = cb; }
     
     void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) override;
+    void* get_native_display_handle() const override { return nullptr; } // Not needed for Win32
     int run(std::unique_ptr<IApplication> app) override;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

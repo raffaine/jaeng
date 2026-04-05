@@ -1,6 +1,11 @@
 // pixel.hlsl
+#ifdef VULKAN
+Texture2D textures[] : register(t0, space1);
+SamplerState samplers[] : register(s0, space2);
+#else
 Texture2D textures[] : register(t0, space0);
 SamplerState samplers[] : register(s0, space0);
+#endif
 
 cbuffer PushConstants : register(b0, space0)
 {
@@ -16,5 +21,8 @@ struct PSIn {
 
 float4 main(PSIn i) : SV_Target {
     float4 tex = textures[textureIndex].Sample(samplers[samplerIndex], i.uv);
+#ifdef VULKAN
+    tex = tex.rgba;
+#endif
     return float4(i.col, 1.0) * tex;
 }

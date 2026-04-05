@@ -35,12 +35,25 @@ enum class PrimitiveTopology : uint32_t { TriangleList=0, TriangleStrip=1, LineL
 enum class SamplerFilter : uint32_t { Nearest = 0, Linear = 1 };
 enum class AddressMode:uint32_t { Repeat = 0, ClampToEdge = 1, Mirror = 2, Border = 3 };
 
+enum AccessFlag : uint32_t {
+    Access_None = 0,
+    Access_HostWrite = 1 << 0,
+    Access_UniformRead = 1 << 1,
+    Access_VertexRead = 1 << 2,
+    Access_IndexRead = 1 << 3,
+    Access_ShaderRead = 1 << 4,
+    Access_ShaderWrite = 1 << 5,
+    Access_ColorWrite = 1 << 6,
+    Access_DepthWrite = 1 << 7
+};
+
 struct Extent2D { uint32_t width, height; };
 
 // --- Descriptors ---
 struct RendererDesc {
     GfxBackend backend;
-    void* platform_window; // HWND for Win32
+    void* platform_window; // HWND for Win32, wl_surface for Wayland
+    void* platform_display; // Optional: wl_display for Wayland
     uint32_t frame_count;  // 2 or 3
 };
 
@@ -139,6 +152,7 @@ struct ColorAttachmentDesc {
     float clear_rgba[4];
 };
 struct DepthAttachmentDesc {
+    TextureHandle tex;
     float clear_d;
 };
 
@@ -157,6 +171,7 @@ typedef struct RendererAPI {
     void (*resize_swapchain)(SwapchainHandle, Extent2D);
     void (*destroy_swapchain)(SwapchainHandle);
     TextureHandle (*get_current_backbuffer)(SwapchainHandle);
+    TextureHandle (*get_depth_buffer)(SwapchainHandle);
      
     // resources
     BufferHandle (*create_buffer)(const BufferDesc*, const void* initial_data);
@@ -186,6 +201,7 @@ typedef struct RendererAPI {
     
     void (*cmd_bind_uniform)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);    
     void (*cmd_push_constants)(CommandListHandle, uint32_t offset, uint32_t count, const void* data);
+    void (*cmd_barrier)(CommandListHandle, BufferHandle, uint32_t src_access, uint32_t dst_access);
     
     void (*cmd_set_pipeline)(CommandListHandle, PipelineHandle);
     void (*cmd_set_vertex_buffer)(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);

@@ -6,6 +6,8 @@
         { "name": "directx-dxc", "platform": "windows" },
         { "name": "glm"},
         "nlohmann-json",
-        "json-schema-validator"
+        "json-schema-validator",
+        "vulkan-headers",
+        "vulkan-loader"
     ]
 }

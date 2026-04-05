@@ -2,6 +2,7 @@
 
 #include "platform/public/platform_api.h"
 #include <wayland-client.h>
+#include <libdecor.h>
 #include <string>
 
 // Forward declare xdg/libdecor types
@@ -36,6 +37,7 @@ public:
     void attach_dummy_buffer();
 
 private:
+    static const struct libdecor_frame_interface decor_frame_interface_;
     WaylandPlatform* platform_ = nullptr;
     wl_surface* surface_ = nullptr;
     libdecor_frame* frame_ = nullptr;

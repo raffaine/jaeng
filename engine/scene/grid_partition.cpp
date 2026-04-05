@@ -20,7 +20,8 @@ std::vector<ComponentPack> GridPartitioner::queryVisible(const jaeng::math::AABB
         cps.push_back(ComponentPack{
             .transform = ecs->getComponent<Transform>(e),
             .mesh = ecs->getComponent<MeshHandle>(e),
-            .material = ecs->getComponent<MaterialHandle>(e)
+            .material = ecs->getComponent<MaterialHandle>(e),
+            .constant = ecs->getComponent<BufferHandle>(e)
         });
     }
     return cps;

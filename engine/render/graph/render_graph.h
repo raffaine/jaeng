@@ -8,17 +8,8 @@
 
 // Render Graph v0 (single target, color + depth):
 // - Declares passes that bind one or more color render targets.
-//   - Only uses first and expects render target
 // - Depth is optionally declared on passes and only support defaults target.
 // - Uses only functions that exist in the current RendererAPI.
-//
-// Execution order:
-//   begin_frame()
-//   cmd list open
-//   for each pass:
-//       cmd_begin_rendering(rtv/dsv), record(), cmd_end_rendering()
-//   close, submit, present
-//   end_frame()
 
 struct RGColorTarget {
     TextureHandle tex = 0;
@@ -67,32 +58,28 @@ public:
 
     // v0 compile: no-op (hook for validation later).
     bool compile() const {
-        // TODO: validate overlapping writes, empty RT lists, etc.
         return true;
     }
 
     // Execute the graph for the current frame.
-    void execute(RendererAPI& gfx, SwapchainHandle swap, TextureHandle defaultDepth = 0, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
-        if (!gfx.begin_frame || !gfx.begin_commands || !gfx.cmd_begin_pass ||
-            !gfx.cmd_end_pass || !gfx.end_commands || !gfx.submit ||
-            !gfx.present || !gfx.end_frame) {
-            // Missing function pointers; fail fast in debug builds.
+    void execute(RendererAPI& gfx, TextureHandle defaultDepth = 0, std::function<void(RendererAPI& gfx)> pre_record = nullptr) {
+        if (!gfx.begin_commands || !gfx.cmd_begin_pass ||
+            !gfx.cmd_end_pass || !gfx.end_commands || !gfx.submit) {
             return;
         }
 
-        gfx.begin_frame();
         if (pre_record) {
             pre_record(gfx);
         }
 
         CommandListHandle cmd = gfx.begin_commands();
+        if (cmd == 0) return;
 
         for (size_t pi = 0; pi < passes_.size(); ++pi) {
             const auto& pass = passes_[pi];
-            // Clear on first pass, load on subsequent passes
+            
             auto load = (pi == 0)? LoadOp::Clear : LoadOp::Load;
 
-            // Begin color-only rendering against provided RTs.
             std::vector<ColorAttachmentDesc> atts;
             atts.reserve(pass.colorTargets.size());
             for (const auto& ct : pass.colorTargets) {
@@ -106,10 +93,10 @@ public:
             DepthAttachmentDesc depthOps{};
             bool useDepth = (pass.depthTarget.tex != 0) || (defaultDepth != 0);
             if (useDepth) {
+                depthOps.tex = (pass.depthTarget.tex != 0) ? pass.depthTarget.tex : defaultDepth;
                 depthOps.clear_d = pass.depthTarget.clear_depth;
             }
 
-            // Begin color and depth rendering against provided RTs.
             gfx.cmd_begin_pass(cmd, load, atts.data(), static_cast<uint32_t>(atts.size()), useDepth ? &depthOps : nullptr);
 
             if (pass.record) {
@@ -127,8 +114,6 @@ public:
 
         gfx.end_commands(cmd);
         gfx.submit(&cmd, 1);
-        gfx.present(swap);
-        gfx.end_frame();
     }
 
 private:

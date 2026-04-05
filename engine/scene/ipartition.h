@@ -10,6 +10,7 @@ struct ComponentPack {
     Transform* transform;
     MeshHandle* mesh;
     MaterialHandle* material;
+    BufferHandle* constant;
 };
 
 // Minimal spatial partitioner interface

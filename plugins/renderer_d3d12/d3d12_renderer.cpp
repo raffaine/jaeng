@@ -261,6 +261,8 @@ jaeng::result<SwapchainHandle> RendererD3D12::create_swapchain(const SwapchainDe
 
 jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSize)
 {
+    if (newSize.width == 0 || newSize.height == 0) return {};
+    
     // Not safe to take the lock if presenting
     JAENG_ERROR_IF(state_ == RendererState::Presenting, jaeng::error_code::resource_not_ready, "[Renderer] Swapchain is presenting, defer this call.");
     std::lock_guard<std::mutex> lock(mtx_);
@@ -883,6 +885,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { if(!g_renderer->resize_swapchain(s,e).logError()); };
     api.destroy_swapchain= [](SwapchainHandle s) { g_renderer->destroy_swapchain(s); };
     api.get_current_backbuffer = [](SwapchainHandle s) { return g_renderer->get_current_backbuffer(s); };
+    api.get_depth_buffer = [](SwapchainHandle s) { return (TextureHandle)1; }; // Special handle for swapchain depth
 
     api.create_buffer = [](const BufferDesc* d, const void* p) { return g_renderer->create_buffer(d,p).orValue(0); };
     api.destroy_buffer= [](BufferHandle h) { g_renderer->destroy_buffer(h); };
@@ -910,6 +913,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
 
     api.cmd_bind_uniform = [](CommandListHandle c, uint32_t s, BufferHandle h, uint64_t o) { g_renderer->cmd_bind_uniform(c, s, h, o); };
     api.cmd_push_constants = [](CommandListHandle c, uint32_t off, uint32_t count, const void* d) { g_renderer->cmd_push_constants(c, off, count, d); };
+    api.cmd_barrier = [](CommandListHandle c, BufferHandle b, uint32_t src, uint32_t dst) { /* no-op for now */ };
 
     api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };
     api.cmd_set_vertex_buffer = [](CommandListHandle c, uint32_t s, BufferHandle b, uint64_t o) { g_renderer->cmd_set_vertex_buffer(c,s,b,o); };

@@ -88,6 +88,8 @@ public:
     
     virtual void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) = 0;
     
+    virtual void* get_native_display_handle() const = 0;
+
     // The entry point abstraction: takes application and enters the loop
     virtual int run(std::unique_ptr<IApplication> app) = 0;
 };

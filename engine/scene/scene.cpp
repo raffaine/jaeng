@@ -90,20 +90,17 @@ struct CBMaterial {
     float metallic;
 };
 
-void Scene::renderScene(RenderGraph& rg, SwapchainHandle swap)
+void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer)
 {
-    // Acquire Graphics to retrieve the current back buffer on swapchain to be the render target
-    auto gfx = renderer.lock();
-    if (!gfx) return;
-
     // 1) Clear pass
     rg.add_pass("Clear", { {
-        .tex = gfx->get_current_backbuffer(swap),
+        .tex = backbuffer,
         .clear_rgba = { 0.07f, 0.08f, 0.12f, 1.0f }
-    } }, { .tex = 1, .clear_depth = 1.0f }, nullptr);
+    } }, { .tex = depthBuffer, .clear_depth = 1.0f }, nullptr);
+
     // 2) Forward pass
     rg.add_pass("Forward", 
-        { { .tex = gfx->get_current_backbuffer(swap) } }, { .tex = 1 /*enable depth*/ },
+        { { .tex = backbuffer } }, { .tex = depthBuffer },
         [&](const RGPassContext& ctx) {
             auto matSysRef = matSys.lock();
             if (!matSysRef) return;

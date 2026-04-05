@@ -1,6 +1,6 @@
 #include "sandbox_app.h"
-#ifdef JAENG_WIN32
 #include "mesh_utils.h"
+#ifdef JAENG_WIN32
 #include "pix3.h"
 #endif
 
@@ -12,6 +12,8 @@
 
 #ifdef JAENG_WIN32
 #include "basic_reflect.h"
+#else
+#include "basic.h"
 #endif
 
 #include <glm/glm.hpp>
@@ -91,11 +93,10 @@ static const char* materialFileData = R"(
 {
   "name": "CheckerboardMaterial",
   "shader": {
-    "vertex": "dummy_vs.dxil",
-    "pixel": "dummy_ps.dxil",
-    "reflection": "dummy_reflect.json"
-  },
-  "textures": [
+  "vertex": "/mnt/c/dev/repos/jaeng/shaders/compiled/basic_vs.spv",
+  "pixel": "/mnt/c/dev/repos/jaeng/shaders/compiled/basic_ps.spv",
+  "reflection": "/mnt/c/dev/repos/jaeng/shaders/include/basic.json"
+  },  "textures": [
     {
       "path": "/mem/checker.raw",
       "width": 256,
@@ -150,7 +151,6 @@ static const char* materialFileData = R"(
 
 SandboxApp::SandboxApp(IPlatform& platform) 
     : platform_(platform) 
-    , swap_(0)
     , shouldClose_(false)
 {}
 
@@ -172,7 +172,7 @@ bool SandboxApp::init() {
     GfxBackend backend = GfxBackend::Vulkan;
 #endif
 
-    if (!renderer_.initialize(backend, window_->get_native_handle(), 3)) {
+    if (!renderer_.initialize(backend, window_->get_native_handle(), platform_.get_native_display_handle(), 3)) {
         platform_.show_message_box("Error", "Failed to initialize renderer.", MessageBoxType::Error);
         return false;
     }
@@ -180,6 +180,9 @@ bool SandboxApp::init() {
     DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
     SwapchainDesc    swapDesc{{1280u, 720u}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo};
     swap_ = renderer_->create_swapchain(&swapDesc);
+    if (swap_ == 0) {
+        return false;
+    }
 
     fileMan_ = std::make_shared<FileManager>();
     fileMan_->initialize().orElse([this](auto) {
@@ -203,26 +206,38 @@ bool SandboxApp::init() {
 
     setupEntities();
 
+    BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
+    cbFrame_ = renderer_->create_buffer(&cbDesc, nullptr);
+    if (auto* scene = sceneMan_->getScene("Test")) {
+        scene->setCbFrame(cbFrame_);
+    }
+
     return true;
 }
 
 void SandboxApp::update() {
     if (!window_) return;
+    
+    renderer_->begin_frame();
+    TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
+    TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
+
     RenderGraph graph;
     Scene* scene = sceneMan_->getScene("Test");
     if (scene) {
         scene->buildDrawList({});
-        scene->renderScene(graph, swap_);
+        scene->renderScene(graph, backbuffer, depthbuffer);
         graph.compile();
-        graph.execute(*renderer_.gfx, swap_, 0, nullptr);
+        graph.execute(*renderer_.gfx, depthbuffer, nullptr);
         renderer_->present(swap_);
+        renderer_->end_frame();
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
 
 void SandboxApp::on_event(const Event& ev) {
     if (ev.type == Event::Type::WindowResize) {
-        if (swap_ > 0) {
+        if (swap_ > 0 && renderer_.gfx) {
             renderer_->resize_swapchain(swap_, { ev.resize.width, ev.resize.height });
         }
     } else if (ev.type == Event::Type::WindowClose) {
@@ -231,6 +246,10 @@ void SandboxApp::on_event(const Event& ev) {
 }
 
 void SandboxApp::shutdown() {
+    sceneMan_.reset();
+    meshSys_.reset();
+    matSys_.reset();
+    entityMan_.reset();
     renderer_.shutdown();
 }
 
@@ -247,19 +266,8 @@ void SandboxApp::setupResources() {
     fileMan_->registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size() * sizeof(uint32_t));
     fileMan_->registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
-#ifndef JAENG_WIN32
-    // Dummy shader files
-    fileMan_->registerMemoryFile("dummy_vs.dxil", "VS", 2);
-    fileMan_->registerMemoryFile("dummy_ps.dxil", "PS", 2);
-#endif
-
-#ifdef JAENG_WIN32
     auto meshRawData = createCubeMeshBinary();
     fileMan_->registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
-#else
-    // Dummy empty data for now on linux
-    fileMan_->registerMemoryFile("/mem/mesh-test.raw", "DUMMY", 5);
-#endif
 }
 
 void SandboxApp::setupEntities() {
@@ -267,9 +275,12 @@ void SandboxApp::setupEntities() {
     for(int i=0; i<4; ++i) testEntities[i] = entityMan_->createEntity();
 
     if (auto meshHandle = meshSys_->loadMesh("/mem/mesh-test.raw").logError()) {
-        for (int i = 0; i < 4; i++) entityMan_->addComponent<MeshHandle>(testEntities[i]) = meshHandle.value();
+        for (int i = 0; i < 4; i++) {
+            entityMan_->addComponent<MeshHandle>(testEntities[i]) = meshHandle.value();
+            BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
+            entityMan_->addComponent<BufferHandle>(testEntities[i]) = renderer_->create_buffer(&cbDesc, nullptr);
+        }
     }
-
 #ifdef JAENG_WIN32
     if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
@@ -281,15 +292,12 @@ void SandboxApp::setupEntities() {
         });
     }
 #else
-    // Still need a dummy layout to satisfy createMaterial
-    VertexAttributeDesc attrs[] = { {0, 0, 0} };
-    VertexLayoutDesc dummyLayout{ sizeof(RAWFormatVertex), attrs, 1 };
-    const char* dummySemantics[] = { "POSITION" };
-    if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &dummyLayout, 1, dummySemantics).logError()) {
+    if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
         for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
     }
 #endif
+
 
     entityMan_->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
     entityMan_->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};

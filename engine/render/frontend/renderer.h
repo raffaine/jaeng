@@ -1,10 +1,14 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <filesystem>
 #include "render/public/renderer_plugin.h"
+#include "common/logging.h"
 
 #ifdef JAENG_LINUX
 #include <wayland-client.h>
+#include <unistd.h>
 static void* g_null_window_handle = nullptr;
 static void null_present(SwapchainHandle) {
     if (g_null_window_handle) {
@@ -15,77 +19,58 @@ static void null_present(SwapchainHandle) {
 
 class Renderer {
 public:
-    bool initialize(GfxBackend backend, void* window_handle, uint32_t frame_count = 3) {
+    bool initialize(GfxBackend backend, void* window_handle, void* display_handle, uint32_t frame_count = 3) {
 #ifdef JAENG_WIN32
         if (backend == GfxBackend::D3D12) {
-            if (!plugin.load(L"renderer_d3d12.dll")) return false;
-            gfx = plugin.api;
+            if (plugin.load(L"renderer_d3d12.dll")) {
+                gfx = plugin.api;
+                JAENG_LOG_INFO("Loaded D3D12 renderer plugin.");
+            }
+        } else if (backend == GfxBackend::Vulkan) {
+            if (plugin.load(L"renderer_vulkan.dll")) {
+                gfx = plugin.api;
+                JAENG_LOG_INFO("Loaded Vulkan renderer plugin.");
+            }
         }
-#endif
-        if (!gfx) {
-            // Null/Mock backend for platform transition
-            gfx = std::make_shared<RendererAPI>();
-            *gfx = {}; // Clear all pointers
-            
-            // Minimal no-op implementation
-            gfx->init = [](const RendererDesc*) { return true; };
-            gfx->shutdown = []() {};
-            gfx->begin_frame = []() {};
-            gfx->end_frame = []() {};
-            gfx->wait_idle = []() {};
-
-            gfx->create_swapchain = [](const SwapchainDesc*) { return (SwapchainHandle)1; };
-            gfx->resize_swapchain = [](SwapchainHandle, Extent2D) {};
-            gfx->destroy_swapchain = [](SwapchainHandle) {};
-            gfx->get_current_backbuffer = [](SwapchainHandle) { return (TextureHandle)1; };
-
-            gfx->create_buffer = [](const BufferDesc*, const void*) { return (BufferHandle)1; };
-            gfx->destroy_buffer = [](BufferHandle) {};
-            gfx->update_buffer = [](BufferHandle, uint64_t, const void*, uint64_t) { return true; };
-
-            gfx->create_texture = [](const TextureDesc*, const void*) { return (TextureHandle)1; };
-            gfx->destroy_texture = [](TextureHandle) {};
-            gfx->create_sampler = [](const SamplerDesc*) { return (SamplerHandle)1; };
-            gfx->destroy_sampler = [](SamplerHandle) {};
-
-            gfx->get_texture_index = [](TextureHandle) { return 0u; };
-            gfx->get_sampler_index = [](SamplerHandle) { return 0u; };
-
-            gfx->create_shader_module = [](const ShaderModuleDesc*) { return (ShaderModuleHandle)1; };
-            gfx->destroy_shader_module = [](ShaderModuleHandle) {};
-            gfx->create_vertex_layout = [](const VertexLayoutDesc*) { return (VertexLayoutHandle)1; };
-            gfx->create_graphics_pipeline = [](const GraphicsPipelineDesc*) { return (PipelineHandle)1; };
-            gfx->destroy_pipeline = [](PipelineHandle) {};
-
-            gfx->begin_commands = []() { return (CommandListHandle)1; };
-            gfx->cmd_begin_pass = [](CommandListHandle, LoadOp, const ColorAttachmentDesc*, uint32_t, const DepthAttachmentDesc*) {};
-            gfx->cmd_end_pass = [](CommandListHandle) {};
-            gfx->cmd_bind_uniform = [](CommandListHandle, uint32_t, BufferHandle, uint64_t) {};
-            gfx->cmd_push_constants = [](CommandListHandle, uint32_t, uint32_t, const void*) {};
-            gfx->cmd_set_pipeline = [](CommandListHandle, PipelineHandle) {};
-            gfx->cmd_set_vertex_buffer = [](CommandListHandle, uint32_t, BufferHandle, uint64_t) {};
-            gfx->cmd_set_index_buffer = [](CommandListHandle, BufferHandle, bool, uint64_t) {};
-            gfx->cmd_draw = [](CommandListHandle, uint32_t, uint32_t, uint32_t, uint32_t) {};
-            gfx->cmd_draw_indexed = [](CommandListHandle, uint32_t, uint32_t, uint32_t, int32_t, uint32_t) {};
-            gfx->end_commands = [](CommandListHandle) {};
-
-            gfx->submit = [](CommandListHandle*, uint32_t) {};
-            
-#ifdef JAENG_LINUX
-            g_null_window_handle = window_handle;
-            gfx->present = null_present;
 #else
-            gfx->present = [](SwapchainHandle) {};
+        if (backend == GfxBackend::Vulkan) {
+            std::string pluginPath = "librenderer_vulkan.so";
+            try {
+                auto exePath = std::filesystem::read_symlink("/proc/self/exe");
+                pluginPath = (exePath.parent_path() / "librenderer_vulkan.so").string();
+            } catch (...) {}
+
+            if (plugin.load(pluginPath.c_str()) || 
+                plugin.load("librenderer_vulkan.so") || 
+                plugin.load("./librenderer_vulkan.so")) {
+                gfx = plugin.api;
+                JAENG_LOG_INFO("Loaded Vulkan renderer plugin.");
+            } else {
+                JAENG_LOG_WARN("Failed to load librenderer_vulkan.so");
+            }
+        }
 #endif
+
+        if (gfx) {
+            RendererDesc desc{};
+            desc.platform_window = window_handle;
+            desc.platform_display = display_handle;
+            desc.frame_count = frame_count;
+            return gfx->init(&desc);
         }
 
-        RendererDesc d{ backend, window_handle, frame_count };
-        return (gfx->init) ? gfx->init(&d) : false;
+        JAENG_LOG_INFO("Initializing Null/Mock renderer backend.");
+        gfx = std::make_shared<RendererAPI>();
+        gfx->init = [](const RendererDesc*) { return true; };
+#ifdef JAENG_LINUX
+        g_null_window_handle = window_handle;
+        gfx->present = null_present;
+#endif
+        return true;
     }
 
     void shutdown() {
         if (!gfx) return;
-        if (gfx->wait_idle) gfx->wait_idle();
         if (gfx->shutdown) gfx->shutdown();
         plugin.unload();
     }

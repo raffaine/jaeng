@@ -26,8 +26,10 @@ public:
     // Builts batched draw commands for Render Graph
     void buildDrawList(const jaeng::math::AABB&);
 
+    void setCbFrame(BufferHandle h) { cbFrame = h; }
+
     // Creates the needed passes on Render Graph
-    void renderScene(RenderGraph& rg, SwapchainHandle swap);
+    void renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer = 0);
 
     // Access partitioner for queries
     ISpatialPartitioner* getPartitioner() const { return partitioner.get(); }
@@ -65,6 +67,7 @@ private:
 
     // Draw List created for Frame (follows latest build command)
     std::vector<DrawBatch> drawList;
+    BufferHandle cbFrame = 0;
     PipelineCache* pipelineCache;
     std::weak_ptr<IMeshSystem> meshSys;
     std::weak_ptr<IMaterialSystem> matSys;
