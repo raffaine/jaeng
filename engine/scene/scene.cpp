@@ -31,16 +31,16 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
 
 
     // Collect the ComponentPack of all entities in the volume and iterate
-    auto entities = partitioner->queryVisible(volume);
-    for (auto& e : entities) {
+    auto proxies = partitioner->queryVisible(volume);
+    for (auto& proxy : proxies) {
+        auto* mesh  = meshSystem->getMesh(proxy.mesh).orValue(nullptr);
+        auto* matBg = matSystem->getBindData(proxy.material).orValue(nullptr);
+
         // Collet the Material Bindings and Mesh Data, if not available, skip
-        if (!e.material || !e.mesh) continue;
-        auto* mesh  = meshSystem->getMesh(*e.mesh).orValue(nullptr);
-        auto* matBg = matSystem->getBindData(*e.material).orValue(nullptr);
         if(!mesh || !matBg) continue;
 
         // Creates or Retrieves the Pipeline
-        PipelineCache::Key pk { .material = *e.material, .topology = mesh->topology };
+        PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology };
         auto pso = pipelineCache->getPipeline(pk);
         if (!pso.has_value()) {
             auto gfx = renderer.lock();
@@ -54,11 +54,9 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
 
         // Create the transform matrix for entity
         auto worldMat = glm::identity<glm::mat4>();
-        if (e.transform) {
-            worldMat = glm::translate(worldMat, e.transform->position);
-            worldMat *= glm::toMat4(e.transform->rotation);
-            worldMat = glm::scale(worldMat, e.transform->scale);
-        }
+        worldMat = glm::translate(worldMat, proxy.transform.position);
+        worldMat *= glm::toMat4(proxy.transform.rotation);
+        worldMat = glm::scale(worldMat, proxy.transform.scale);
 
         // TODO: Sort data in a way that shared pipeline and group bindings are grouped together in the same DrawBatch
         // for now just create Batches with one packet on it
@@ -72,7 +70,7 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
             dp.constant = matBg->constantBuffers[2];
         }
 
-        DrawBatch db { .pipeline = *pso, .material = *e.material, .constant = matBg->constantBuffers[0] };
+        DrawBatch db { .pipeline = *pso, .material = proxy.material, .constant = matBg->constantBuffers[0] };
         // In case shader expects frame constant buffer
         if (matBg->constantBuffers.size() >= 2) {
             db.cbFrame = matBg->constantBuffers[1];

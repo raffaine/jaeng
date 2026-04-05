@@ -1,28 +1,22 @@
 #include "grid_partition.h"
 
-void GridPartitioner::build()
-{}
+void GridPartitioner::addOrUpdate(const RenderProxy& proxy) {
+    proxies_[proxy.id] = proxy;
+}
 
-void GridPartitioner::rebuild()
-{}
+void GridPartitioner::remove(uint32_t id) {
+    proxies_.erase(id);
+}
 
-void GridPartitioner::reset()
-{}
+void GridPartitioner::build() {}
+void GridPartitioner::rebuild() {}
+void GridPartitioner::reset() { proxies_.clear(); }
 
-std::vector<ComponentPack> GridPartitioner::queryVisible(const jaeng::math::AABB& volume) const
-{
-    auto ecs = entitySource.lock();
-    if (!ecs) return {};
-
-    const auto& entities = ecs->getAllEntities<Transform>();
-    std::vector<ComponentPack> cps;
-    for (auto e : entities) {
-        cps.push_back(ComponentPack{
-            .transform = ecs->getComponent<Transform>(e),
-            .mesh = ecs->getComponent<MeshHandle>(e),
-            .material = ecs->getComponent<MaterialHandle>(e),
-            .constant = ecs->getComponent<BufferHandle>(e)
-        });
+std::vector<RenderProxy> GridPartitioner::queryVisible(const jaeng::math::AABB& /*volume*/) const {
+    std::vector<RenderProxy> result;
+    result.reserve(proxies_.size());
+    for (const auto& [id, proxy] : proxies_) {
+        result.push_back(proxy);
     }
-    return cps;
+    return result;
 }

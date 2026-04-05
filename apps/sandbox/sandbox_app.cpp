@@ -123,7 +123,7 @@ bool SandboxApp::init() {
 
     const auto aspect = 1280.f/720.f;
     auto camera = std::make_unique<PerspectiveCamera>(glm::vec3{3, 3, 3}, glm::vec3{0, 0, 0}, glm::vec3{0, 1, 0}, aspect);
-    sceneMan_->createScene("Test", std::make_unique<GridPartitioner>(entityMan_), std::move(camera))
+    sceneMan_->createScene("Test", std::make_unique<GridPartitioner>(), std::move(camera))
         .orElse([this](auto) -> Scene* {
             platform_.show_message_box("Error", "Failed to create Test Scene.", MessageBoxType::Error);
             return nullptr;
@@ -141,9 +141,6 @@ bool SandboxApp::init() {
 }
 
 void SandboxApp::tick(float dt) {
-    // Lock the ECS while the simulation updates transforms
-    std::lock_guard<std::mutex> lock(ecsMutex_);
-
     for (size_t i = 0; i < testEntities_.size(); ++i) {
         if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
             float angle = (simTime_ * 1.5f) + (i * glm::half_pi<float>());
@@ -155,12 +152,28 @@ void SandboxApp::tick(float dt) {
         }
     }
     simTime_ += dt;
-    stateChanged_ = true;
 }
 
 void SandboxApp::extract_render_state() {
-    // Left intentionally blank for now. 
-    // We will use this in the next refactor to copy the state lock-free.
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    renderQueue_.clear(); // Double buffering: wipe the old commands
+
+    const auto& entities = entityMan_->getAllEntities<Transform>();
+    for (auto e : entities) {
+        auto* t = entityMan_->getComponent<Transform>(e);
+        auto* mesh = entityMan_->getComponent<MeshHandle>(e);
+        auto* mat = entityMan_->getComponent<MaterialHandle>(e);
+        auto* cb = entityMan_->getComponent<BufferHandle>(e);
+
+        if (t && mesh && mat) {
+            // Push an Update command mapping the EntityID directly to the ProxyID
+            renderQueue_.push_back({
+                RenderCommandType::Update,
+                { static_cast<uint32_t>(e), *t, *mesh, *mat, cb ? *cb : 0 },
+                static_cast<uint32_t>(e)
+                });
+        }
+    }
 }
 
 void SandboxApp::render() {
@@ -169,28 +182,37 @@ void SandboxApp::render() {
     // Flush any pending resizes safely on the Render Thread
     renderer_.process_pending_resizes();
 
+    Scene* scene = sceneMan_->getScene("Test");
+    if (scene) {
+        // Lock the queue to extract needed commands
+        std::vector<RenderCommand> localQueue;
+        {
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            localQueue = std::move(renderQueue_);
+        }
+
+        // Process commands outside of lock
+        for (const auto& cmd : localQueue) {
+            if (cmd.type == RenderCommandType::Update) {
+                scene->addOrUpdateProxy(cmd.proxy);
+            }
+            else if (cmd.type == RenderCommandType::Destroy) {
+                scene->removeProxy(cmd.id);
+            }
+        }
+
+        // Builds the Scene partition and generate draw list
+        scene->getPartitioner()->build();
+        scene->buildDrawList({});
+    }
+
     renderer_->begin_frame();
     TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
     TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
 
     RenderGraph graph;
+    if (scene) scene->renderScene(graph, backbuffer, depthbuffer);
 
-    {
-        // Lock the ECS ONLY while building the render graph
-        std::lock_guard<std::mutex> lock(ecsMutex_);
-        Scene* scene = sceneMan_->getScene("Test");
-        if (scene) {
-            if (stateChanged_) {
-                scene->getPartitioner()->build();
-                stateChanged_ = false;
-            }
-
-            scene->buildDrawList({});
-            scene->renderScene(graph, backbuffer, depthbuffer);
-        }
-    } // ECS IS UNLOCKED HERE. The Sim Thread is free to tick again!
-
-    // The heavy lifting (command buffer recording & execution) happens totally in parallel
     graph.compile();
     graph.execute(*renderer_.gfx, depthbuffer, nullptr);
     renderer_->present(swap_);

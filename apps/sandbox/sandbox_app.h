@@ -12,6 +12,14 @@
 #include <vector>
 #include <mutex>
 
+enum class RenderCommandType { Update, Destroy };
+
+struct RenderCommand {
+    RenderCommandType type;
+    RenderProxy proxy; // Valid if Update
+    uint32_t id;       // Valid if Destroy
+};
+
 class SandboxApp : public jaeng::platform::IApplication {
 public:
     SandboxApp(jaeng::platform::IPlatform& platform);
@@ -48,6 +56,6 @@ private:
     float simTime_ = 0.0f;
 
     // Thread Sync
-    std::mutex ecsMutex_;
-    bool stateChanged_ = false;
+    std::mutex queueMutex_;
+    std::vector<RenderCommand> renderQueue_;
 };
