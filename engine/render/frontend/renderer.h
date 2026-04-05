@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -79,8 +80,32 @@ public:
         return gfx.get();
     }
 
+    void queue_resize(SwapchainHandle h, uint32_t width, uint32_t height) {
+        resize_handle_ = h;
+        new_width_.store(width, std::memory_order_relaxed);
+        new_height_.store(height, std::memory_order_relaxed);
+        pending_resize_.store(true, std::memory_order_release);
+    }
+
+    void process_pending_resizes() {
+        if (pending_resize_.exchange(false, std::memory_order_acquire)) {
+            uint32_t w = new_width_.load(std::memory_order_relaxed);
+            uint32_t h = new_height_.load(std::memory_order_relaxed);
+            if (gfx && gfx->resize_swapchain && resize_handle_ > 0 && w > 0 && h > 0) {
+                // Safely execute the backend resize on the current thread
+                gfx->resize_swapchain(resize_handle_, { w, h });
+            }
+        }
+    }
+
     std::shared_ptr<RendererAPI> gfx{};
     
 private:
     RendererPlugin plugin;
+
+    // Safely handle Resizes as they bridge threads (Main and Render)
+    std::atomic<bool> pending_resize_{ false };
+    std::atomic<uint32_t> new_width_{ 0 };
+    std::atomic<uint32_t> new_height_{ 0 };
+    SwapchainHandle resize_handle_{ 0 };
 };

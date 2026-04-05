@@ -1,9 +1,13 @@
 #pragma once
 
-#include <stdint.h>
-#include <string>
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
 #include "common/result.h"
 
 namespace jaeng::platform {
@@ -71,11 +75,44 @@ enum class MessageBoxType {
 class IApplication {
 public:
     virtual ~IApplication() = default;
+
     virtual bool init() = 0;
-    virtual void update() = 0;
     virtual void on_event(const Event& ev) = 0;
     virtual void shutdown() = 0;
     virtual bool should_close() const = 0;
+
+    void set_tick_rate(uint32_t hz);
+
+    // Main thread entry and exit points
+    void start_engine_threads();
+    void stop_engine_threads();
+
+protected:
+    // 1. Simulation Phase (Sim Thread)
+    virtual void tick(float dt) = 0;
+
+    // 2. Extraction Phase (Sim Thread -> Render Thread sync point)
+    // Copies necessary data from ECS into a Render Packet
+    virtual void extract_render_state() = 0;
+
+    // 3. Render Phase (Render Thread)
+    // Consumes the Render Packet and dispatches to the GPU
+    virtual void render() = 0;
+
+private:
+    void simulation_loop();
+    void render_loop();
+
+    std::jthread simThread_;
+    std::jthread renderThread_;
+    std::atomic<bool> isRunning_ = false;
+
+    float fixedDt_ = 1.0f / 60.0f;
+
+    // Synchronization primitives for the frame swap
+    std::mutex stateMutex_;
+    std::condition_variable renderCv_;
+    std::atomic<bool> frameReady_ = false;
 };
 
 class IPlatform {

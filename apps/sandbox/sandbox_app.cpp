@@ -140,52 +140,110 @@ bool SandboxApp::init() {
     return true;
 }
 
-void SandboxApp::update() {
-    if (!window_) return;
+void SandboxApp::tick(float dt) {
+    // Lock the ECS while the simulation updates transforms
+    std::lock_guard<std::mutex> lock(ecsMutex_);
 
-    // Calculate elapsed time in seconds
-    float time = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime_).count();
-
-    // Update transforms for orbit and pulse
     for (size_t i = 0; i < testEntities_.size(); ++i) {
         if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
-            // 90-degree offset per cube
-            float angle = (time * 1.5f) + (i * glm::half_pi<float>());
-            // Sine wave to make them drift apart and back together
-            float radius = 0.5f + std::sin(time * 2.0f) * 0.25f;
+            float angle = (simTime_ * 1.5f) + (i * glm::half_pi<float>());
+            float radius = 0.5f + std::sin(simTime_ * 2.0f) * 0.25f;
 
             transform->position.x = std::cos(angle) * radius;
             transform->position.y = std::sin(angle) * radius;
-
-            // Add a continuous tumble
-            transform->rotation = glm::angleAxis(time * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
+            transform->rotation = glm::angleAxis(simTime_ * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
         }
     }
-    
+    simTime_ += dt;
+    stateChanged_ = true;
+}
+
+void SandboxApp::extract_render_state() {
+    // Left intentionally blank for now. 
+    // We will use this in the next refactor to copy the state lock-free.
+}
+
+void SandboxApp::render() {
+    if (!window_) return;
+
+    // Flush any pending resizes safely on the Render Thread
+    renderer_.process_pending_resizes();
+
     renderer_->begin_frame();
     TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
     TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
 
     RenderGraph graph;
-    Scene* scene = sceneMan_->getScene("Test");
-    if (scene) {
-        // Rebuild the spatial partitioner so the new positions are registered
-        scene->getPartitioner()->build();
 
-        scene->buildDrawList({});
-        scene->renderScene(graph, backbuffer, depthbuffer);
-        graph.compile();
-        graph.execute(*renderer_.gfx, depthbuffer, nullptr);
-        renderer_->present(swap_);
-        renderer_->end_frame();
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    {
+        // Lock the ECS ONLY while building the render graph
+        std::lock_guard<std::mutex> lock(ecsMutex_);
+        Scene* scene = sceneMan_->getScene("Test");
+        if (scene) {
+            if (stateChanged_) {
+                scene->getPartitioner()->build();
+                stateChanged_ = false;
+            }
+
+            scene->buildDrawList({});
+            scene->renderScene(graph, backbuffer, depthbuffer);
+        }
+    } // ECS IS UNLOCKED HERE. The Sim Thread is free to tick again!
+
+    // The heavy lifting (command buffer recording & execution) happens totally in parallel
+    graph.compile();
+    graph.execute(*renderer_.gfx, depthbuffer, nullptr);
+    renderer_->present(swap_);
+    renderer_->end_frame();
 }
+
+//void SandboxApp::update() {
+//    if (!window_) return;
+//
+//    // Calculate elapsed time in seconds
+//    float time = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime_).count();
+//
+//    // Update transforms for orbit and pulse
+//    for (size_t i = 0; i < testEntities_.size(); ++i) {
+//        if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
+//            // 90-degree offset per cube
+//            float angle = (time * 1.5f) + (i * glm::half_pi<float>());
+//            // Sine wave to make them drift apart and back together
+//            float radius = 0.5f + std::sin(time * 2.0f) * 0.25f;
+//
+//            transform->position.x = std::cos(angle) * radius;
+//            transform->position.y = std::sin(angle) * radius;
+//
+//            // Add a continuous tumble
+//            transform->rotation = glm::angleAxis(time * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
+//        }
+//    }
+//    
+//    renderer_->begin_frame();
+//    TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
+//    TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
+//
+//    RenderGraph graph;
+//    Scene* scene = sceneMan_->getScene("Test");
+//    if (scene) {
+//        // Rebuild the spatial partitioner so the new positions are registered
+//        scene->getPartitioner()->build();
+//
+//        scene->buildDrawList({});
+//        scene->renderScene(graph, backbuffer, depthbuffer);
+//        graph.compile();
+//        graph.execute(*renderer_.gfx, depthbuffer, nullptr);
+//        renderer_->present(swap_);
+//        renderer_->end_frame();
+//    }
+//    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+//}
 
 void SandboxApp::on_event(const Event& ev) {
     if (ev.type == Event::Type::WindowResize) {
         if (swap_ > 0 && renderer_.gfx) {
-            renderer_->resize_swapchain(swap_, { ev.resize.width, ev.resize.height });
+            // Queue the resize to safely handle this on render thread
+            renderer_.queue_resize(swap_, ev.resize.width, ev.resize.height);
         }
     } else if (ev.type == Event::Type::WindowClose) {
         shouldClose_ = true;

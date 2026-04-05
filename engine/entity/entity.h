@@ -9,6 +9,7 @@ using EntityID = uint32_t;
 
 class IComponentPool {
 public:
+    virtual ~IComponentPool() = default;
     virtual void remove(EntityID id) = 0;
 };
 
@@ -16,34 +17,72 @@ template<typename T>
 class ComponentPool : public IComponentPool {
 public:
     void remove(EntityID id) override {
-        data.erase(id);
+        if (!contains(id)) return;
+
+        size_t dense_index = sparse[id];
+        size_t last_dense_index = dense.size() - 1;
+
+        // If we're not removing the very last element, swap the last one into this slot
+        if (dense_index != last_dense_index) {
+            T& last_comp = dense[last_dense_index];
+            EntityID last_id = entities[last_dense_index];
+
+            dense[dense_index] = std::move(last_comp);
+            entities[dense_index] = last_id;
+            sparse[last_id] = dense_index;
+        }
+
+        dense.pop_back();
+        entities.pop_back();
+        sparse[id] = static_cast<size_t>(-1);
+    }
+
+    bool contains(EntityID id) const {
+        return id < sparse.size() && sparse[id] != static_cast<size_t>(-1);
     }
 
     T& operator[](EntityID id) {
-        return data[id];
+        if (contains(id)) {
+            return dense[sparse[id]];
+        }
+
+        // Expand sparse array if necessary
+        if (id >= sparse.size()) {
+            sparse.resize(id + 1, static_cast<size_t>(-1));
+        }
+
+        // Add new component to the end of the dense array
+        sparse[id] = dense.size();
+        entities.push_back(id);
+        dense.push_back(T{});
+        return dense.back();
     }
 
     T* find(EntityID id) {
-        if (auto it = data.find(id); it != data.end()) {
-            return &(it->second);
+        if (contains(id)) {
+            return &dense[sparse[id]];
         }
         return nullptr;
     }
 
+    // Kept for backward compatibility, though systems should migrate 
+    // to iterating over the dense array directly in the future.
     std::vector<T*> getAll() {
         std::vector<T*> v;
-        v.reserve(data.size());
-        for (auto& [k,d] : data) v.push_back(&d);
+        v.reserve(dense.size());
+        for (auto& d : dense) v.push_back(&d);
         return v;
     }
 
-    std::vector<EntityID> getAllEntities() {
-        std::vector<EntityID> v;
-        for (auto& [k,d] : data) v.push_back(k);
-        return v;
+    // Return by const reference to completely eliminate allocations
+    const std::vector<EntityID>& getAllEntities() const {
+        return entities;
     }
+
 private:
-    std::unordered_map<EntityID, T> data;
+    std::vector<size_t> sparse;
+    std::vector<T> dense;
+    std::vector<EntityID> entities;
 };
 
 struct Transform {
@@ -84,7 +123,7 @@ public:
     }
 
     template<typename T>
-    std::vector<EntityID> getAllEntities() {
+    const std::vector<EntityID>& getAllEntities() {
         return getPool<T>().getAllEntities();
     }
 

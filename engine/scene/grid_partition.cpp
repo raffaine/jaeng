@@ -14,7 +14,7 @@ std::vector<ComponentPack> GridPartitioner::queryVisible(const jaeng::math::AABB
     auto ecs = entitySource.lock();
     if (!ecs) return {};
 
-    auto entities = ecs->getAllEntities<Transform>();
+    const auto& entities = ecs->getAllEntities<Transform>();
     std::vector<ComponentPack> cps;
     for (auto e : entities) {
         cps.push_back(ComponentPack{

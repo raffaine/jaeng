@@ -106,10 +106,13 @@ int WaylandPlatform::run(std::unique_ptr<IApplication> app) {
 
     if (!app->init()) return -1;
 
+    app->start_engine_threads();
+
     while (poll_events() && !app->should_close()) {
-        app->update();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
+    app->stop_engine_threads();
     app->shutdown();
     return 0;
 }

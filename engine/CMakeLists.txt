@@ -6,6 +6,7 @@ set(JAENG_SOURCES
   common/logging.h
   common/result.h
   platform/public/platform_api.h
+  platform/public/application.cpp
   render/frontend/renderer.h
   render/graph/render_graph.h
   storage/ifstorage.h

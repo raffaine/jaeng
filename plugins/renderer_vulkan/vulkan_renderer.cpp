@@ -264,13 +264,7 @@ static void vk_present(SwapchainHandle h) {
             uint32_t indices[] = { imageIndex };
             vk::PresentInfoKHR presentInfo(1, waitSems, 1, swaps, indices);
             vk::Result res = g_ctx->device.graphicsQueue.presentKHR(presentInfo);
-
-#ifdef JAENG_LINUX
-            if (g_ctx->platformWindow && g_ctx->platformDisplay) {
-                wl_surface_commit(static_cast<wl_surface*>(g_ctx->platformWindow));
-                wl_display_flush(static_cast<wl_display*>(g_ctx->platformDisplay));
-            }
-#endif
+            
         } catch (const vk::OutOfDateKHRError&) {
             // This is expected during resize. The platform layer will issue a resize event shortly.
             JAENG_LOG_DEBUG("vk_present: Swapchain out of date, waiting for resize event.");

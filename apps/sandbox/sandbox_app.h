@@ -9,18 +9,22 @@
 #include "storage/ifstorage.h"
 #include "entity/entity.h"
 
-#include <chrono>
 #include <vector>
+#include <mutex>
 
 class SandboxApp : public jaeng::platform::IApplication {
 public:
     SandboxApp(jaeng::platform::IPlatform& platform);
 
     bool init() override;
-    void update() override;
     void on_event(const jaeng::platform::Event& ev) override;
     void shutdown() override;
     bool should_close() const override { return shouldClose_; }
+
+protected:
+    void tick(float dt) override;
+    void extract_render_state() override;
+    void render() override;
 
 private:
     void setupResources();
@@ -39,6 +43,11 @@ private:
     BufferHandle cbFrame_ = 0;
     bool shouldClose_ = false;
 
+    // Simulation State
     std::vector<EntityID> testEntities_;
-    std::chrono::time_point<std::chrono::high_resolution_clock> startTime_;
+    float simTime_ = 0.0f;
+
+    // Thread Sync
+    std::mutex ecsMutex_;
+    bool stateChanged_ = false;
 };
