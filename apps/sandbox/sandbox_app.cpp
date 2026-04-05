@@ -142,6 +142,25 @@ bool SandboxApp::init() {
 
 void SandboxApp::update() {
     if (!window_) return;
+
+    // Calculate elapsed time in seconds
+    float time = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime_).count();
+
+    // Update transforms for orbit and pulse
+    for (size_t i = 0; i < testEntities_.size(); ++i) {
+        if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
+            // 90-degree offset per cube
+            float angle = (time * 1.5f) + (i * glm::half_pi<float>());
+            // Sine wave to make them drift apart and back together
+            float radius = 0.5f + std::sin(time * 2.0f) * 0.25f;
+
+            transform->position.x = std::cos(angle) * radius;
+            transform->position.y = std::sin(angle) * radius;
+
+            // Add a continuous tumble
+            transform->rotation = glm::angleAxis(time * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
+        }
+    }
     
     renderer_->begin_frame();
     TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
@@ -150,6 +169,9 @@ void SandboxApp::update() {
     RenderGraph graph;
     Scene* scene = sceneMan_->getScene("Test");
     if (scene) {
+        // Rebuild the spatial partitioner so the new positions are registered
+        scene->getPartitioner()->build();
+
         scene->buildDrawList({});
         scene->renderScene(graph, backbuffer, depthbuffer);
         graph.compile();
@@ -196,19 +218,19 @@ void SandboxApp::setupResources() {
 }
 
 void SandboxApp::setupEntities() {
-    EntityID testEntities[4];
-    for(int i=0; i<4; ++i) testEntities[i] = entityMan_->createEntity();
+    testEntities_.resize(4);
+    for(int i=0; i<4; ++i) testEntities_[i] = entityMan_->createEntity();
 
     if (auto meshHandle = meshSys_->loadMesh("/mem/mesh-test.raw").logError()) {
         for (int i = 0; i < 4; i++) {
-            entityMan_->addComponent<MeshHandle>(testEntities[i]) = meshHandle.value();
+            entityMan_->addComponent<MeshHandle>(testEntities_[i]) = meshHandle.value();
             BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
-            entityMan_->addComponent<BufferHandle>(testEntities[i]) = renderer_->create_buffer(&cbDesc, nullptr);
+            entityMan_->addComponent<BufferHandle>(testEntities_[i]) = renderer_->create_buffer(&cbDesc, nullptr);
         }
     }
     if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
-        for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
+        for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities_[i]) = h;
 #ifdef JAENG_WIN32
         materialSub_ = fileMan_->track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
             if (e.change == FileChangedEvent::ChangeType::Modified) {
@@ -219,10 +241,10 @@ void SandboxApp::setupEntities() {
     }
 
 
-    entityMan_->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
-    entityMan_->addComponent<Transform>(testEntities[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};
-    entityMan_->addComponent<Transform>(testEntities[2]) = Transform{.position = {-0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0, 1, 0})};
-    entityMan_->addComponent<Transform>(testEntities[3]) = Transform{.position = { 0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0,-1, 0}), .scale = {.5,.5,.5}};
+    entityMan_->addComponent<Transform>(testEntities_[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
+    entityMan_->addComponent<Transform>(testEntities_[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};
+    entityMan_->addComponent<Transform>(testEntities_[2]) = Transform{.position = {-0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0, 1, 0})};
+    entityMan_->addComponent<Transform>(testEntities_[3]) = Transform{.position = { 0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0,-1, 0}), .scale = {.5,.5,.5}};
 
     sceneMan_->getScene("Test")->getPartitioner()->build();
 }

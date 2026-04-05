@@ -9,6 +9,9 @@
 #include "storage/ifstorage.h"
 #include "entity/entity.h"
 
+#include <chrono>
+#include <vector>
+
 class SandboxApp : public jaeng::platform::IApplication {
 public:
     SandboxApp(jaeng::platform::IPlatform& platform);
@@ -35,4 +38,7 @@ private:
     std::unique_ptr<IFileManager::SubscriptionT> materialSub_;
     BufferHandle cbFrame_ = 0;
     bool shouldClose_ = false;
+
+    std::vector<EntityID> testEntities_;
+    std::chrono::time_point<std::chrono::high_resolution_clock> startTime_;
 };
