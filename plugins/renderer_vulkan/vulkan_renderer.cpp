@@ -4,8 +4,17 @@
 #include <filesystem>
 
 #ifdef JAENG_LINUX
+
 #include <dlfcn.h>
 #include <wayland-client.h>
+
+#elif defined(JAENG_WIN32)
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #endif
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -23,6 +32,13 @@ namespace jaeng::renderer {
             if (!handle) handle = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
             if (handle) {
                 auto vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(handle, "vkGetInstanceProcAddr");
+                VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+            }
+#elif defined(JAENG_WIN32)
+            HMODULE hModule = LoadLibraryA("vulkan-1.dll");
+            handle = hModule;
+            if (hModule) {
+                auto vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(hModule, "vkGetInstanceProcAddr");
                 VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
             }
 #endif

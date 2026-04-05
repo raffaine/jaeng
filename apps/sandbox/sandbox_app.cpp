@@ -1,6 +1,6 @@
 #include "sandbox_app.h"
 #include "mesh_utils.h"
-#ifdef JAENG_WIN32
+#if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #include "pix3.h"
 #endif
 
@@ -10,7 +10,7 @@
 #include "scene/grid_partition.h"
 #include "scene/perspective_cam.h"
 
-#ifdef JAENG_WIN32
+#if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #include "basic_reflect.h"
 #else
 #include "basic.h"
@@ -28,14 +28,22 @@
 using namespace jaeng;
 using namespace jaeng::platform;
 
-#ifdef JAENG_WIN32
-static const char* materialFileData = R"(
-{
+// Define the backend-specific extensions and files
+#if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
+#define SHADER_EXT ".dxil"
+#define REFLECT_FILE "basic_reflect.json"
+#else
+#define SHADER_EXT ".spv"
+#define REFLECT_FILE "basic.json"
+#endif
+
+// Compile-time string concatenation to build the JSON dynamically
+static const char* materialFileData = R"({
   "name": "CheckerboardMaterial",
   "shader": {
-    "vertex": "C:/dev/repos/jaeng/shaders/compiled/basic_vs.dxil",
-    "pixel": "C:/dev/repos/jaeng/shaders/compiled/basic_ps.dxil",
-    "reflection": "C:/dev/repos/jaeng/shaders/include/basic_reflect.json"
+    "vertex": ")" JAENG_SHADER_DIR "/compiled/basic_vs" SHADER_EXT R"(",
+    "pixel": ")" JAENG_SHADER_DIR "/compiled/basic_ps" SHADER_EXT R"(",
+    "reflection": ")" JAENG_SHADER_DIR "/include/" REFLECT_FILE R"("
   },
   "textures": [
     {
@@ -55,99 +63,16 @@ static const char* materialFileData = R"(
     "metallic": 0.0
   },
   "constantBuffers": [
-    {
-      "name": "CBObject",
-      "size": 64,
-      "binding": 0
-    },
-    {
-      "name": "CBFrame",
-      "size": 64,
-      "binding": 1
-    },
-    {
-      "name": "CBMaterial",
-      "size": 256,
-      "binding": 2
-    }
+    { "name": "CBObject", "size": 64, "binding": 0 },
+    { "name": "CBFrame", "size": 64, "binding": 1 },
+    { "name": "CBMaterial", "size": 256, "binding": 2 }
   ],
   "pipelineStates": {
-    "blend": {
-      "enabled": false,
-      "srcFactor": "one",
-      "dstFactor": "zero"
-    },
-    "rasterizer": {
-      "cullMode": "back",
-      "fillMode": "solid"
-    },
-    "depthStencil": {
-      "depthTest": true,
-      "depthWrite": true
-    }
+    "blend": { "enabled": false, "srcFactor": "one", "dstFactor": "zero" },
+    "rasterizer": { "cullMode": "back", "fillMode": "solid" },
+    "depthStencil": { "depthTest": true, "depthWrite": true }
   }
-}
-)";
-#else
-static const char* materialFileData = R"(
-{
-  "name": "CheckerboardMaterial",
-  "shader": {
-  "vertex": "/mnt/c/dev/repos/jaeng/shaders/compiled/basic_vs.spv",
-  "pixel": "/mnt/c/dev/repos/jaeng/shaders/compiled/basic_ps.spv",
-  "reflection": "/mnt/c/dev/repos/jaeng/shaders/include/basic.json"
-  },  "textures": [
-    {
-      "path": "/mem/checker.raw",
-      "width": 256,
-      "height": 256,
-      "sampler": {
-        "filter": "linear",
-        "addressModeU": "wrap",
-        "addressModeV": "wrap"
-      }
-    }
-  ],
-  "parameters": {
-    "color": [1.0, 1.0, 1.0, 1.0],
-    "roughness": 0.5,
-    "metallic": 0.0
-  },
-  "constantBuffers": [
-    {
-      "name": "CBObject",
-      "size": 64,
-      "binding": 0
-    },
-    {
-      "name": "CBFrame",
-      "size": 64,
-      "binding": 1
-    },
-    {
-      "name": "CBMaterial",
-      "size": 256,
-      "binding": 2
-    }
-  ],
-  "pipelineStates": {
-    "blend": {
-      "enabled": false,
-      "srcFactor": "one",
-      "dstFactor": "zero"
-    },
-    "rasterizer": {
-      "cullMode": "back",
-      "fillMode": "solid"
-    },
-    "depthStencil": {
-      "depthTest": true,
-      "depthWrite": true
-    }
-  }
-}
-)";
-#endif
+})";
 
 SandboxApp::SandboxApp(IPlatform& platform) 
     : platform_(platform) 
@@ -166,7 +91,7 @@ bool SandboxApp::init() {
     }
     window_ = std::move(windowResult).logError().value();
 
-#ifdef JAENG_WIN32
+#if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
     GfxBackend backend = GfxBackend::D3D12;
 #else
     GfxBackend backend = GfxBackend::Vulkan;
@@ -281,22 +206,17 @@ void SandboxApp::setupEntities() {
             entityMan_->addComponent<BufferHandle>(testEntities[i]) = renderer_->create_buffer(&cbDesc, nullptr);
         }
     }
-#ifdef JAENG_WIN32
     if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
         for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
+#ifdef JAENG_WIN32
         materialSub_ = fileMan_->track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
             if (e.change == FileChangedEvent::ChangeType::Modified) {
                 matSys_->reloadMaterial(h).orElse([](auto){});
             }
         });
-    }
-#else
-    if (auto matHandle = matSys_->createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
-        auto h = matHandle.value();
-        for (int i = 0; i < 4; i++) entityMan_->addComponent<MaterialHandle>(testEntities[i]) = h;
-    }
 #endif
+    }
 
 
     entityMan_->addComponent<Transform>(testEntities[0]) = Transform{.position = {-0.25f, -0.25f, 0}};

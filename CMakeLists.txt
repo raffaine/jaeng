@@ -55,11 +55,13 @@ else()
     message(WARNING "Neither dxc nor glslc found, skipping shaders")
   endif()
 endif()
+option(JAENG_FORCE_VULKAN "Force Vulkan backend on Windows instead of D3D12" OFF)
 
 # Engine Core & Plugins
 add_subdirectory(engine)
 add_subdirectory(plugins/renderer_vulkan)
-if(WIN32)
+
+if(WIN32 AND NOT JAENG_FORCE_VULKAN)
   add_subdirectory(plugins/renderer_d3d12)
 endif()
 

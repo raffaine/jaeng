@@ -1,28 +1,42 @@
 {
-  "version": 3,
-  "configurePresets": [
-    {
-      "name": "arm64-vs",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "arm64",
-      "binaryDir": "${sourceDir}/build/arm64-vs",
-      "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "C:/dev/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "arm64-windows"
-      }
-    },
-    {
-      "name": "linux-debug",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/linux-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "/home/raffaine/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "arm64-linux",
-        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/linux-debug/vcpkg_installed",
-        "CMAKE_PREFIX_PATH": "${sourceDir}/build/linux-debug/vcpkg_installed/arm64-linux",
-        "JAENG_BUILD_SANDBOX": "ON"
-      }
-    }
-  ]
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "arm64-vs",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "arm64",
+            "binaryDir": "${sourceDir}/build/arm64-vs",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "C:/dev/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "arm64-windows",
+                "JAENG_BUILD_SANDBOX": "ON"
+            }
+        },
+        {
+            "name": "arm64-vs-vulkan",
+            "displayName": "Windows ARM64 (Vulkan)",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "arm64",
+            "binaryDir": "${sourceDir}/build/arm64-vs-vulkan",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "C:/dev/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "arm64-windows",
+                "JAENG_BUILD_SANDBOX": "ON",
+                "JAENG_FORCE_VULKAN": "ON"
+            }
+        },
+        {
+            "name": "linux-debug",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build/linux-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_TOOLCHAIN_FILE": "/home/raffaine/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "arm64-linux",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/build/linux-debug/vcpkg_installed",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/build/linux-debug/vcpkg_installed/arm64-linux",
+                "JAENG_BUILD_SANDBOX": "ON"
+            }
+        }
+    ]
 }
