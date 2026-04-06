@@ -2,6 +2,9 @@
 
 #include <vector>
 #include <unordered_map>
+#include <typeindex>
+#include <memory>
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -22,7 +25,6 @@ public:
         size_t dense_index = sparse[id];
         size_t last_dense_index = dense.size() - 1;
 
-        // If we're not removing the very last element, swap the last one into this slot
         if (dense_index != last_dense_index) {
             T& last_comp = dense[last_dense_index];
             EntityID last_id = entities[last_dense_index];
@@ -46,12 +48,10 @@ public:
             return dense[sparse[id]];
         }
 
-        // Expand sparse array if necessary
         if (id >= sparse.size()) {
             sparse.resize(id + 1, static_cast<size_t>(-1));
         }
 
-        // Add new component to the end of the dense array
         sparse[id] = dense.size();
         entities.push_back(id);
         dense.push_back(T{});
@@ -65,8 +65,6 @@ public:
         return nullptr;
     }
 
-    // Kept for backward compatibility, though systems should migrate 
-    // to iterating over the dense array directly in the future.
     std::vector<T*> getAll() {
         std::vector<T*> v;
         v.reserve(dense.size());
@@ -74,7 +72,6 @@ public:
         return v;
     }
 
-    // Return by const reference to completely eliminate allocations
     const std::vector<EntityID>& getAllEntities() const {
         return entities;
     }
@@ -118,14 +115,12 @@ public:
 
     template<typename T>
     T& addComponent(EntityID id) {
-        auto& pool = getPool<T>();
-        return pool[id]; // Creates or returns existing
+        return getPool<T>()[id];
     }
 
     template<typename T>
     T* getComponent(EntityID id) {
-        auto& pool = getPool<T>();
-        return pool.find(id);
+        return getPool<T>().find(id);
     }
     
     template<typename T>
@@ -140,7 +135,7 @@ public:
 
     void destroyEntity(EntityID id) {
         entities.erase(std::remove(entities.begin(), entities.end(), id), entities.end());
-        for (auto* pool : pools) {
+        for (auto& [type, pool] : pools) {
             pool->remove(id);
         }
     }
@@ -150,16 +145,15 @@ public:
 private:
     EntityID nextID = 1;
     std::vector<EntityID> entities;
-    std::vector<IComponentPool*> pools;
+    std::unordered_map<std::type_index, std::unique_ptr<IComponentPool>> pools;
 
     template<typename T>
     ComponentPool<T>& getPool() {
-        static ComponentPool<T> pool;
-        if (std::find(pools.begin(), pools.end(), &pool) == pools.end()) {
-            pools.push_back(&pool);
+        auto it = pools.find(typeid(T));
+        if (it == pools.end()) {
+            it = pools.emplace(typeid(T), std::make_unique<ComponentPool<T>>()).first;
         }
-
-        return pool;
+        return static_cast<ComponentPool<T>&>(*it->second);
     }
 };
 
@@ -171,7 +165,6 @@ inline void EntityManager::attachEntity(EntityID child, EntityID parent) {
     auto* parentRel = getComponent<Relationship>(parent);
     if (!parentRel) parentRel = &(addComponent<Relationship>(parent));
 
-    // Insert at the front of the parent's child list
     if (parentRel->firstChild != static_cast<EntityID>(-1)) {
         auto* firstChildRel = getComponent<Relationship>(parentRel->firstChild);
         firstChildRel->prevSibling = child;
@@ -179,4 +172,3 @@ inline void EntityManager::attachEntity(EntityID child, EntityID parent) {
     }
     parentRel->firstChild = child;
 }
-

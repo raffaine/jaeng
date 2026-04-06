@@ -8,6 +8,7 @@
 #include "scene/perspective_cam.h"
 #include "entity/entity.h"
 #include "entity/transform_sys.h"
+#include "animation/animation.h"
 
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #include "basic_reflect.h"
@@ -96,6 +97,7 @@ bool SandboxApp::app_init() {
         });
 
     setupEntities();
+    setupAnimation();
 
     BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
     cbFrame_ = renderer().create_buffer(&cbDesc, nullptr);
@@ -112,15 +114,8 @@ void SandboxApp::app_shutdown() {
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
 
-    // Spin the Sun (everything attached will orbit)
-    if (auto* t = entityManager().getComponent<Transform>(testEntities_[0])) {
-        t->rotation = glm::angleAxis(simTime_ * 0.5f, glm::vec3(0, 0, 1));
-    }
-
-    // Spin Planet 2 (its moon will orbit it, while it orbits the sun)
-    if (auto* t = entityManager().getComponent<Transform>(testEntities_[2])) {
-        t->rotation = glm::angleAxis(simTime_ * 2.0f, glm::vec3(0, 0, 1));
-    }
+    // Process Animations BEFORE Transform System
+    AnimationSystem::update(entityManager(), dt);
 
     // Process the entire hierarchy into WorldMatrices
     TransformSystem::update(entityManager());
@@ -221,4 +216,69 @@ void SandboxApp::setupEntities() {
 
     // Run the transform system once to generate the initial matrices
     TransformSystem::update(entityManager());
+}
+
+void SandboxApp::setupAnimation() {
+    testClip_ = std::make_unique<AnimationClip>();
+    testClip_->name = "SolarSystemAnimation";
+    
+    // Duration for a perfectly seamless loop of both 0.5 rad/s and 2.0 rad/s:
+    // Sun: 2*pi / 0.5 = 4*pi seconds
+    // Planet 2: 2*pi / 2.0 = pi seconds
+    // LCM is 4*pi.
+    const float PI = 3.14159265f;
+    const float duration = 4.0f * PI;
+    testClip_->duration = duration;
+
+    // Track 0: Sun Spin (0.5 rad/s) -> 1 full rotation (2*pi) over 4*pi seconds
+    AnimationTrack sunTrack;
+    for (int i = 0; i <= 4; ++i) {
+        float ratio = (float)i / 4.0f;
+        sunTrack.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 2.0f * PI, glm::vec3(0, 0, 1)) });
+    }
+    testClip_->tracks.push_back(std::move(sunTrack));
+
+    // Track 1: Planet 2 Spin (2.0 rad/s) -> 4 full rotations (8*pi) over 4*pi seconds
+    AnimationTrack planet2Track;
+    for (int i = 0; i <= 16; ++i) {
+        float ratio = (float)i / 16.0f;
+        planet2Track.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 8.0f * PI, glm::vec3(0, 0, 1)) });
+    }
+    testClip_->tracks.push_back(std::move(planet2Track));
+
+    // Track 2: Moon Pulse/Bounce/Spin
+    AnimationTrack moonTrack;
+    // 4 cycles of pulse and bounce to fit the duration
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        float startT = cycle * (duration / 4.0f);
+        float midT = startT + (duration / 8.0f);
+        moonTrack.scaleKeys.push_back({startT, {0.3f, 0.3f, 0.3f}});
+        moonTrack.scaleKeys.push_back({midT,   {0.6f, 0.6f, 0.6f}});
+
+        moonTrack.positionKeys.push_back({startT, {0.0f, 1.5f, 0.0f}});
+        moonTrack.positionKeys.push_back({midT,   {0.0f, 2.5f, 0.0f}});
+    }
+    // Final keyframes to close the loop
+    moonTrack.scaleKeys.push_back({duration, {0.3f, 0.3f, 0.3f}});
+    moonTrack.positionKeys.push_back({duration, {0.0f, 1.5f, 0.0f}});
+
+    // Spin: 4 spins total
+    for (int i = 0; i <= 16; ++i) {
+        float ratio = (float)i / 16.0f;
+        moonTrack.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 8.0f * PI, glm::vec3(0, 1, 0)) });
+    }
+
+    testClip_->tracks.push_back(std::move(moonTrack));
+
+    // Attach Animator to Entity 0 (The Sun)
+    auto& animator = entityManager().addComponent<Animator>(testEntities_[0]);
+    animator.clip = testClip_.get();
+    
+    // Map tracks to entities
+    animator.jointEntities.push_back(testEntities_[0]); // Track 0 -> Sun
+    animator.jointEntities.push_back(testEntities_[2]); // Track 1 -> Planet 2
+    animator.jointEntities.push_back(testEntities_[3]); // Track 2 -> Moon
+    
+    animator.isPlaying = true;
+    animator.loop = true;
 }

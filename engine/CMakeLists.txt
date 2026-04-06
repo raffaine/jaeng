@@ -14,6 +14,7 @@ set(JAENG_SOURCES
   material/materialsys.cpp
   mesh/imeshsys.h
   mesh/meshsys.cpp
+  animation/animation.cpp
   entity/entity.h
   scene/scene.cpp
   scene/grid_partition.cpp

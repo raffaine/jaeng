@@ -1,8 +1,10 @@
 #pragma once
 
 #include "platform/public/platform_api.h"
+#include "animation/animation.h"
 
 #include <vector>
+#include <memory>
 
 class SandboxApp : public jaeng::platform::IApplication {
 public:
@@ -20,6 +22,7 @@ protected:
 private:
     void setupResources();
     void setupEntities();
+    void setupAnimation();
 
     // Test resources
     std::unique_ptr<IFileManager::SubscriptionT> materialSub_;
@@ -28,4 +31,7 @@ private:
     // Simulation State
     std::vector<EntityID> testEntities_;
     float simTime_ = 0.0f;
+
+    // Animation Test
+    std::unique_ptr<jaeng::AnimationClip> testClip_;
 };
