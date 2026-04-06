@@ -9,6 +9,8 @@
 #include <string>
 #include <thread>
 #include "common/result.h"
+#include "common/triple_buffer.h"
+#include "scene/ipartition.h"
 
 namespace jaeng::platform {
 
@@ -88,16 +90,16 @@ public:
     void stop_engine_threads();
 
 protected:
-    // 1. Simulation Phase (Sim Thread)
+    // Simulation Phase (Sim Thread)
     virtual void tick(float dt) = 0;
 
-    // 2. Extraction Phase (Sim Thread -> Render Thread sync point)
+    // Extraction Phase (Sim Thread -> Render Thread sync point)
     // Copies necessary data from ECS into a Render Packet
-    virtual void extract_render_state() = 0;
+    virtual void extract_render_state(std::vector<RenderCommand>& outQueue) = 0;
 
-    // 3. Render Phase (Render Thread)
+    // Render Phase (Render Thread)
     // Consumes the Render Packet and dispatches to the GPU
-    virtual void render() = 0;
+    virtual void render(const std::vector<RenderCommand>& inQueue, bool hasNewState) = 0;
 
 private:
     void simulation_loop();
@@ -113,6 +115,8 @@ private:
     std::mutex stateMutex_;
     std::condition_variable renderCv_;
     std::atomic<bool> frameReady_ = false;
+
+    jaeng::TripleBuffer<std::vector<RenderCommand>> stateBuffer_;
 };
 
 class IPlatform {

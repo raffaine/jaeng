@@ -10,15 +10,6 @@
 #include "entity/entity.h"
 
 #include <vector>
-#include <mutex>
-
-enum class RenderCommandType { Update, Destroy };
-
-struct RenderCommand {
-    RenderCommandType type;
-    RenderProxy proxy; // Valid if Update
-    uint32_t id;       // Valid if Destroy
-};
 
 class SandboxApp : public jaeng::platform::IApplication {
 public:
@@ -31,8 +22,8 @@ public:
 
 protected:
     void tick(float dt) override;
-    void extract_render_state() override;
-    void render() override;
+    void extract_render_state(std::vector<RenderCommand>& outQueue) override;
+    void render(const std::vector<RenderCommand>& inQueue, bool hasNewState) override;
 
 private:
     void setupResources();
@@ -54,8 +45,4 @@ private:
     // Simulation State
     std::vector<EntityID> testEntities_;
     float simTime_ = 0.0f;
-
-    // Thread Sync
-    std::mutex queueMutex_;
-    std::vector<RenderCommand> renderQueue_;
 };

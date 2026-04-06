@@ -46,7 +46,9 @@ namespace jaeng::platform {
 
             // If the state changed, extract it and hand it off to the render thread
             if (stateChanged) {
-                extract_render_state();
+                auto& producerQueue = stateBuffer_.get_producer();
+                extract_render_state(producerQueue);
+                stateBuffer_.push_producer();
 
                 {
                     std::lock_guard<std::mutex> lock(stateMutex_);
@@ -73,8 +75,11 @@ namespace jaeng::platform {
             frameReady_ = false;
             lock.unlock();
 
+            // Check the triple buffer for new data
+            bool hasNewState = stateBuffer_.update_consumer();
+
             // Render the extracted state
-            render();
+            render(stateBuffer_.get_consumer(), hasNewState);
         }
     }
 

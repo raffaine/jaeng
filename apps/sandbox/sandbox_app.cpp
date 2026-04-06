@@ -159,9 +159,8 @@ void SandboxApp::tick(float dt) {
     TransformSystem::update(entityMan_);
 }
 
-void SandboxApp::extract_render_state() {
-    std::lock_guard<std::mutex> lock(queueMutex_);
-    renderQueue_.clear(); // Double buffering: wipe the old commands
+void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
+    outQueue.clear();
 
     const auto& entities = entityMan_->getAllEntities<WorldMatrix>();
     for (auto e : entities) {
@@ -172,7 +171,7 @@ void SandboxApp::extract_render_state() {
 
         if (wm && mesh && mat) {
             // Push an Update command mapping the EntityID directly to the ProxyID
-            renderQueue_.push_back({
+            outQueue.push_back({
                 RenderCommandType::Update,
                 RenderProxy { static_cast<uint32_t>(e), wm->value, *mesh, *mat, cb ? *cb : 0 },
                 static_cast<uint32_t>(e)
@@ -181,7 +180,7 @@ void SandboxApp::extract_render_state() {
     }
 }
 
-void SandboxApp::render() {
+void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewState) {
     if (!window_) return;
 
     // Flush any pending resizes safely on the Render Thread
@@ -189,25 +188,19 @@ void SandboxApp::render() {
 
     Scene* scene = sceneMan_->getScene("Test");
     if (scene) {
-        // Lock the queue to extract needed commands
-        std::vector<RenderCommand> localQueue;
-        {
-            std::lock_guard<std::mutex> lock(queueMutex_);
-            localQueue = std::move(renderQueue_);
-        }
-
-        // Process commands outside of lock
-        for (const auto& cmd : localQueue) {
-            if (cmd.type == RenderCommandType::Update) {
-                scene->addOrUpdateProxy(cmd.proxy);
+        // Only process commands and rebuild if the engine swapped in fresh data
+        if (hasNewState) {
+            for (const auto& cmd : inQueue) {
+                if (cmd.type == RenderCommandType::Update) {
+                    scene->addOrUpdateProxy(cmd.proxy);
+                } else if (cmd.type == RenderCommandType::Destroy) {
+                    scene->removeProxy(cmd.id);
+                }
             }
-            else if (cmd.type == RenderCommandType::Destroy) {
-                scene->removeProxy(cmd.id);
-            }
-        }
 
-        // Builds the Scene partition and generate draw list
-        scene->getPartitioner()->build();
+            // Builds the Scene partition and generate draw list
+            scene->getPartitioner()->build();
+        }
         scene->buildDrawList({});
     }
 
@@ -295,6 +288,4 @@ void SandboxApp::setupEntities() {
 
     // Run the transform system once to generate the initial matrices
     TransformSystem::update(entityMan_);
-
-    extract_render_state();
 }

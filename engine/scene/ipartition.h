@@ -17,6 +17,14 @@ struct RenderProxy {
     BufferHandle constant;
 };
 
+enum class RenderCommandType { Update, Destroy };
+
+struct RenderCommand {
+    RenderCommandType type;
+    RenderProxy proxy; // Valid if Update
+    uint32_t id;       // Valid if Destroy
+};
+
 // Minimal spatial partitioner interface
 class ISpatialPartitioner {
 public:
