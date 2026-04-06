@@ -10,7 +10,14 @@
 #include <thread>
 #include "common/result.h"
 #include "common/triple_buffer.h"
+#include "entity/entity.h"
+#include "material/imaterialsys.h"
+#include "mesh/imeshsys.h"
+#include "render/frontend/renderer.h"
+#include "render/graph/render_graph.h"
 #include "scene/ipartition.h"
+#include "scene/scene.h"
+#include "storage/ifstorage.h"
 
 namespace jaeng::platform {
 
@@ -74,22 +81,37 @@ enum class MessageBoxType {
     Error
 };
 
+// Configuration for the engine bootstrapper
+struct AppConfig {
+    std::string title = "Jaeng Application";
+    uint32_t width = 1280;
+    uint32_t height = 720;
+    GfxBackend backend = GfxBackend::Vulkan;
+};
+
+class IPlatform;
+
 class IApplication {
 public:
+    IApplication(IPlatform& platform, const AppConfig& config);
     virtual ~IApplication() = default;
 
-    virtual bool init() = 0;
-    virtual void on_event(const Event& ev) = 0;
-    virtual void shutdown() = 0;
-    virtual bool should_close() const = 0;
+    bool init();
+    void on_event(const Event& ev);
+    void shutdown();
+    bool should_close() const { return shouldClose_; }
 
     void set_tick_rate(uint32_t hz);
-
-    // Main thread entry and exit points
     void start_engine_threads();
     void stop_engine_threads();
 
 protected:
+
+    // Application overrides for app-specific behavior
+    virtual bool app_init() = 0;
+    virtual void app_on_event(const Event& ev) {} // Optional
+    virtual void app_shutdown() = 0;
+
     // Simulation Phase (Sim Thread)
     virtual void tick(float dt) = 0;
 
@@ -99,7 +121,17 @@ protected:
 
     // Render Phase (Render Thread)
     // Consumes the Render Packet and dispatches to the GPU
-    virtual void render(const std::vector<RenderCommand>& inQueue, bool hasNewState) = 0;
+    virtual void render(const std::vector<RenderCommand>& inQueue, bool hasNewState, RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) = 0;
+
+    // Engine System Accessors for user app
+    IFileManager& fileManager() { return *fileMan_; }
+    EntityManager& entityManager() { return *entityMan_; }
+    IMaterialSystem& materialSystem() { return *matSys_; }
+    IMeshSystem& meshSystem() { return *meshSys_; }
+    SceneManager& sceneManager() { return *sceneMan_; }
+    RendererAPI& renderer() { return *renderer_.gfx; }
+    IPlatform& platform() { return platform_; }
+    IWindow& window() { return *window_; }
 
 private:
     void simulation_loop();
@@ -116,7 +148,23 @@ private:
     std::condition_variable renderCv_;
     std::atomic<bool> frameReady_ = false;
 
+    // Triple buffer for passing render commands from Sim to Render thread without blocking
     jaeng::TripleBuffer<std::vector<RenderCommand>> stateBuffer_;
+    
+    // Engine Core State and Systems
+    IPlatform& platform_;
+    std::unique_ptr<IWindow> window_;
+    Renderer renderer_;
+    SwapchainHandle swap_ = 0;
+    AppConfig config_;
+    bool shouldClose_ = false;
+    
+    // Engine subsystems
+    std::shared_ptr<IFileManager> fileMan_;
+    std::shared_ptr<EntityManager> entityMan_;
+    std::shared_ptr<IMaterialSystem> matSys_;
+    std::shared_ptr<IMeshSystem> meshSys_;
+    std::unique_ptr<SceneManager> sceneMan_;
 };
 
 class IPlatform {
