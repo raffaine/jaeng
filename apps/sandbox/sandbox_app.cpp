@@ -9,6 +9,8 @@
 #include "mesh/meshsys.h"
 #include "scene/grid_partition.h"
 #include "scene/perspective_cam.h"
+#include "entity/entity.h"
+#include "entity/transform_sys.h"
 
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #include "basic_reflect.h"
@@ -141,35 +143,38 @@ bool SandboxApp::init() {
 }
 
 void SandboxApp::tick(float dt) {
-    for (size_t i = 0; i < testEntities_.size(); ++i) {
-        if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
-            float angle = (simTime_ * 1.5f) + (i * glm::half_pi<float>());
-            float radius = 0.5f + std::sin(simTime_ * 2.0f) * 0.25f;
-
-            transform->position.x = std::cos(angle) * radius;
-            transform->position.y = std::sin(angle) * radius;
-            transform->rotation = glm::angleAxis(simTime_ * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
-        }
-    }
     simTime_ += dt;
+
+    // Spin the Sun (everything attached will orbit)
+    if (auto* t = entityMan_->getComponent<Transform>(testEntities_[0])) {
+        t->rotation = glm::angleAxis(simTime_ * 0.5f, glm::vec3(0, 0, 1));
+    }
+
+    // Spin Planet 2 (its moon will orbit it, while it orbits the sun)
+    if (auto* t = entityMan_->getComponent<Transform>(testEntities_[2])) {
+        t->rotation = glm::angleAxis(simTime_ * 2.0f, glm::vec3(0, 0, 1));
+    }
+
+    // Process the entire hierarchy into WorldMatrices
+    TransformSystem::update(entityMan_);
 }
 
 void SandboxApp::extract_render_state() {
     std::lock_guard<std::mutex> lock(queueMutex_);
     renderQueue_.clear(); // Double buffering: wipe the old commands
 
-    const auto& entities = entityMan_->getAllEntities<Transform>();
+    const auto& entities = entityMan_->getAllEntities<WorldMatrix>();
     for (auto e : entities) {
-        auto* t = entityMan_->getComponent<Transform>(e);
+        auto* wm = entityMan_->getComponent<WorldMatrix>(e);
         auto* mesh = entityMan_->getComponent<MeshHandle>(e);
         auto* mat = entityMan_->getComponent<MaterialHandle>(e);
         auto* cb = entityMan_->getComponent<BufferHandle>(e);
 
-        if (t && mesh && mat) {
+        if (wm && mesh && mat) {
             // Push an Update command mapping the EntityID directly to the ProxyID
             renderQueue_.push_back({
                 RenderCommandType::Update,
-                { static_cast<uint32_t>(e), *t, *mesh, *mat, cb ? *cb : 0 },
+                RenderProxy { static_cast<uint32_t>(e), wm->value, *mesh, *mat, cb ? *cb : 0 },
                 static_cast<uint32_t>(e)
                 });
         }
@@ -320,11 +325,18 @@ void SandboxApp::setupEntities() {
 #endif
     }
 
+    entityMan_->addComponent<Transform>(testEntities_[0]) = Transform{ .position = { 0.0f,  0.0f, 0} }; // The Sun
+    entityMan_->addComponent<Transform>(testEntities_[1]) = Transform{ .position = { 2.0f,  0.0f, 0}, .scale = {.5, .5, .5} }; // Planet 1
+    entityMan_->addComponent<Transform>(testEntities_[2]) = Transform{ .position = {-3.0f,  0.0f, 0}, .scale = {.7, .7, .7} }; // Planet 2
+    entityMan_->addComponent<Transform>(testEntities_[3]) = Transform{ .position = { 0.0f,  1.5f, 0}, .scale = {.3, .3, .3} }; // Moon of Planet 2
 
-    entityMan_->addComponent<Transform>(testEntities_[0]) = Transform{.position = {-0.25f, -0.25f, 0}};
-    entityMan_->addComponent<Transform>(testEntities_[1]) = Transform{.position = { 0.25f, -0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{1, 0, 0})};
-    entityMan_->addComponent<Transform>(testEntities_[2]) = Transform{.position = {-0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0, 1, 0})};
-    entityMan_->addComponent<Transform>(testEntities_[3]) = Transform{.position = { 0.25f,  0.25f, 0}, .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3{0,-1, 0}), .scale = {.5,.5,.5}};
+    // Build the hierarchy
+    entityMan_->attachEntity(testEntities_[1], testEntities_[0]); // Planet 1 orbits Sun
+    entityMan_->attachEntity(testEntities_[2], testEntities_[0]); // Planet 2 orbits Sun
+    entityMan_->attachEntity(testEntities_[3], testEntities_[2]); // Moon orbits Planet 2
 
-    sceneMan_->getScene("Test")->getPartitioner()->build();
+    // Run the transform system once to generate the initial matrices
+    TransformSystem::update(entityMan_);
+
+    extract_render_state();
 }

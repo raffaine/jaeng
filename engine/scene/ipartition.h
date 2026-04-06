@@ -11,7 +11,7 @@
 // A flat, lock-free copy of the visual data needed to draw an entity
 struct RenderProxy {
     uint32_t id;
-    Transform transform;
+    glm::mat4 worldMatrix;
     MeshHandle mesh;
     MaterialHandle material;
     BufferHandle constant;

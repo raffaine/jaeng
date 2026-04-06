@@ -91,6 +91,17 @@ struct Transform {
     glm::vec3 scale    = {1, 1, 1};
 };
 
+struct WorldMatrix {
+    glm::mat4 value{ 1.0f };
+};
+
+struct Relationship {
+    EntityID parent = static_cast<EntityID>(-1);
+    EntityID firstChild = static_cast<EntityID>(-1);
+    EntityID nextSibling = static_cast<EntityID>(-1);
+    EntityID prevSibling = static_cast<EntityID>(-1);
+};
+
 class EntityManager {
 public:
     EntityManager() = default;
@@ -134,6 +145,8 @@ public:
         }
     }
 
+    inline void attachEntity(EntityID child, EntityID parent);
+
 private:
     EntityID nextID = 1;
     std::vector<EntityID> entities;
@@ -149,3 +162,21 @@ private:
         return pool;
     }
 };
+
+inline void EntityManager::attachEntity(EntityID child, EntityID parent) {
+    auto* childRel = getComponent<Relationship>(child);
+    if (!childRel) childRel = &(addComponent<Relationship>(child));
+    childRel->parent = parent;
+
+    auto* parentRel = getComponent<Relationship>(parent);
+    if (!parentRel) parentRel = &(addComponent<Relationship>(parent));
+
+    // Insert at the front of the parent's child list
+    if (parentRel->firstChild != static_cast<EntityID>(-1)) {
+        auto* firstChildRel = getComponent<Relationship>(parentRel->firstChild);
+        firstChildRel->prevSibling = child;
+        childRel->nextSibling = parentRel->firstChild;
+    }
+    parentRel->firstChild = child;
+}
+

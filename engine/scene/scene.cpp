@@ -52,15 +52,9 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
             pipelineCache->storePipeline(pk, *pso);
         }
 
-        // Create the transform matrix for entity
-        auto worldMat = glm::identity<glm::mat4>();
-        worldMat = glm::translate(worldMat, proxy.transform.position);
-        worldMat *= glm::toMat4(proxy.transform.rotation);
-        worldMat = glm::scale(worldMat, proxy.transform.scale);
-
         // TODO: Sort data in a way that shared pipeline and group bindings are grouped together in the same DrawBatch
         // for now just create Batches with one packet on it
-        DrawPacket dp{.worldMatrix  = std::move(worldMat),
+        DrawPacket dp{.worldMatrix  = proxy.worldMatrix,
                       .vertexBuffer = mesh->vertexBuffer,
                       .indexBuffer  = mesh->indexBuffer,
                       .indexCount   = static_cast<uint32_t>(mesh->indexCount),
