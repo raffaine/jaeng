@@ -224,48 +224,6 @@ void SandboxApp::render() {
     renderer_->end_frame();
 }
 
-//void SandboxApp::update() {
-//    if (!window_) return;
-//
-//    // Calculate elapsed time in seconds
-//    float time = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime_).count();
-//
-//    // Update transforms for orbit and pulse
-//    for (size_t i = 0; i < testEntities_.size(); ++i) {
-//        if (auto* transform = entityMan_->getComponent<Transform>(testEntities_[i])) {
-//            // 90-degree offset per cube
-//            float angle = (time * 1.5f) + (i * glm::half_pi<float>());
-//            // Sine wave to make them drift apart and back together
-//            float radius = 0.5f + std::sin(time * 2.0f) * 0.25f;
-//
-//            transform->position.x = std::cos(angle) * radius;
-//            transform->position.y = std::sin(angle) * radius;
-//
-//            // Add a continuous tumble
-//            transform->rotation = glm::angleAxis(time * (1.0f + i * 0.2f), glm::normalize(glm::vec3(1, 1, 0)));
-//        }
-//    }
-//    
-//    renderer_->begin_frame();
-//    TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
-//    TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
-//
-//    RenderGraph graph;
-//    Scene* scene = sceneMan_->getScene("Test");
-//    if (scene) {
-//        // Rebuild the spatial partitioner so the new positions are registered
-//        scene->getPartitioner()->build();
-//
-//        scene->buildDrawList({});
-//        scene->renderScene(graph, backbuffer, depthbuffer);
-//        graph.compile();
-//        graph.execute(*renderer_.gfx, depthbuffer, nullptr);
-//        renderer_->present(swap_);
-//        renderer_->end_frame();
-//    }
-//    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-//}
-
 void SandboxApp::on_event(const Event& ev) {
     if (ev.type == Event::Type::WindowResize) {
         if (swap_ > 0 && renderer_.gfx) {
