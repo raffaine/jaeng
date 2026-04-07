@@ -19,6 +19,7 @@ set(JAENG_SOURCES
   scene/scene.cpp
   scene/grid_partition.cpp
   scene/perspective_cam.cpp
+  ui/ui.cpp
 )
 
 if(WIN32)

@@ -28,6 +28,8 @@ public:
     // Accept state updates from the command queue
     void addOrUpdateProxy(const RenderProxy& proxy) { partitioner->addOrUpdate(proxy); }
     void removeProxy(uint32_t id) { partitioner->remove(id); }
+    void addOrUpdateUIProxy(const UIRenderProxy& proxy) { uiProxies[proxy.id] = proxy; }
+    void removeUIProxy(uint32_t id) { uiProxies.erase(id); }
 
     // Builts batched draw commands for Render Graph
     void buildDrawList(const math::AABB&);
@@ -49,6 +51,8 @@ private:
     
     // Partitioner decides how to cluster entities 
     std::unique_ptr<ISpatialPartitioner> partitioner;
+    std::unordered_map<uint32_t, UIRenderProxy> uiProxies;
+
     // Camera for the scene
     std::unique_ptr<ICamera> camera;
     glm::mat4 cachedViewProj{1.0f};
@@ -57,6 +61,7 @@ private:
     struct DrawPacket {
         int entityId;
         glm::mat4 worldMatrix;
+        glm::vec4 color;
         BufferHandle vertexBuffer;
         BufferHandle indexBuffer;
         uint32_t indexCount;
@@ -72,9 +77,9 @@ private:
         std::vector<DrawPacket> packets;
     };
 
-
     // Draw List created for Frame (follows latest build command)
     std::vector<DrawBatch> drawList;
+    std::vector<DrawBatch> uiDrawList;
     BufferHandle cbFrame = 0;
     PipelineCache* pipelineCache;
     std::weak_ptr<IMeshSystem> meshSys;

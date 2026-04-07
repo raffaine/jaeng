@@ -16,8 +16,8 @@ public:
 
 protected:
     void tick(float dt) override;
-    void extract_render_state(std::vector<RenderCommand>& outQueue) override;
-    void render(const std::vector<RenderCommand>& inQueue, bool hasNewState, jaeng::RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) override;
+    void extract_render_state(std::vector<jaeng::RenderCommand>& outQueue) override;
+    void render(const std::vector<jaeng::RenderCommand>& inQueue, bool hasNewState, jaeng::RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) override;
 
 private:
     void setupResources();

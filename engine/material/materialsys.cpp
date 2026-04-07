@@ -215,25 +215,5 @@ void MaterialSystem::setVectorParam(MaterialHandle handle, const std::string& na
 }
 
 void MaterialSystem::updateMaterialParameters(MaterialHandle handle) {
-    auto it = storage.find(handle);
-    if (it == storage.end()) return;
-    
-    auto& m = it->second;
-    auto gfx = renderer.lock();
-    if (!gfx || m.bg.constantBuffers.empty()) return;
-
-    if (m.bg.constantBuffers.size() < 3) return;
-
-    std::vector<float> data;
-    auto colorIt = m.mat.vectorParams.find("color");
-    if (colorIt != m.mat.vectorParams.end()) {
-        data.push_back(colorIt->second.x);
-        data.push_back(colorIt->second.y);
-        data.push_back(colorIt->second.z);
-        data.push_back(colorIt->second.w);
-    }
-    
-    if (!data.empty()) {
-        gfx->update_buffer(m.bg.constantBuffers[2], 0, data.data(), data.size() * sizeof(float));
-    }
+    // Moved to Render Thread via extraction Proxies to prevent COMMAND_LIST_CLOSED crashes.
 }

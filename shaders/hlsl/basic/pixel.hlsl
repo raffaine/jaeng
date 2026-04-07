@@ -15,7 +15,7 @@ cbuffer PushConstants : register(b0, space0)
 
 struct PSIn {
     float4 pos: SV_Position;
-    float3 col: COLOR;
+    float4 col: COLOR;
     float2 uv: TEXCOORD;
 };
 
@@ -24,5 +24,5 @@ float4 main(PSIn i) : SV_Target {
 #ifdef VULKAN
     tex = tex.rgba;
 #endif
-    return float4(i.col, 1.0) * tex;
+    return i.col * tex;
 }

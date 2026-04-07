@@ -21,6 +21,7 @@ cbuffer CBObject : register(b2, space0)
 #else
     float4x4 World;
 #endif
+    float4 MaterialColor;
 };
 
 struct VSIn {
@@ -31,7 +32,7 @@ struct VSIn {
 
 struct VSOut {
     float4 pos: SV_Position;
-    float3 col: COLOR;
+    float4 col: COLOR;
     float2 uv: TEXCOORD;
 };
 
@@ -42,7 +43,7 @@ VSOut main(VSIn v) {
 #else
     o.pos = mul(ViewProj, mul(World, float4(v.pos, 1.0)));
 #endif
-    o.col = v.col;
+    o.col = float4(v.col, 1.0) * MaterialColor;
     o.uv = v.uv;
     return o;
 }

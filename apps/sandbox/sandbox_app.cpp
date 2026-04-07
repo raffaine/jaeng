@@ -9,6 +9,7 @@
 #include "entity/entity.h"
 #include "entity/transform_sys.h"
 #include "animation/animation.h"
+#include "ui/ui.h"
 #include "common/math/ray.h"
 #include "scene/icamera.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -70,9 +71,8 @@ static const char* materialFileData = R"({
     "metallic": 0.0
   },
   "constantBuffers": [
-    { "name": "CBObject", "size": 64, "binding": 0 },
-    { "name": "CBFrame", "size": 64, "binding": 1 },
-    { "name": "CBMaterial", "size": 256, "binding": 2 }
+    { "name": "CBObject", "size": 80, "binding": 0 },
+    { "name": "CBFrame", "size": 64, "binding": 1 }
   ],
   "pipelineStates": {
     "blend": { "enabled": false, "srcFactor": "one", "dstFactor": "zero" },
@@ -110,8 +110,10 @@ bool SandboxApp::app_init() {
         .yaw = yaw,
         .pitch = pitch };
     
-    // Sync initial rotation
-    t.rotation = glm::angleAxis(yaw, glm::vec3(0, 1, 0)) * glm::angleAxis(pitch, glm::vec3(1, 0, 0));
+    // Initial orientation sync
+    glm::quat qYaw = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
+    glm::quat qPitch = glm::angleAxis(pitch, glm::vec3(1, 0, 0));
+    t.rotation = qYaw * qPitch;
 
     auto camera = std::make_unique<PerspectiveCamera>(entityManager(), camEntity);
     sceneManager().createScene("Test", std::make_unique<GridPartitioner>(), std::move(camera))
@@ -138,8 +140,19 @@ void SandboxApp::app_shutdown() {
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
 
-    updateCamera(dt);
-    handleSelection();
+    // 1) Update UI Layout
+    UILayoutSystem::update(entityManager(), static_cast<float>(getConfig().width), static_cast<float>(getConfig().height));
+
+    // 2) Process UI Interaction
+    bool inputConsumed = false;
+    UIInteractionSystem::update(entityManager(), static_cast<float>(inputState_.mousePos.x), static_cast<float>(inputState_.mousePos.y), inputState_.mouseButtons[0], inputConsumed);
+
+    if (!inputConsumed) {
+        updateCamera(dt);
+        handleSelection();
+    } else {
+        isLooking_ = false; // Reset drag if interacting with UI
+    }
 
     // Process Animations BEFORE Transform System
     AnimationSystem::update(entityManager(), dt);
@@ -237,21 +250,12 @@ void SandboxApp::handleSelection() {
         }
 
         if (bestEntity != selectionState_.selectedEntity) {
-            if (selectionState_.selectedEntity != static_cast<EntityID>(-1)) {
-                auto matHandle = *entityManager().getComponent<MaterialHandle>(selectionState_.selectedEntity);
-                materialSystem().setVectorParam(matHandle, "color", selectionState_.originalColor);
-                materialSystem().updateMaterialParameters(matHandle);
-            }
-
             selectionState_.selectedEntity = bestEntity;
             if (bestEntity != static_cast<EntityID>(-1)) {
-                JAENG_LOG_INFO("Picked entity: {}", bestEntity);
-                auto matHandle = *entityManager().getComponent<MaterialHandle>(bestEntity);
-                if (auto metadata = std::move(materialSystem().getMetadata(matHandle)).logError()) {
+                auto mat = *entityManager().getComponent<MaterialComponent>(bestEntity);
+                if (auto metadata = std::move(materialSystem().getMetadata(mat.handle)).logError()) {
                     selectionState_.originalColor = (*metadata)->vectorParams.at("color");
                 }
-                materialSystem().setVectorParam(matHandle, "color", glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
-                materialSystem().updateMaterialParameters(matHandle);
             }
         }
     }
@@ -282,17 +286,48 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     const auto& entities = entityManager().getAllEntities<WorldMatrix>();
     for (auto e : entities) {
         auto* wm = entityManager().getComponent<WorldMatrix>(e);
-        auto* mesh = entityManager().getComponent<MeshHandle>(e);
-        auto* mat = entityManager().getComponent<MaterialHandle>(e);
-        auto* cb = entityManager().getComponent<BufferHandle>(e);
+        auto* mesh = entityManager().getComponent<MeshComponent>(e);
+        auto* mat = entityManager().getComponent<MaterialComponent>(e);
+        auto* cb = entityManager().getComponent<BufferComponent>(e);
 
+        // Push an Update command mapping the EntityID directly to the ProxyID
         if (wm && mesh && mat) {
-            // Push an Update command mapping the EntityID directly to the ProxyID
-            outQueue.push_back({
-                RenderCommandType::Update,
-                RenderProxy { static_cast<uint32_t>(e), wm->value, *mesh, *mat, cb ? *cb : 0 },
-                static_cast<uint32_t>(e)
-                });
+            RenderCommand cmd;
+            cmd.type = RenderCommandType::Update;
+            glm::vec4 color = (e == selectionState_.selectedEntity) ? glm::vec4(1, 0, 0, 1) : glm::vec4(1, 1, 1, 1);
+            cmd.proxy = RenderProxy { static_cast<uint32_t>(e), wm->value, mesh->handle, mat->handle, cb ? cb->handle : 0, color };
+            outQueue.push_back(cmd);
+        }
+    }
+
+    const auto& uiEntities = entityManager().getAllEntities<RectTransform>();
+    for (auto e : uiEntities) {
+        auto* rt = entityManager().getComponent<RectTransform>(e);
+        auto* ur = entityManager().getComponent<UIRenderable>(e);
+        if (rt && ur) {
+            auto* mesh = entityManager().getComponent<MeshComponent>(e);
+            auto* mat = entityManager().getComponent<MaterialComponent>(e);
+            auto* cb = entityManager().getComponent<BufferComponent>(e);
+            auto* interactable = entityManager().getComponent<UIInteractable>(e);
+            if (mesh && mat) {
+                RenderCommand cmd;
+                cmd.type = RenderCommandType::UpdateUI;
+                glm::vec4 finalColor = ur->color;
+                if (interactable) {
+                    if (interactable->isPressed) finalColor *= 0.5f;
+                    else if (interactable->isHovered) finalColor *= 1.2f;
+                }
+                cmd.uiProxy = UIRenderProxy{
+                    static_cast<uint32_t>(e),
+                    rt->worldRect.x, rt->worldRect.y, rt->worldRect.w, rt->worldRect.h,
+                    rt->zIndex,
+                    finalColor,
+                    mesh->handle,
+                    mat->handle,
+                    cb ? cb->handle : 0
+                };
+                outQueue.push_back(cmd);
+            }
         }
     }
 }
@@ -301,14 +336,22 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
     Scene* scene = sceneManager().getScene("Test");
     if (!scene) return;
 
+    for (const auto& cmd : inQueue) {
+        if (cmd.type == RenderCommandType::UpdateCamera) {
+            scene->setCameraViewProj(cmd.cameraViewProj);
+        }
+    }
+
     if (hasNewState) {
         for (const auto& cmd : inQueue) {
             if (cmd.type == RenderCommandType::Update) {
                 scene->addOrUpdateProxy(cmd.proxy);
             } else if (cmd.type == RenderCommandType::Destroy) {
                 scene->removeProxy(cmd.id);
-            } else if (cmd.type == RenderCommandType::UpdateCamera) {
-                scene->setCameraViewProj(cmd.cameraViewProj);
+            } else if (cmd.type == RenderCommandType::UpdateUI) {
+                scene->addOrUpdateUIProxy(cmd.uiProxy);
+            } else if (cmd.type == RenderCommandType::DestroyUI) {
+                scene->removeUIProxy(cmd.id);
             }
         }
         scene->getPartitioner()->build();
@@ -364,6 +407,9 @@ void SandboxApp::setupResources() {
 
     auto meshRawData = createCubeMeshBinary();
     fileManager().registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
+
+    auto quadRawData = createQuadMeshBinary();
+    fileManager().registerMemoryFile("/mem/quad-test.raw", quadRawData.data(), quadRawData.size());
 }
 
 void SandboxApp::setupEntities() {
@@ -372,20 +418,20 @@ void SandboxApp::setupEntities() {
 
     if (auto meshHandle = meshSystem().loadMesh("/mem/mesh-test.raw").logError()) {
         for (int i = 0; i < 4; i++) {
-            entityManager().addComponent<MeshHandle>(testEntities_[i]) = meshHandle.value();
-            BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
-            entityManager().addComponent<BufferHandle>(testEntities_[i]) = renderer().create_buffer(&cbDesc, nullptr);
+            entityManager().addComponent<MeshComponent>(testEntities_[i]) = {meshHandle.value()};
+            BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
+            entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
         }
     }
     if (auto matHandle = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
         auto h = matHandle.value();
-        for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialHandle>(testEntities_[i]) = h;
+        for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
 #ifdef JAENG_WIN32
         materialSub_ = fileManager().track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
             if (e.change == FileChangedEvent::ChangeType::Modified) {
-                materialSystem().reloadMaterial(h).orElse([](auto){});
+                materialSystem().reloadMaterial(h).orElse([](auto) {});
             }
-        });
+            });
 #endif
     }
 
@@ -398,6 +444,52 @@ void SandboxApp::setupEntities() {
     entityManager().attachEntity(testEntities_[1], testEntities_[0]); // Planet 1 orbits Sun
     entityManager().attachEntity(testEntities_[2], testEntities_[0]); // Planet 2 orbits Sun
     entityManager().attachEntity(testEntities_[3], testEntities_[2]); // Moon orbits Planet 2
+
+    // Add UI Entities
+    EntityID uiPanel = entityManager().createEntity();
+    auto& rtPanel = entityManager().addComponent<RectTransform>(uiPanel);
+    rtPanel.anchorMin = {1.0f, 1.0f}; // Bottom right
+    rtPanel.anchorMax = {1.0f, 1.0f};
+    rtPanel.size = {200.0f, 150.0f};
+    rtPanel.pivot = {1.0f, 1.0f}; // Bottom right pivot
+    rtPanel.position = {-10.0f, -10.0f}; // 10px margin
+    rtPanel.zIndex = 10;
+    
+    auto& urPanel = entityManager().addComponent<UIRenderable>(uiPanel);
+    urPanel.color = {0.2f, 0.2f, 0.2f, 0.8f}; // Dark gray
+
+    EntityID uiButton = entityManager().createEntity();
+    auto& rtButton = entityManager().addComponent<RectTransform>(uiButton);
+    rtButton.anchorMin = {0.5f, 0.5f}; // Center in parent
+    rtButton.anchorMax = {0.5f, 0.5f};
+    rtButton.size = {150.0f, 50.0f};
+    rtButton.pivot = {0.5f, 0.5f}; // Center pivot
+    rtButton.zIndex = 20;
+
+    auto& urButton = entityManager().addComponent<UIRenderable>(uiButton);
+    urButton.color = {0.4f, 0.4f, 0.8f, 1.0f}; // Blue
+
+    entityManager().addComponent<UIInteractable>(uiButton);
+    entityManager().attachEntity(uiButton, uiPanel); // Button inside Panel
+
+    if (auto quadMeshHandle = meshSystem().loadMesh("/mem/quad-test.raw").logError()) {
+        entityManager().addComponent<MeshComponent>(uiPanel) = {quadMeshHandle.value()};
+        entityManager().addComponent<MeshComponent>(uiButton) = {quadMeshHandle.value()};
+    }
+    
+    if (auto matHandle1 = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
+        auto h1 = matHandle1.value();
+        entityManager().addComponent<MaterialComponent>(uiPanel) = {h1};
+        BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
+        entityManager().addComponent<BufferComponent>(uiPanel) = {renderer().create_buffer(&cbDesc, nullptr)};
+    }
+    
+    if (auto matHandle2 = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
+        auto h2 = matHandle2.value();
+        entityManager().addComponent<MaterialComponent>(uiButton) = {h2};
+        BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
+        entityManager().addComponent<BufferComponent>(uiButton) = {renderer().create_buffer(&cbDesc, nullptr)};
+    }
 
     // Run the transform system once to generate the initial matrices
     TransformSystem::update(entityManager());
@@ -467,4 +559,3 @@ void SandboxApp::setupAnimation() {
     animator.isPlaying = true;
     animator.loop = true;
 }
-
