@@ -9,6 +9,13 @@
 #include "entity/entity.h"
 #include "entity/transform_sys.h"
 #include "animation/animation.h"
+#include "common/math/ray.h"
+#include "scene/icamera.h"
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/quaternion.hpp>
+#include <algorithm>
 
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #include "basic_reflect.h"
@@ -89,7 +96,24 @@ bool SandboxApp::app_init() {
     setupResources();
 
     const auto aspect = 1280.f/720.f;
-    auto camera = std::make_unique<PerspectiveCamera>(glm::vec3{3, 3, 3}, glm::vec3{0, 0, 0}, glm::vec3{0, 1, 0}, aspect);
+    EntityID camEntity = entityManager().createEntity();
+    auto& t = entityManager().addComponent<Transform>(camEntity);
+    t.position = {3.0f, 3.0f, 3.0f}; // Restore original camera position
+    
+    // Look at origin (0,0,0)
+    glm::vec3 lookDir = glm::normalize(glm::vec3(0,0,0) - t.position);
+    float yaw = std::atan2(lookDir.x, lookDir.z); 
+    float pitch = std::asin(-lookDir.y); // Fix pitch inversion for LH rules
+    
+    entityManager().addComponent<CameraComponent>(camEntity) = {
+        .aspect = aspect,
+        .yaw = yaw,
+        .pitch = pitch };
+    
+    // Sync initial rotation
+    t.rotation = glm::angleAxis(yaw, glm::vec3(0, 1, 0)) * glm::angleAxis(pitch, glm::vec3(1, 0, 0));
+
+    auto camera = std::make_unique<PerspectiveCamera>(entityManager(), camEntity);
     sceneManager().createScene("Test", std::make_unique<GridPartitioner>(), std::move(camera))
         .orElse([this](auto) -> Scene* {
             platform().show_message_box("Error", "Failed to create Test Scene.", MessageBoxType::Error);
@@ -114,6 +138,9 @@ void SandboxApp::app_shutdown() {
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
 
+    updateCamera(dt);
+    handleSelection();
+
     // Process Animations BEFORE Transform System
     AnimationSystem::update(entityManager(), dt);
 
@@ -121,8 +148,136 @@ void SandboxApp::tick(float dt) {
     TransformSystem::update(entityManager());
 }
 
+void SandboxApp::updateCamera(float dt) {
+    Scene* scene = sceneManager().getScene("Test");
+    if (!scene) return;
+    auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera());
+    if (!cam) return;
+
+    float speed = 5.0f * dt;
+    glm::vec3 moveDir(0.0f);
+
+    if (inputState_.keys[(uint32_t)KeyCode::W]) moveDir.z += 1.0f; 
+    if (inputState_.keys[(uint32_t)KeyCode::S]) moveDir.z -= 1.0f;
+    if (inputState_.keys[(uint32_t)KeyCode::A]) moveDir.x -= 1.0f;
+    if (inputState_.keys[(uint32_t)KeyCode::D]) moveDir.x += 1.0f;
+
+    if (glm::length(moveDir) > 0.0001f) {
+        cam->movePlanar(glm::normalize(moveDir) * speed);
+    }
+
+    if (inputState_.keys[(uint32_t)KeyCode::E]) cam->moveVertical(speed);
+    if (inputState_.keys[(uint32_t)KeyCode::Q]) cam->moveVertical(-speed);
+
+    // Zoom
+    if (inputState_.keys[(uint32_t)KeyCode::Plus] || inputState_.keys[(uint32_t)KeyCode::Equal]) cam->setZoom(-20.0f * dt);
+    if (inputState_.keys[(uint32_t)KeyCode::Minus] || inputState_.keys[(uint32_t)KeyCode::Underscore]) cam->setZoom(20.0f * dt);
+    cam->setZoom(-inputState_.mouseScroll * 2.0f);
+    inputState_.mouseScroll = 0;
+
+    // Look (Click nothing and drag)
+    if (inputState_.mouseButtons[0]) {
+        if (!isLooking_) {
+             auto ray = getRayFromMouse();
+             float t;
+             bool hitAny = false;
+             for (auto e : entityManager().getAllEntities<Transform>()) {
+                 if (entityManager().getComponent<CameraComponent>(e)) continue;
+                 
+                 jaeng::math::AABB box { .min = {-0.5f, -0.5f, -0.5f}, .max = {0.5f, 0.5f, 0.5f} };
+                 auto* worldMat = entityManager().getComponent<WorldMatrix>(e);
+                 if (worldMat) {
+                     box.min += glm::vec3(worldMat->value[3]);
+                     box.max += glm::vec3(worldMat->value[3]);
+                 }
+                 if (box.intersects(ray, t)) {
+                     hitAny = true;
+                     break;
+                 }
+             }
+             if (!hitAny) {
+                 isLooking_ = true;
+                 inputState_.lastLookMousePos = inputState_.mousePos;
+             }
+        }
+    } else {
+        isLooking_ = false;
+    }
+
+    if (isLooking_) {
+        float dx = (float)(inputState_.mousePos.x - inputState_.lastLookMousePos.x) * 0.005f;
+        float dy = (float)(inputState_.mousePos.y - inputState_.lastLookMousePos.y) * 0.005f;
+        inputState_.lastLookMousePos = inputState_.mousePos;
+        cam->rotate({dx, dy});
+    }
+}
+
+void SandboxApp::handleSelection() {
+    if (inputState_.mouseButtons[0] && !isLooking_) {
+        auto ray = getRayFromMouse();
+        float minT = std::numeric_limits<float>::max();
+        EntityID bestEntity = static_cast<EntityID>(-1);
+
+        for (auto e : entityManager().getAllEntities<Transform>()) {
+            if (entityManager().getComponent<CameraComponent>(e)) continue;
+
+            jaeng::math::AABB box { .min = {-0.5f, -0.5f, -0.5f}, .max = {0.5f, 0.5f, 0.5f} };
+            auto* worldMat = entityManager().getComponent<WorldMatrix>(e);
+            if (worldMat) {
+                 box.min += glm::vec3(worldMat->value[3]);
+                 box.max += glm::vec3(worldMat->value[3]);
+            }
+            float t;
+            if (box.intersects(ray, t)) {
+                if (t < minT) {
+                    minT = t;
+                    bestEntity = e;
+                }
+            }
+        }
+
+        if (bestEntity != selectionState_.selectedEntity) {
+            if (selectionState_.selectedEntity != static_cast<EntityID>(-1)) {
+                auto matHandle = *entityManager().getComponent<MaterialHandle>(selectionState_.selectedEntity);
+                materialSystem().setVectorParam(matHandle, "color", selectionState_.originalColor);
+                materialSystem().updateMaterialParameters(matHandle);
+            }
+
+            selectionState_.selectedEntity = bestEntity;
+            if (bestEntity != static_cast<EntityID>(-1)) {
+                JAENG_LOG_INFO("Picked entity: {}", bestEntity);
+                auto matHandle = *entityManager().getComponent<MaterialHandle>(bestEntity);
+                if (auto metadata = std::move(materialSystem().getMetadata(matHandle)).logError()) {
+                    selectionState_.originalColor = (*metadata)->vectorParams.at("color");
+                }
+                materialSystem().setVectorParam(matHandle, "color", glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+                materialSystem().updateMaterialParameters(matHandle);
+            }
+        }
+    }
+}
+
+math::Ray SandboxApp::getRayFromMouse() const {
+    Scene* scene = const_cast<SandboxApp*>(this)->sceneManager().getScene("Test");
+    auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera());
+    
+    float x = (float)inputState_.mousePos.x / (float)getConfig().width;
+    float y = (float)inputState_.mousePos.y / (float)getConfig().height;
+    
+    return cam->getRay(x, y);
+}
+
 void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     outQueue.clear();
+
+    if (auto* scene = sceneManager().getScene("Test")) {
+        if (auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera())) {
+            RenderCommand cmd;
+            cmd.type = RenderCommandType::UpdateCamera;
+            cmd.cameraViewProj = cam->getViewProj();
+            outQueue.push_back(cmd);
+        }
+    }
 
     const auto& entities = entityManager().getAllEntities<WorldMatrix>();
     for (auto e : entities) {
@@ -152,6 +307,8 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
                 scene->addOrUpdateProxy(cmd.proxy);
             } else if (cmd.type == RenderCommandType::Destroy) {
                 scene->removeProxy(cmd.id);
+            } else if (cmd.type == RenderCommandType::UpdateCamera) {
+                scene->setCameraViewProj(cmd.cameraViewProj);
             }
         }
         scene->getPartitioner()->build();
@@ -161,7 +318,35 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
     scene->renderScene(graph, backbuffer, depthbuffer);
 }
 
-void SandboxApp::app_on_event(const Event&) {
+void SandboxApp::app_on_event(const Event& ev) {
+    switch (ev.type) {
+        case Event::Type::KeyDown:
+            if (static_cast<uint32_t>(ev.key.code) < 256)
+                inputState_.keys[static_cast<uint32_t>(ev.key.code)] = true;
+            break;
+        case Event::Type::KeyUp:
+            if (static_cast<uint32_t>(ev.key.code) < 256)
+                inputState_.keys[static_cast<uint32_t>(ev.key.code)] = false;
+            break;
+        case Event::Type::MouseMove:
+            inputState_.lastMousePos = inputState_.mousePos;
+            inputState_.mousePos = {ev.mouse.x, ev.mouse.y};
+            break;
+        case Event::Type::MouseDown:
+            if (ev.mouse.button == 272) inputState_.mouseButtons[0] = true; // Left
+            if (ev.mouse.button == 273) inputState_.mouseButtons[2] = true; // Right
+            inputState_.lastLookMousePos = inputState_.mousePos;
+            break;
+        case Event::Type::MouseUp:
+            if (ev.mouse.button == 272) inputState_.mouseButtons[0] = false;
+            if (ev.mouse.button == 273) inputState_.mouseButtons[2] = false;
+            break;
+        case Event::Type::MouseScroll:
+            inputState_.mouseScroll += ev.scroll.delta;
+            break;
+        default:
+            break;
+    }
 }
 
 void SandboxApp::setupResources() {
@@ -282,3 +467,4 @@ void SandboxApp::setupAnimation() {
     animator.isPlaying = true;
     animator.loop = true;
 }
+

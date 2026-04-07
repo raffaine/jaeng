@@ -206,3 +206,34 @@ jaeng::result<> MaterialSystem::reloadMaterial(MaterialHandle handle)
 {
     return jaeng::Error::fromMessage(static_cast<int>(jaeng::error_code::invalid_operation), "[Material] Not Implemented");
 }
+
+void MaterialSystem::setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) {
+    auto it = storage.find(handle);
+    if (it != storage.end()) {
+        it->second.mat.vectorParams[name] = value;
+    }
+}
+
+void MaterialSystem::updateMaterialParameters(MaterialHandle handle) {
+    auto it = storage.find(handle);
+    if (it == storage.end()) return;
+    
+    auto& m = it->second;
+    auto gfx = renderer.lock();
+    if (!gfx || m.bg.constantBuffers.empty()) return;
+
+    if (m.bg.constantBuffers.size() < 3) return;
+
+    std::vector<float> data;
+    auto colorIt = m.mat.vectorParams.find("color");
+    if (colorIt != m.mat.vectorParams.end()) {
+        data.push_back(colorIt->second.x);
+        data.push_back(colorIt->second.y);
+        data.push_back(colorIt->second.z);
+        data.push_back(colorIt->second.w);
+    }
+    
+    if (!data.empty()) {
+        gfx->update_buffer(m.bg.constantBuffers[2], 0, data.data(), data.size() * sizeof(float));
+    }
+}

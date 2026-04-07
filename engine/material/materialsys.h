@@ -46,6 +46,10 @@ public:
     // Hot-reload material
     jaeng::result<> reloadMaterial(MaterialHandle handle) override;
 
+    // Update material parameters
+    void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) override;
+    void updateMaterialParameters(MaterialHandle handle) override;
+
     // Event subscription for material changes
     void subscribe(MaterialEventListener* listener) override {}
 

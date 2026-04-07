@@ -13,6 +13,12 @@ static KeyCode map_win32_key(WPARAM wParam) {
         case 'A':       return KeyCode::A;
         case 'S':       return KeyCode::S;
         case 'D':       return KeyCode::D;
+        case 'E':       return KeyCode::E;
+        case 'Q':       return KeyCode::Q;
+        case VK_OEM_PLUS: return KeyCode::Plus;
+        case VK_OEM_MINUS: return KeyCode::Minus;
+        case VK_ADD:      return KeyCode::Plus;
+        case VK_SUBTRACT: return KeyCode::Minus;
         default:        return KeyCode::Unknown;
     }
 }
@@ -143,6 +149,32 @@ LRESULT CALLBACK Win32Platform::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             ev.type = Event::Type::MouseMove;
             ev.mouse.x = x;
             ev.mouse.y = y;
+            if (instance_->eventCallback_) instance_->eventCallback_(ev);
+            return 0;
+        }
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN: {
+            ev.type = Event::Type::MouseDown;
+            ev.mouse.x = GET_X_LPARAM(lParam);
+            ev.mouse.y = GET_Y_LPARAM(lParam);
+            ev.mouse.button = (msg == WM_LBUTTONDOWN) ? 272 : (msg == WM_RBUTTONDOWN) ? 273 : 274;
+            if (instance_->eventCallback_) instance_->eventCallback_(ev);
+            return 0;
+        }
+        case WM_LBUTTONUP:
+        case WM_RBUTTONUP:
+        case WM_MBUTTONUP: {
+            ev.type = Event::Type::MouseUp;
+            ev.mouse.x = GET_X_LPARAM(lParam);
+            ev.mouse.y = GET_Y_LPARAM(lParam);
+            ev.mouse.button = (msg == WM_LBUTTONUP) ? 272 : (msg == WM_RBUTTONUP) ? 273 : 274;
+            if (instance_->eventCallback_) instance_->eventCallback_(ev);
+            return 0;
+        }
+        case WM_MOUSEWHEEL: {
+            ev.type = Event::Type::MouseScroll;
+            ev.scroll.delta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
             if (instance_->eventCallback_) instance_->eventCallback_(ev);
             return 0;
         }

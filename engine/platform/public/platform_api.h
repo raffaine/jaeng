@@ -25,7 +25,11 @@ enum class KeyCode : uint32_t {
     Unknown = 0,
     Escape,
     Space,
-    W, A, S, D,
+    W, A, S, D, E, Q,
+    Plus,
+    Minus,
+    Equal,
+    Underscore,
 };
 
 struct MousePos {
@@ -63,13 +67,17 @@ struct Event {
         KeyDown,
         KeyUp,
         MouseMove,
+        MouseDown,
+        MouseUp,
+        MouseScroll,
     };
 
     Type type = Type::None;
     union {
         struct { uint32_t width, height; } resize;
         struct { KeyCode code; } key;
-        struct { int32_t x, y; } mouse;
+        struct { int32_t x, y; uint32_t button; } mouse;
+        struct { float delta; } scroll;
     };
 };
 
@@ -132,6 +140,7 @@ protected:
     RendererAPI& renderer() { return *renderer_.gfx; }
     IPlatform& platform() { return platform_; }
     IWindow& window() { return *window_; }
+    const AppConfig& getConfig() const { return config_; }
 
 private:
     void simulation_loop();

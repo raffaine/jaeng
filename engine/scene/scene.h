@@ -13,6 +13,8 @@
 #include "material/imaterialsys.h"
 #include "mesh/imeshsys.h"
 
+namespace jaeng {
+
 // Forward declarations
 class RenderGraph;
 
@@ -28,7 +30,7 @@ public:
     void removeProxy(uint32_t id) { partitioner->remove(id); }
 
     // Builts batched draw commands for Render Graph
-    void buildDrawList(const jaeng::math::AABB&);
+    void buildDrawList(const math::AABB&);
 
     void setCbFrame(BufferHandle h) { cbFrame = h; }
 
@@ -40,6 +42,7 @@ public:
 
     // Access camera
     ICamera* getCamera() const { return camera.get(); }
+    void setCameraViewProj(const glm::mat4& vp) { cachedViewProj = vp; }
 
 private:
     std::string name;
@@ -48,6 +51,7 @@ private:
     std::unique_ptr<ISpatialPartitioner> partitioner;
     // Camera for the scene
     std::unique_ptr<ICamera> camera;
+    glm::mat4 cachedViewProj{1.0f};
 
     // Per-Instance Resources for Drawing
     struct DrawPacket {
@@ -96,3 +100,5 @@ private:
     std::weak_ptr<RendererAPI> renderer;
     std::unique_ptr<PipelineCache> pipelineCache;
 };
+
+} // namespace jaeng

@@ -8,6 +8,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+namespace jaeng {
+
 using EntityID = uint32_t;
 
 class IComponentPool {
@@ -99,6 +101,17 @@ struct Relationship {
     EntityID prevSibling = static_cast<EntityID>(-1);
 };
 
+struct CameraComponent {
+    float fov = 60.0f;
+    float aspect = 1.77f;
+    float znear = 0.1f;
+    float zfar = 1000.0f;
+    
+    // Internal Euler angles for spherical control
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+};
+
 class EntityManager {
 public:
     EntityManager() = default;
@@ -172,3 +185,5 @@ inline void EntityManager::attachEntity(EntityID child, EntityID parent) {
     }
     parentRel->firstChild = child;
 }
+
+} // namespace jaeng

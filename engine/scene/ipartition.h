@@ -17,12 +17,13 @@ struct RenderProxy {
     BufferHandle constant;
 };
 
-enum class RenderCommandType { Update, Destroy };
+enum class RenderCommandType { Update, Destroy, UpdateCamera };
 
 struct RenderCommand {
     RenderCommandType type;
     RenderProxy proxy; // Valid if Update
     uint32_t id;       // Valid if Destroy
+    glm::mat4 cameraViewProj; // Valid if UpdateCamera
 };
 
 // Minimal spatial partitioner interface

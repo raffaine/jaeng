@@ -98,6 +98,10 @@ public:
     // Hot-reload material
     virtual jaeng::result<> reloadMaterial(MaterialHandle handle) = 0;
 
+    // Update material parameters
+    virtual void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) = 0;
+    virtual void updateMaterialParameters(MaterialHandle handle) = 0;
+
     // Event subscription for material changes
     virtual void subscribe(MaterialEventListener* listener) = 0;
 };

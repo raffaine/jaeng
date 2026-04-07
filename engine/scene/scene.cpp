@@ -7,7 +7,7 @@
 #include "render/graph/render_graph.h"
 #include "common/math/conventions.h"
 
-const auto SceneConvention = jaeng::math::ClipSpaceConvention{ .handed = jaeng::math::Handedness::Left, .depth = jaeng::math::DepthRange::ZeroToOne };
+namespace jaeng {
 
 Scene::Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> partitioner, std::unique_ptr<ICamera> camera, PipelineCache* pc, std::weak_ptr<IMeshSystem> mes, std::weak_ptr<IMaterialSystem> mas, std::weak_ptr<RendererAPI> r) 
     : name(name)
@@ -19,7 +19,7 @@ Scene::Scene(const std::string& name, std::unique_ptr<ISpatialPartitioner> parti
     , renderer(r)
 {}
 
-void Scene::buildDrawList(const jaeng::math::AABB& volume)
+void Scene::buildDrawList(const math::AABB& volume)
 {
     // Clears the list (if any system is not available, no point in keeping it)
     drawList.clear();
@@ -76,12 +76,6 @@ void Scene::buildDrawList(const jaeng::math::AABB& volume)
     }
 }
 
-struct CBMaterial {
-    glm::vec4 baseColor;
-    float roughness;
-    float metallic;
-};
-
 void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer)
 {
     // 1) Clear pass
@@ -101,9 +95,7 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);
 
                 if (db.cbFrame) {
-                    auto viewProj = camera->getViewProj(SceneConvention);
-                    ctx.gfx->update_buffer(db.cbFrame, 0, &viewProj, sizeof(glm::mat4));
-                    // Bind Frame CB to slot 0 (register b1)
+                    ctx.gfx->update_buffer(db.cbFrame, 0, &cachedViewProj, sizeof(glm::mat4));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
 
@@ -150,3 +142,5 @@ Scene* SceneManager::getScene(const std::string& name) {
     auto it = scenes.find(name);
     return (it != scenes.end()) ? it->second.get() : nullptr;
 }
+
+} // namespace jaeng

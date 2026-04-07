@@ -6,6 +6,8 @@
 #include <cstdint>
 #include "render/public/renderer_api.h"
 
+namespace jaeng {
+
 // Render Graph v0 (single target, color + depth):
 // - Declares passes that bind one or more color render targets.
 // - Depth is optionally declared on passes and only support defaults target.
@@ -119,3 +121,5 @@ public:
 private:
     std::vector<RGPass> passes_;
 };
+
+} // namespace jaeng

@@ -16,6 +16,12 @@ static KeyCode map_xkb_key(xkb_keysym_t sym) {
         case XKB_KEY_a:      return KeyCode::A;
         case XKB_KEY_s:      return KeyCode::S;
         case XKB_KEY_d:      return KeyCode::D;
+        case XKB_KEY_q:      return KeyCode::Q;
+        case XKB_KEY_e:      return KeyCode::E;
+        case XKB_KEY_plus:   return KeyCode::Plus;
+        case XKB_KEY_minus:  return KeyCode::Minus;
+        case XKB_KEY_equal:  return KeyCode::Equal;
+        case XKB_KEY_underscore: return KeyCode::Underscore;
         default:             return KeyCode::Unknown;
     }
 }
@@ -135,11 +141,25 @@ void WaylandInput::pointer_handle_motion(void* data, wl_pointer* pointer, uint32
     if (WaylandPlatform::instance_->eventCallback_) WaylandPlatform::instance_->eventCallback_(ev);
 }
 void WaylandInput::pointer_handle_button(void* data, wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+    auto self = static_cast<WaylandInput*>(data);
     bool down = (state == WL_POINTER_BUTTON_STATE_PRESSED);
     JAENG_LOG_DEBUG("Mouse button: {} {}", button, down ? "Down" : "Up");
+
+    Event ev{};
+    ev.type = down ? Event::Type::MouseDown : Event::Type::MouseUp;
+    ev.mouse.x = self->mousePos_.x;
+    ev.mouse.y = self->mousePos_.y;
+    ev.mouse.button = button;
+    if (WaylandPlatform::instance_->eventCallback_) WaylandPlatform::instance_->eventCallback_(ev);
 }
 void WaylandInput::pointer_handle_axis(void* data, wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
     JAENG_LOG_DEBUG("Mouse Axis: {} {}", axis, wl_fixed_to_double(value));
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+        Event ev{};
+        ev.type = Event::Type::MouseScroll;
+        ev.scroll.delta = -wl_fixed_to_double(value);
+        if (WaylandPlatform::instance_->eventCallback_) WaylandPlatform::instance_->eventCallback_(ev);
+    }
 }
 
 void WaylandInput::pointer_handle_frame(void* data, wl_pointer* pointer) {
