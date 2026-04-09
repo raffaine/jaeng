@@ -159,7 +159,8 @@ void SandboxApp::tick(float dt) {
     // Process Animations BEFORE Transform System
     AnimationSystem::update(entityManager(), dt);
 
-    // Update UI Text with selection info
+    // Update UI Text with selection info (Moved to handler in refactor? 
+    // No, keep it here for simple polling if needed, or we could use an event bus later)
     if (uiTextEntity_ != static_cast<EntityID>(-1)) {
         if (auto* ut = entityManager().getComponent<UIText>(uiTextEntity_)) {
             if (selectionState_.selectedEntity != static_cast<EntityID>(-1)) {
@@ -287,12 +288,10 @@ math::Ray SandboxApp::getRayFromMouse() const {
 void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     outQueue.clear();
 
-    // Reset UI state every frame to avoid ghosting (we send the full UI state every frame)
-    {
-        RenderCommand clearCmd;
-        clearCmd.type = RenderCommandType::ClearUI;
-        outQueue.push_back(clearCmd);
-    }
+    // Reset UI state every frame to avoid ghosting
+    RenderCommand clearCmd;
+    clearCmd.type = RenderCommandType::ClearUI;
+    outQueue.push_back(clearCmd);
 
     if (auto* scene = sceneManager().getScene("Test")) {
         if (auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera())) {
@@ -310,7 +309,6 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
         auto* mat = entityManager().getComponent<MaterialComponent>(e);
         auto* cb = entityManager().getComponent<BufferComponent>(e);
 
-        // Push an Update command mapping the EntityID directly to the ProxyID
         if (wm && mesh && mat) {
             RenderCommand cmd;
             cmd.type = RenderCommandType::Update;
@@ -320,89 +318,8 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
         }
     }
 
-    const auto& uiEntities = entityManager().getAllEntities<RectTransform>();
-    for (auto e : uiEntities) {
-        auto* rt = entityManager().getComponent<RectTransform>(e);
-        auto* mesh = entityManager().getComponent<MeshComponent>(e);
-        auto* mat = entityManager().getComponent<MaterialComponent>(e);
-        auto* cb = entityManager().getComponent<BufferComponent>(e);
-
-        if (!rt || !mesh || !mat) continue;
-
-        if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
-            auto* interactable = entityManager().getComponent<UIInteractable>(e);
-            RenderCommand cmd;
-            cmd.type = RenderCommandType::UpdateUI;
-            glm::vec4 finalColor = ur->color;
-            if (interactable) {
-                if (interactable->isPressed) finalColor *= 0.5f;
-                else if (interactable->isHovered) finalColor *= 1.2f;
-            }
-            cmd.uiProxy = UIRenderProxy{
-                static_cast<uint32_t>(e),
-                rt->worldRect.x, rt->worldRect.y, rt->worldRect.w, rt->worldRect.h,
-                rt->zIndex,
-                finalColor,
-                mesh->handle,
-                mat->handle,
-                cb ? cb->handle : 0,
-                {0.0f, 0.0f, 1.0f, 1.0f},
-                0
-            };
-            outQueue.push_back(cmd);
-        }
-
-        if (auto* ut = entityManager().getComponent<UIText>(e)) {
-            auto fontRes = fontSystem().getFont(ut->fontHandle);
-            if (fontRes.hasValue()) {
-                const auto* fontData = std::move(fontRes).logError().value();
-                float fontScale = ut->fontSize / fontData->pixelHeight;
-                float startX = rt->worldRect.x;
-                float x = startX;
-                float y = rt->worldRect.y + fontData->ascent * fontScale;
-                float lineHeight = (fontData->ascent - fontData->descent + fontData->lineGap) * fontScale;
-
-                for (size_t i = 0; i < ut->text.size(); ++i) {
-                    char c = ut->text[i];
-                    if (c == '\n') {
-                        x = startX;
-                        y += lineHeight;
-                        continue;
-                    }
-                    if (c >= 32 && c < 128) {
-                        const auto& glyph = fontData->cdata[c - 32];
-                        
-                        float gx = x + glyph.xoff * fontScale;
-                        float gy = y + glyph.yoff * fontScale;
-                        float gw = (glyph.x1 - glyph.x0) * fontScale;
-                        float gh = (glyph.y1 - glyph.y0) * fontScale;
-
-                        float u0 = (float)glyph.x0 / fontData->atlasSize;
-                        float v0 = (float)glyph.y0 / fontData->atlasSize;
-                        float u1 = (float)glyph.x1 / fontData->atlasSize;
-                        float v1 = (float)glyph.y1 / fontData->atlasSize;
-
-                        RenderCommand cmd;
-                        cmd.type = RenderCommandType::UpdateUI;
-                        cmd.uiProxy = UIRenderProxy{
-                            (static_cast<uint32_t>(e) << 16) | (static_cast<uint32_t>(i) & 0xFFFF),
-                            gx, gy, gw, gh,
-                            rt->zIndex + 1, // Draw text over the panel
-                            ut->color,
-                            mesh->handle,
-                            mat->handle,
-                            cb ? cb->handle : 0,
-                            {u0, v0, u1 - u0, v1 - v0},
-                            fontData->texture
-                        };
-                        outQueue.push_back(cmd);
-
-                        x += glyph.xadvance * fontScale;
-                    }
-                }
-            }
-        }
-    }
+    // Unified Engine-side UI extraction!
+    UIRenderSystem::extract(entityManager(), fontSystem(), outQueue);
 }
 
 void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewState, RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) {
@@ -568,63 +485,37 @@ void SandboxApp::setupEntities() {
     entityManager().attachEntity(testEntities_[2], testEntities_[0]); // Planet 2 orbits Sun
     entityManager().attachEntity(testEntities_[3], testEntities_[2]); // Moon orbits Planet 2
 
-    // Add UI Entities
-    EntityID uiPanel = entityManager().createEntity();
-    auto& rtPanel = entityManager().addComponent<RectTransform>(uiPanel);
-    rtPanel.anchorMin = {1.0f, 1.0f}; // Bottom right
-    rtPanel.anchorMax = {1.0f, 1.0f};
-    rtPanel.size = {200.0f, 150.0f};
-    rtPanel.pivot = {1.0f, 1.0f}; // Bottom right pivot
-    rtPanel.position = {-10.0f, -10.0f}; // 10px margin
-    rtPanel.zIndex = 10;
-    
-    auto& urPanel = entityManager().addComponent<UIRenderable>(uiPanel);
-    urPanel.color = {0.2f, 0.2f, 0.2f, 0.8f}; // Dark gray
+    // --- Fluent UI Refactor ---
+    auto quadMesh = meshSystem().loadMesh("/mem/quad-test.raw").orValue(0);
 
-    EntityID uiButton = entityManager().createEntity();
-    auto& rtButton = entityManager().addComponent<RectTransform>(uiButton);
-    rtButton.anchorMin = {0.5f, 0.5f}; // Center in parent
-    rtButton.anchorMax = {0.5f, 0.5f};
-    rtButton.size = {150.0f, 50.0f};
-    rtButton.pivot = {0.5f, 0.5f}; // Center pivot
-    rtButton.zIndex = 20;
-
-    auto& urButton = entityManager().addComponent<UIRenderable>(uiButton);
-    urButton.color = {0.4f, 0.4f, 0.8f, 1.0f}; // Blue
-
-    entityManager().addComponent<UIInteractable>(uiButton);
-    entityManager().attachEntity(uiButton, uiPanel); // Button inside Panel
-
-    uiTextEntity_ = entityManager().createEntity();
-    auto& rtText = entityManager().addComponent<RectTransform>(uiTextEntity_);
-    rtText.anchorMin = {0.0f, 0.5f};
-    rtText.anchorMax = {0.0f, 0.5f};
-    rtText.size = {150.0f, 50.0f};
-    rtText.pivot = {0.0f, 0.5f}; 
-    rtText.position = {10.0f, 0.0f};
-    rtText.zIndex = 30;
-
-    auto& ut = entityManager().addComponent<UIText>(uiTextEntity_);
-    ut.text = "Hello, jaeng!";
-    ut.color = {1.0f, 1.0f, 1.0f, 1.0f};
-    ut.fontHandle = defaultFont_;
-    ut.fontSize = 32.0f;
-    entityManager().attachEntity(uiTextEntity_, uiButton);
-
-    if (auto quadMeshHandle = meshSystem().loadMesh("/mem/quad-test.raw").logError()) {
-        entityManager().addComponent<MeshComponent>(uiPanel) = {quadMeshHandle.value()};
-        entityManager().addComponent<MeshComponent>(uiButton) = {quadMeshHandle.value()};
-        entityManager().addComponent<MeshComponent>(uiTextEntity_) = {quadMeshHandle.value()};
-    }
-    
-    entityManager().addComponent<MaterialComponent>(uiPanel) = {uiMaterial_};
-    entityManager().addComponent<MaterialComponent>(uiButton) = {uiMaterial_};
-    entityManager().addComponent<MaterialComponent>(uiTextEntity_) = {uiMaterial_};
-
-    BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
-    entityManager().addComponent<BufferComponent>(uiPanel) = {renderer().create_buffer(&cbDesc, nullptr)};
-    entityManager().addComponent<BufferComponent>(uiButton) = {renderer().create_buffer(&cbDesc, nullptr)};
-    entityManager().addComponent<BufferComponent>(uiTextEntity_) = {renderer().create_buffer(&cbDesc, nullptr)};
+    UIBuilder builder(entityManager(), quadMesh, uiMaterial_, &renderer());
+    builder.begin("HUD_Panel")
+        .withRect({200.0f, 150.0f}, {-10.0f, -10.0f})
+        .withAnchors({1.0f, 1.0f}, {1.0f, 1.0f})
+        .withPivot({1.0f, 1.0f})
+        .withZIndex(10)
+        .withColor({0.2f, 0.2f, 0.2f, 0.8f})
+        .begin("Selection_Button")
+            .withRect({150.0f, 50.0f}, {0.0f, 0.0f})
+            .withAnchors({0.5f, 0.5f}, {0.5f, 0.5f})
+            .withPivot({0.5f, 0.5f})
+            .withZIndex(20)
+            .withColor({0.4f, 0.4f, 0.8f, 1.0f})
+            .onClick([](){ JAENG_LOG_INFO("Button Clicked!"); })
+            .onHover([this, e = builder.getCurrent()](bool hovered){
+                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
+                    ur->color = hovered ? glm::vec4(0.6f, 0.6f, 1.0f, 1.0f) : glm::vec4(0.4f, 0.4f, 0.8f, 1.0f);
+                }
+            })
+            .begin("Selection_Text", &uiTextEntity_)
+                .withRect({150.0f, 50.0f}, {10.0f, 0.0f})
+                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
+                .withPivot({0.0f, 0.5f})
+                .withZIndex(30)
+                .withText("No Selection", 32.0f, defaultFont_)
+            .end()
+        .end()
+    .end();
 
     // Run the transform system once to generate the initial matrices
     TransformSystem::update(entityManager());

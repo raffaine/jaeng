@@ -23,15 +23,15 @@ namespace jaeng::math {
             float t5 = (min.z - ray.origin.z) / ray.direction.z;
             float t6 = (max.z - ray.origin.z) / ray.direction.z;
 
-            float tmin_x = std::min(t1, t2);
-            float tmax_x = std::max(t1, t2);
-            float tmin_y = std::min(t3, t4);
-            float tmax_y = std::max(t3, t4);
-            float tmin_z = std::min(t5, t6);
-            float tmax_z = std::max(t5, t6);
+            float tmin_x = (std::min)(t1, t2);
+            float tmax_x = (std::max)(t1, t2);
+            float tmin_y = (std::min)(t3, t4);
+            float tmax_y = (std::max)(t3, t4);
+            float tmin_z = (std::min)(t5, t6);
+            float tmax_z = (std::max)(t5, t6);
 
-            float tmin_final = std::max(std::max(tmin_x, tmin_y), tmin_z);
-            float tmax_final = std::min(std::min(tmax_x, tmax_y), tmax_z);
+            float tmin_final = (std::max)((std::max)(tmin_x, tmin_y), tmin_z);
+            float tmax_final = (std::min)((std::min)(tmax_x, tmax_y), tmax_z);
 
             if (tmax_final < 0 || tmin_final > tmax_final) {
                 return false;
