@@ -40,5 +40,11 @@ namespace jaeng::math {
             tmin = tmin_final;
             return true;
         }
+
+        bool contains(const glm::vec3& p) const {
+            return p.x >= min.x && p.x <= max.x &&
+                   p.y >= min.y && p.y <= max.y &&
+                   p.z >= min.z && p.z <= max.z;
+        }
     };
 }

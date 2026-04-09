@@ -12,6 +12,8 @@
 #include "ui/ui.h"
 #include "common/math/ray.h"
 #include "scene/icamera.h"
+#include "scene/render_sys.h"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -288,11 +290,7 @@ math::Ray SandboxApp::getRayFromMouse() const {
 void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     outQueue.clear();
 
-    // Reset UI state every frame to avoid ghosting
-    RenderCommand clearCmd;
-    clearCmd.type = RenderCommandType::ClearUI;
-    outQueue.push_back(clearCmd);
-
+    // 1) Camera State
     if (auto* scene = sceneManager().getScene("Test")) {
         if (auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera())) {
             RenderCommand cmd;
@@ -302,23 +300,21 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
         }
     }
 
-    const auto& entities = entityManager().getAllEntities<WorldMatrix>();
-    for (auto e : entities) {
-        auto* wm = entityManager().getComponent<WorldMatrix>(e);
-        auto* mesh = entityManager().getComponent<MeshComponent>(e);
-        auto* mat = entityManager().getComponent<MaterialComponent>(e);
-        auto* cb = entityManager().getComponent<BufferComponent>(e);
-
-        if (wm && mesh && mat) {
-            RenderCommand cmd;
-            cmd.type = RenderCommandType::Update;
-            glm::vec4 color = (e == selectionState_.selectedEntity) ? glm::vec4(1, 0, 0, 1) : glm::vec4(1, 1, 1, 1);
-            cmd.proxy = RenderProxy { static_cast<uint32_t>(e), wm->value, mesh->handle, mat->handle, cb ? cb->handle : 0, color };
-            outQueue.push_back(cmd);
-        }
+    // 2) 3D Scene State (Engine-managed extraction with selection visitor)
+    if (auto* scene = sceneManager().getScene("Test")) {
+        SceneRenderSystem::extract(*scene, entityManager(), outQueue, [this](EntityID e, RenderProxy& proxy) {
+            if (e == selectionState_.selectedEntity) {
+                proxy.color = glm::vec4(1, 0, 0, 1);
+            }
+        });
     }
 
-    // Unified Engine-side UI extraction!
+    // 3) UI state every frame to avoid ghosting
+    RenderCommand clearCmd;
+    clearCmd.type = RenderCommandType::ClearUI;
+    outQueue.push_back(clearCmd);
+
+    // 4) UI State (Engine-managed extraction)
     UIRenderSystem::extract(entityManager(), fontSystem(), outQueue);
 }
 
@@ -326,27 +322,16 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
     Scene* scene = sceneManager().getScene("Test");
     if (!scene) return;
 
-    for (const auto& cmd : inQueue) {
-        if (cmd.type == RenderCommandType::UpdateCamera) {
-            scene->setCameraViewProj(cmd.cameraViewProj);
-        }
-    }
-
+    // Dispatch all logic updates to the scene
     if (hasNewState) {
+        scene->processCommands(inQueue);
+    } else {
+        // Even if no state change, we still need to sync the camera every frame
         for (const auto& cmd : inQueue) {
-            if (cmd.type == RenderCommandType::Update) {
-                scene->addOrUpdateProxy(cmd.proxy);
-            } else if (cmd.type == RenderCommandType::Destroy) {
-                scene->removeProxy(cmd.id);
-            } else if (cmd.type == RenderCommandType::UpdateUI) {
-                scene->addOrUpdateUIProxy(cmd.uiProxy);
-            } else if (cmd.type == RenderCommandType::DestroyUI) {
-                scene->removeUIProxy(cmd.id);
-            } else if (cmd.type == RenderCommandType::ClearUI) {
-                scene->clearUIProxies();
+            if (cmd.type == RenderCommandType::UpdateCamera) {
+                scene->setCameraViewProj(cmd.cameraViewProj);
             }
         }
-        scene->getPartitioner()->build();
     }
     
     scene->buildDrawList({});

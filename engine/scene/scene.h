@@ -37,6 +37,9 @@ public:
 
     void setCbFrame(BufferHandle h) { cbFrame = h; }
 
+    // Consumes a queue of render commands to update the scene state
+    void processCommands(const std::vector<RenderCommand>& queue);
+
     // Creates the needed passes on Render Graph
     void renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer = 0);
 

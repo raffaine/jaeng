@@ -17,6 +17,7 @@ set(JAENG_SOURCES
   animation/animation.cpp
   entity/entity.h
   scene/scene.cpp
+  scene/render_sys.cpp
   scene/grid_partition.cpp
   scene/perspective_cam.cpp
   ui/ui.cpp

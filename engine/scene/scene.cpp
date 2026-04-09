@@ -134,6 +134,32 @@ void Scene::buildDrawList(const math::AABB& volume)
     }
 }
 
+void Scene::processCommands(const std::vector<RenderCommand>& queue) {
+    for (const auto& cmd : queue) {
+        switch (cmd.type) {
+            case RenderCommandType::Update:
+                addOrUpdateProxy(cmd.proxy);
+                break;
+            case RenderCommandType::Destroy:
+                removeProxy(cmd.id);
+                break;
+            case RenderCommandType::UpdateCamera:
+                setCameraViewProj(cmd.cameraViewProj);
+                break;
+            case RenderCommandType::UpdateUI:
+                addOrUpdateUIProxy(cmd.uiProxy);
+                break;
+            case RenderCommandType::DestroyUI:
+                removeUIProxy(cmd.id);
+                break;
+            case RenderCommandType::ClearUI:
+                clearUIProxies();
+                break;
+        }
+    }
+    partitioner->build();
+}
+
 void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer)
 {
     // 1) Clear pass
