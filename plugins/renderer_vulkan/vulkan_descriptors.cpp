@@ -6,16 +6,17 @@ namespace jaeng::renderer {
 jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDescriptors) {
     device_ = device;
     maxDescriptors_ = maxDescriptors;
+    const uint32_t MAX_UNIFORM_BINDINGS = 8;
 
     // Set 0: Uniforms (b registers)
     std::vector<vk::DescriptorSetLayoutBinding> uBindings;
-    for (uint32_t i = 0; i < 8; ++i) {
+    for (uint32_t i = 0; i < MAX_UNIFORM_BINDINGS; ++i) {
         uBindings.push_back({ i, vk::DescriptorType::eUniformBufferDynamic, 1, vk::ShaderStageFlagBits::eAllGraphics });
     }
     
     // Enable UpdateAfterBind for uniforms too to allow mid-frame updates
     vk::DescriptorBindingFlags uFlags = vk::DescriptorBindingFlagBits::ePartiallyBound;
-    std::vector<vk::DescriptorBindingFlags> uFlagsList(8, uFlags);
+    std::vector<vk::DescriptorBindingFlags> uFlagsList(MAX_UNIFORM_BINDINGS, uFlags);
     vk::DescriptorSetLayoutBindingFlagsCreateInfo uFlagsInfo(uFlagsList);
     
     vk::DescriptorSetLayoutCreateInfo uLayoutInfo({}, uBindings);
@@ -24,7 +25,7 @@ jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDes
 
     // Set 1: Sampled Images (t registers) - Bindless Array
     std::vector<vk::DescriptorSetLayoutBinding> tBindings = {
-        { 0, vk::DescriptorType::eSampledImage, maxDescriptors, vk::ShaderStageFlagBits::eAllGraphics }
+        { 0, vk::DescriptorType::eSampledImage, maxDescriptors_, vk::ShaderStageFlagBits::eAllGraphics }
     };
     vk::DescriptorBindingFlags tFlags = vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
     vk::DescriptorSetLayoutBindingFlagsCreateInfo tFlagsInfo(tFlags);
@@ -34,7 +35,7 @@ jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDes
 
     // Set 2: Samplers (s registers) - Bindless Array
     std::vector<vk::DescriptorSetLayoutBinding> sBindings = {
-        { 0, vk::DescriptorType::eSampler, maxDescriptors, vk::ShaderStageFlagBits::eAllGraphics }
+        { 0, vk::DescriptorType::eSampler, maxDescriptors_, vk::ShaderStageFlagBits::eAllGraphics }
     };
     vk::DescriptorBindingFlags sFlags = vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind;
     vk::DescriptorSetLayoutBindingFlagsCreateInfo sFlagsInfo(sFlags);
@@ -44,11 +45,11 @@ jaeng::result<> VulkanDescriptorHeap::init(VulkanDevice* device, uint32_t maxDes
 
     // Create Pool
     std::vector<vk::DescriptorPoolSize> poolSizes = {
-        { vk::DescriptorType::eUniformBufferDynamic, 8 },
-        { vk::DescriptorType::eSampledImage, maxDescriptors },
-        { vk::DescriptorType::eSampler, maxDescriptors }
+        { vk::DescriptorType::eUniformBufferDynamic, 1000 }, // Pool capacity for sets, not bindings per set
+        { vk::DescriptorType::eSampledImage, maxDescriptors_ },
+        { vk::DescriptorType::eSampler, maxDescriptors_ }
     };
-    vk::DescriptorPoolCreateInfo poolInfo(vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind, 3, poolSizes);
+    vk::DescriptorPoolCreateInfo poolInfo(vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind, 10, poolSizes);
     pool = device_->device.createDescriptorPool(poolInfo);
 
     // Allocate Sets

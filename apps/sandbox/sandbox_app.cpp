@@ -18,11 +18,9 @@
 #include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 
-#if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
-#include "basic_reflect.h"
-#else
+// Shader Includes
 #include "basic.h"
-#endif
+#include "ui.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -71,7 +69,7 @@ static const char* materialFileData = R"({
     "metallic": 0.0
   },
   "constantBuffers": [
-    { "name": "CBObject", "size": 80, "binding": 0 },
+    { "name": "CBObject", "size": 96, "binding": 0 },
     { "name": "CBFrame", "size": 64, "binding": 1 }
   ],
   "pipelineStates": {
@@ -139,6 +137,10 @@ void SandboxApp::app_shutdown() {
 
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
+    static uint32_t frameCount = 0;
+    if (frameCount++ % 100 == 0) {
+        JAENG_LOG_DEBUG("Simulation Frame: {}", frameCount);
+    }
 
     // 1) Update UI Layout
     UILayoutSystem::update(entityManager(), static_cast<float>(getConfig().width), static_cast<float>(getConfig().height));
@@ -156,6 +158,17 @@ void SandboxApp::tick(float dt) {
 
     // Process Animations BEFORE Transform System
     AnimationSystem::update(entityManager(), dt);
+
+    // Update UI Text with selection info
+    if (uiTextEntity_ != static_cast<EntityID>(-1)) {
+        if (auto* ut = entityManager().getComponent<UIText>(uiTextEntity_)) {
+            if (selectionState_.selectedEntity != static_cast<EntityID>(-1)) {
+                ut->text = "Selected: " + std::to_string(static_cast<uint32_t>(selectionState_.selectedEntity));
+            } else {
+                ut->text = "No Selection";
+            }
+        }
+    }
 
     // Process the entire hierarchy into WorldMatrices
     TransformSystem::update(entityManager());
@@ -274,6 +287,13 @@ math::Ray SandboxApp::getRayFromMouse() const {
 void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     outQueue.clear();
 
+    // Reset UI state every frame to avoid ghosting (we send the full UI state every frame)
+    {
+        RenderCommand clearCmd;
+        clearCmd.type = RenderCommandType::ClearUI;
+        outQueue.push_back(clearCmd);
+    }
+
     if (auto* scene = sceneManager().getScene("Test")) {
         if (auto* cam = static_cast<PerspectiveCamera*>(scene->getCamera())) {
             RenderCommand cmd;
@@ -303,30 +323,83 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     const auto& uiEntities = entityManager().getAllEntities<RectTransform>();
     for (auto e : uiEntities) {
         auto* rt = entityManager().getComponent<RectTransform>(e);
-        auto* ur = entityManager().getComponent<UIRenderable>(e);
-        if (rt && ur) {
-            auto* mesh = entityManager().getComponent<MeshComponent>(e);
-            auto* mat = entityManager().getComponent<MaterialComponent>(e);
-            auto* cb = entityManager().getComponent<BufferComponent>(e);
+        auto* mesh = entityManager().getComponent<MeshComponent>(e);
+        auto* mat = entityManager().getComponent<MaterialComponent>(e);
+        auto* cb = entityManager().getComponent<BufferComponent>(e);
+
+        if (!rt || !mesh || !mat) continue;
+
+        if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
             auto* interactable = entityManager().getComponent<UIInteractable>(e);
-            if (mesh && mat) {
-                RenderCommand cmd;
-                cmd.type = RenderCommandType::UpdateUI;
-                glm::vec4 finalColor = ur->color;
-                if (interactable) {
-                    if (interactable->isPressed) finalColor *= 0.5f;
-                    else if (interactable->isHovered) finalColor *= 1.2f;
+            RenderCommand cmd;
+            cmd.type = RenderCommandType::UpdateUI;
+            glm::vec4 finalColor = ur->color;
+            if (interactable) {
+                if (interactable->isPressed) finalColor *= 0.5f;
+                else if (interactable->isHovered) finalColor *= 1.2f;
+            }
+            cmd.uiProxy = UIRenderProxy{
+                static_cast<uint32_t>(e),
+                rt->worldRect.x, rt->worldRect.y, rt->worldRect.w, rt->worldRect.h,
+                rt->zIndex,
+                finalColor,
+                mesh->handle,
+                mat->handle,
+                cb ? cb->handle : 0,
+                {0.0f, 0.0f, 1.0f, 1.0f},
+                0
+            };
+            outQueue.push_back(cmd);
+        }
+
+        if (auto* ut = entityManager().getComponent<UIText>(e)) {
+            auto fontRes = fontSystem().getFont(ut->fontHandle);
+            if (fontRes.hasValue()) {
+                const auto* fontData = std::move(fontRes).logError().value();
+                float fontScale = ut->fontSize / fontData->pixelHeight;
+                float startX = rt->worldRect.x;
+                float x = startX;
+                float y = rt->worldRect.y + fontData->ascent * fontScale;
+                float lineHeight = (fontData->ascent - fontData->descent + fontData->lineGap) * fontScale;
+
+                for (size_t i = 0; i < ut->text.size(); ++i) {
+                    char c = ut->text[i];
+                    if (c == '\n') {
+                        x = startX;
+                        y += lineHeight;
+                        continue;
+                    }
+                    if (c >= 32 && c < 128) {
+                        const auto& glyph = fontData->cdata[c - 32];
+                        
+                        float gx = x + glyph.xoff * fontScale;
+                        float gy = y + glyph.yoff * fontScale;
+                        float gw = (glyph.x1 - glyph.x0) * fontScale;
+                        float gh = (glyph.y1 - glyph.y0) * fontScale;
+
+                        float u0 = (float)glyph.x0 / fontData->atlasSize;
+                        float v0 = (float)glyph.y0 / fontData->atlasSize;
+                        float u1 = (float)glyph.x1 / fontData->atlasSize;
+                        float v1 = (float)glyph.y1 / fontData->atlasSize;
+
+                        RenderCommand cmd;
+                        cmd.type = RenderCommandType::UpdateUI;
+                        cmd.uiProxy = UIRenderProxy{
+                            (static_cast<uint32_t>(e) << 16) | (static_cast<uint32_t>(i) & 0xFFFF),
+                            gx, gy, gw, gh,
+                            rt->zIndex + 1, // Draw text over the panel
+                            ut->color,
+                            mesh->handle,
+                            mat->handle,
+                            cb ? cb->handle : 0,
+                            {u0, v0, u1 - u0, v1 - v0},
+                            fontData->texture
+                        };
+                        outQueue.push_back(cmd);
+
+                        x += glyph.xadvance * fontScale;
+                    }
                 }
-                cmd.uiProxy = UIRenderProxy{
-                    static_cast<uint32_t>(e),
-                    rt->worldRect.x, rt->worldRect.y, rt->worldRect.w, rt->worldRect.h,
-                    rt->zIndex,
-                    finalColor,
-                    mesh->handle,
-                    mat->handle,
-                    cb ? cb->handle : 0
-                };
-                outQueue.push_back(cmd);
             }
         }
     }
@@ -352,6 +425,8 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
                 scene->addOrUpdateUIProxy(cmd.uiProxy);
             } else if (cmd.type == RenderCommandType::DestroyUI) {
                 scene->removeUIProxy(cmd.id);
+            } else if (cmd.type == RenderCommandType::ClearUI) {
+                scene->clearUIProxies();
             }
         }
         scene->getPartitioner()->build();
@@ -392,7 +467,46 @@ void SandboxApp::app_on_event(const Event& ev) {
     }
 }
 
+static const char* uiMaterialFileData = R"({
+  "name": "UIMaterial",
+  "shader": {
+    "vertex": ")" JAENG_SHADER_DIR "/compiled/ui_vs" SHADER_EXT R"(",
+    "pixel": ")" JAENG_SHADER_DIR "/compiled/ui_ps" SHADER_EXT R"(",
+    "reflection": ")" JAENG_SHADER_DIR "/include/ui.json" R"("
+  },
+  "textures": [
+    {
+      "path": "/mem/white.raw",
+      "width": 1,
+      "height": 1,
+      "format": "rgba8",
+      "sampler": {
+        "filter": "nearest",
+        "addressModeU": "clamp",
+        "addressModeV": "clamp"
+      }
+    }
+  ],
+  "parameters": {
+    "color": [1.0, 1.0, 1.0, 1.0],
+    "roughness": 0.5,
+    "metallic": 0.0
+  },
+  "constantBuffers": [
+    { "name": "CBObject", "size": 96, "binding": 0 },
+    { "name": "CBFrame", "size": 64, "binding": 1 }
+  ],
+  "pipelineStates": {
+    "blend": { "enabled": true, "srcFactor": "src_alpha", "dstFactor": "one_minus_src_alpha" },
+    "rasterizer": { "cullMode": "none", "fillMode": "solid" },
+    "depthStencil": { "depthTest": false, "depthWrite": false }
+  }
+})";
+
 void SandboxApp::setupResources() {
+    uint32_t whitePixel = 0xFFFFFFFF;
+    fileManager().registerMemoryFile("/mem/white.raw", &whitePixel, sizeof(uint32_t));
+
     const uint32_t W = 256, H = 256, CS = 32;
     std::vector<uint32_t> pixels(W * H);
     for (uint32_t y = 0; y < H; ++y) {
@@ -404,12 +518,21 @@ void SandboxApp::setupResources() {
     }
     fileManager().registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size() * sizeof(uint32_t));
     fileManager().registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
+    fileManager().registerMemoryFile("/mem/ui-material.json", uiMaterialFileData, strlen(uiMaterialFileData));
 
     auto meshRawData = createCubeMeshBinary();
     fileManager().registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
 
     auto quadRawData = createQuadMeshBinary();
     fileManager().registerMemoryFile("/mem/quad-test.raw", quadRawData.data(), quadRawData.size());
+
+    if (auto fontHandle = fontSystem().loadFont(JAENG_ASSET_DIR "/Roboto-Regular.ttf", 32.0f).logError()) {
+        defaultFont_ = fontHandle.value();
+    }
+    
+    if (auto matHandle = materialSystem().createMaterial("/mem/ui-material.json", &ShaderReflection::ui::vertexLayout, 1, ShaderReflection::ui::inputSemantics).logError()) {
+        uiMaterial_ = matHandle.value();
+    }
 }
 
 void SandboxApp::setupEntities() {
@@ -419,11 +542,11 @@ void SandboxApp::setupEntities() {
     if (auto meshHandle = meshSystem().loadMesh("/mem/mesh-test.raw").logError()) {
         for (int i = 0; i < 4; i++) {
             entityManager().addComponent<MeshComponent>(testEntities_[i]) = {meshHandle.value()};
-            BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
+            BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
             entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
         }
     }
-    if (auto matHandle = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
+    if (auto matHandle = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::basic::vertexLayout, 1, ShaderReflection::basic::inputSemantics).logError()) {
         auto h = matHandle.value();
         for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
 #ifdef JAENG_WIN32
@@ -472,24 +595,36 @@ void SandboxApp::setupEntities() {
     entityManager().addComponent<UIInteractable>(uiButton);
     entityManager().attachEntity(uiButton, uiPanel); // Button inside Panel
 
+    uiTextEntity_ = entityManager().createEntity();
+    auto& rtText = entityManager().addComponent<RectTransform>(uiTextEntity_);
+    rtText.anchorMin = {0.0f, 0.5f};
+    rtText.anchorMax = {0.0f, 0.5f};
+    rtText.size = {150.0f, 50.0f};
+    rtText.pivot = {0.0f, 0.5f}; 
+    rtText.position = {10.0f, 0.0f};
+    rtText.zIndex = 30;
+
+    auto& ut = entityManager().addComponent<UIText>(uiTextEntity_);
+    ut.text = "Hello, jaeng!";
+    ut.color = {1.0f, 1.0f, 1.0f, 1.0f};
+    ut.fontHandle = defaultFont_;
+    ut.fontSize = 32.0f;
+    entityManager().attachEntity(uiTextEntity_, uiButton);
+
     if (auto quadMeshHandle = meshSystem().loadMesh("/mem/quad-test.raw").logError()) {
         entityManager().addComponent<MeshComponent>(uiPanel) = {quadMeshHandle.value()};
         entityManager().addComponent<MeshComponent>(uiButton) = {quadMeshHandle.value()};
+        entityManager().addComponent<MeshComponent>(uiTextEntity_) = {quadMeshHandle.value()};
     }
     
-    if (auto matHandle1 = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
-        auto h1 = matHandle1.value();
-        entityManager().addComponent<MaterialComponent>(uiPanel) = {h1};
-        BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
-        entityManager().addComponent<BufferComponent>(uiPanel) = {renderer().create_buffer(&cbDesc, nullptr)};
-    }
-    
-    if (auto matHandle2 = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::vertexLayout, 1, ShaderReflection::inputSemantics).logError()) {
-        auto h2 = matHandle2.value();
-        entityManager().addComponent<MaterialComponent>(uiButton) = {h2};
-        BufferDesc cbDesc{ .size_bytes = 80, .usage = BufferUsage_Uniform };
-        entityManager().addComponent<BufferComponent>(uiButton) = {renderer().create_buffer(&cbDesc, nullptr)};
-    }
+    entityManager().addComponent<MaterialComponent>(uiPanel) = {uiMaterial_};
+    entityManager().addComponent<MaterialComponent>(uiButton) = {uiMaterial_};
+    entityManager().addComponent<MaterialComponent>(uiTextEntity_) = {uiMaterial_};
+
+    BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
+    entityManager().addComponent<BufferComponent>(uiPanel) = {renderer().create_buffer(&cbDesc, nullptr)};
+    entityManager().addComponent<BufferComponent>(uiButton) = {renderer().create_buffer(&cbDesc, nullptr)};
+    entityManager().addComponent<BufferComponent>(uiTextEntity_) = {renderer().create_buffer(&cbDesc, nullptr)};
 
     // Run the transform system once to generate the initial matrices
     TransformSystem::update(entityManager());

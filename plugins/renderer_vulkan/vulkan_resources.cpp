@@ -76,7 +76,7 @@ jaeng::result<VulkanTexture> create_vulkan_texture(VulkanDevice* device, VulkanD
             cb.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr, barrier);
 
             cb.end();
-            vk::SubmitInfo submit({}, {}, cb);
+            vk::SubmitInfo submit(0, nullptr, nullptr, 1, &cb);
             device->graphicsQueue.submit(submit, nullptr);
             device->graphicsQueue.waitIdle();
             device->device.freeCommandBuffers(g_ctx->commandPool, cb);
@@ -94,7 +94,7 @@ jaeng::result<VulkanTexture> create_vulkan_texture(VulkanDevice* device, VulkanD
     uint32_t srvIndex = heap->allocateSrv();
     heap->updateSrv(srvIndex, view, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    return VulkanTexture{ image, memory, view, srvIndex };
+    return VulkanTexture{ image, memory, view, srvIndex, desc->width, desc->height };
 }
 
 } // namespace jaeng::renderer

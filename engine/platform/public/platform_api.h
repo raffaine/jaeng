@@ -18,6 +18,7 @@
 #include "scene/ipartition.h"
 #include "scene/scene.h"
 #include "storage/ifstorage.h"
+#include "ui/fontsys.h"
 
 namespace jaeng::platform {
 
@@ -136,6 +137,7 @@ protected:
     EntityManager& entityManager() { return *entityMan_; }
     IMaterialSystem& materialSystem() { return *matSys_; }
     IMeshSystem& meshSystem() { return *meshSys_; }
+    IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
     IPlatform& platform() { return platform_; }
@@ -158,7 +160,7 @@ private:
     std::atomic<bool> frameReady_ = false;
 
     // Triple buffer for passing render commands from Sim to Render thread without blocking
-    jaeng::TripleBuffer<std::vector<RenderCommand>> stateBuffer_;
+    TripleBuffer<std::vector<RenderCommand>> stateBuffer_;
     
     // Engine Core State and Systems
     IPlatform& platform_;
@@ -173,13 +175,14 @@ private:
     std::shared_ptr<EntityManager> entityMan_;
     std::shared_ptr<IMaterialSystem> matSys_;
     std::shared_ptr<IMeshSystem> meshSys_;
+    std::shared_ptr<IFontSystem> fontSys_;
     std::unique_ptr<SceneManager> sceneMan_;
 };
 
 class IPlatform {
 public:
     virtual ~IPlatform() = default;
-    virtual jaeng::result<std::unique_ptr<IWindow>> create_window(const WindowDesc& desc) = 0;
+    virtual result<std::unique_ptr<IWindow>> create_window(const WindowDesc& desc) = 0;
     virtual IInput& get_input() = 0;
     virtual bool poll_events() = 0;
     virtual void set_event_callback(EventCallback cb) = 0;

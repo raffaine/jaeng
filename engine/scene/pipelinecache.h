@@ -7,21 +7,27 @@
 #include "material/imaterialsys.h"
 #include "render/public/renderer_api.h"
 
+namespace jaeng {
+
 class PipelineCache {
 public:
     // Pipeline is mainly defined by Material but keys on topology as well
     struct Key {
         MaterialHandle material;
         PrimitiveTopology topology;
+        bool enableBlend;
 
         bool operator==(const Key& other) const {
-            return material == other.material && topology == other.topology;
+            return material == other.material && topology == other.topology && enableBlend == other.enableBlend;
         }
     };
 
     struct KeyHash {
         size_t operator()(const Key& key) const {
-            return std::hash<uint64_t>()(static_cast<uint64_t>(key.material) + ((static_cast<uint64_t>(key.topology)+1) << sizeof(uint32_t)) );
+            size_t h1 = std::hash<uint32_t>{}(key.material);
+            size_t h2 = std::hash<uint32_t>{}(static_cast<uint32_t>(key.topology));
+            size_t h3 = std::hash<bool>{}(key.enableBlend);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
         }
     };
 
@@ -39,3 +45,5 @@ public:
 private:
     std::unordered_map<Key, PipelineHandle, KeyHash> cache;
 };
+
+} // namespace jaeng

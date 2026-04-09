@@ -34,7 +34,7 @@ public:
     jaeng::result<> init(const RendererDesc*);
     void shutdown();
 
-    void begin_frame();
+    bool begin_frame();
     void end_frame();
 
     jaeng::result<SwapchainHandle> create_swapchain(const SwapchainDesc*);

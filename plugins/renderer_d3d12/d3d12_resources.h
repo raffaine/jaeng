@@ -17,6 +17,7 @@ struct BufferRec {
     // Cached CPU CBV for Uniform buffers
     D3D12_CPU_DESCRIPTOR_HANDLE cbvCpu{};
     bool cbvCpuValid = false;
+    D3D12_GPU_VIRTUAL_ADDRESS gpuAddress = 0;
 };
 
 struct TextureRec {

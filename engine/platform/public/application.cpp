@@ -2,6 +2,7 @@
 #include "storage/win/filestorage.h"
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
+#include "ui/fontsys.h"
 #include <chrono>
 
 namespace jaeng::platform {
@@ -29,6 +30,7 @@ namespace jaeng::platform {
             platform_.show_message_box("Warning", "Failed to initialize FileManager. Continuing with limited capacity.", MessageBoxType::Warning);
         });
         entityMan_ = std::make_shared<EntityManager>();
+        fontSys_ = std::make_shared<FontSystem>(fileMan_, renderer_.gfx);
         matSys_  = std::make_shared<MaterialSystem>(fileMan_, renderer_.gfx);
         meshSys_ = std::make_shared<MeshSystem>(fileMan_, renderer_.gfx);
         sceneMan_ = std::make_unique<SceneManager>(meshSys_, matSys_, renderer_.gfx);
@@ -53,6 +55,7 @@ namespace jaeng::platform {
         sceneMan_.reset();
         meshSys_.reset();
         matSys_.reset();
+        fontSys_.reset();
         entityMan_.reset();
         renderer_.shutdown();
         if (window_) window_->destroy();
@@ -135,19 +138,20 @@ namespace jaeng::platform {
 
             // Engine strictly owns the resize, compile, and present steps!
             renderer_.process_pending_resizes();
-            renderer_->begin_frame();
-            TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
-            TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
+            if (renderer_->begin_frame()) {
+                TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
+                TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
 
-            RenderGraph graph;
-            
-            // Render the extracted state
-            render(stateBuffer_.get_consumer(), hasNewState, graph, backbuffer, depthbuffer);
+                RenderGraph graph;
 
-            graph.compile();
-            graph.execute(*renderer_.gfx, depthbuffer, nullptr);
-            renderer_->present(swap_);
-            renderer_->end_frame();
+                // Render the extracted state
+                render(stateBuffer_.get_consumer(), hasNewState, graph, backbuffer, depthbuffer);
+
+                graph.compile();
+                graph.execute(*renderer_.gfx, depthbuffer, nullptr);
+                renderer_->present(swap_);
+                renderer_->end_frame();
+            }
         }
     }
 

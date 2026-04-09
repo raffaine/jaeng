@@ -30,6 +30,7 @@ public:
     void removeProxy(uint32_t id) { partitioner->remove(id); }
     void addOrUpdateUIProxy(const UIRenderProxy& proxy) { uiProxies[proxy.id] = proxy; }
     void removeUIProxy(uint32_t id) { uiProxies.erase(id); }
+    void clearUIProxies() { uiProxies.clear(); }
 
     // Builts batched draw commands for Render Graph
     void buildDrawList(const math::AABB&);
@@ -61,11 +62,13 @@ private:
     struct DrawPacket {
         int entityId;
         glm::mat4 worldMatrix;
-        glm::vec4 color;
+        glm::vec4 color{1.0f};
+        glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // For UI textures
         BufferHandle vertexBuffer;
         BufferHandle indexBuffer;
         uint32_t indexCount;
         BufferHandle constant;
+        TextureHandle textureOverride;
     };
 
     // Shared Instance Resources for Drawing

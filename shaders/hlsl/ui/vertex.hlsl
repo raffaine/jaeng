@@ -45,8 +45,8 @@ VSOut main(VSIn v) {
 #else
     o.pos = mul(ViewProj, mul(World, float4(v.pos, 1.0)));
 #endif
-    o.col = float4(v.col, 1.0) * MaterialColor;
+    // Ignore vertex colors for UI, use white
+    o.col = float4(1.0, 1.0, 1.0, 1.0) * MaterialColor;
     o.uv = v.uv * MaterialUVRect.zw + MaterialUVRect.xy;
     return o;
 }
-

@@ -41,7 +41,7 @@ void Scene::buildDrawList(const math::AABB& volume)
         if(!mesh || !matBg) continue;
 
         // Creates or Retrieves the Pipeline
-        PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology };
+        PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology, .enableBlend = false };
         auto pso = pipelineCache->getPipeline(pk);
         if (!pso.has_value()) {
             auto gfx = renderer.lock();
@@ -49,6 +49,7 @@ void Scene::buildDrawList(const math::AABB& volume)
             // Creates Pipeline and Stores it in the cache
             GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, mesh->topology, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
             pdesc.depth_stencil.enableDepth = true; // always enable depth for now (TODO: material should tell this)
+            pdesc.enable_blend = false;
             pso = gfx->create_graphics_pipeline(&pdesc);
             pipelineCache->storePipeline(pk, *pso);
         }
@@ -93,13 +94,14 @@ void Scene::buildDrawList(const math::AABB& volume)
 
         if(!mesh || !matBg) continue;
 
-        PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology };
+        PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology, .enableBlend = true };
         auto pso = pipelineCache->getPipeline(pk);
         if (!pso.has_value()) {
             auto gfx = renderer.lock();
             if (!gfx) return; 
             GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, mesh->topology, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
             pdesc.depth_stencil.enableDepth = false; // Disable depth test for UI
+            pdesc.enable_blend = true;
             pso = gfx->create_graphics_pipeline(&pdesc);
             pipelineCache->storePipeline(pk, *pso);
         }
@@ -114,14 +116,13 @@ void Scene::buildDrawList(const math::AABB& volume)
             .entityId = static_cast<int>(proxy.id),
             .worldMatrix = worldMat,
             .color = proxy.color,
+            .uvRect = proxy.uvRect,
             .vertexBuffer = mesh->vertexBuffer,
             .indexBuffer  = mesh->indexBuffer,
             .indexCount   = static_cast<uint32_t>(mesh->indexCount),
+            .constant     = matBg->constantBuffers.size() >= 3 ? matBg->constantBuffers[2] : 0,
+            .textureOverride = proxy.textureOverride
         };
-
-        if (matBg->constantBuffers.size() >= 3) {
-            dp.constant = matBg->constantBuffers[2];
-        }
 
         DrawBatch db { .pipeline = *pso, .material = proxy.material, .constant = matBg->constantBuffers[0] };
         if (matBg->constantBuffers.size() >= 2) {
@@ -165,13 +166,17 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     // Push Bindless Indices (Texture and Sampler)
                     if (matBg) {
                         uint32_t indices[2] = { 0, 0 };
-                        if (!matBg->textureIndices.empty()) indices[0] = matBg->textureIndices[0];
+                        if (dp.textureOverride != 0) {
+                            indices[0] = ctx.gfx->get_texture_index(dp.textureOverride);
+                        } else if (!matBg->textureIndices.empty()) {
+                            indices[0] = matBg->textureIndices[0];
+                        }
                         if (!matBg->samplerIndices.empty()) indices[1] = matBg->samplerIndices[0];
                         ctx.gfx->cmd_push_constants(ctx.cmd, 0, 2, indices);
                     }
                     
-                    // Unified update for WorldMatrix + Color
-                    struct { glm::mat4 w; glm::vec4 c; } cbData { dp.worldMatrix, dp.color };
+                    // Unified update for WorldMatrix + Color + UVRect
+                    struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
                     ctx.gfx->update_buffer(db.constant, 0, &cbData, sizeof(cbData));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, db.constant, 0);
 
@@ -208,12 +213,16 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
 
                     if (matBg) {
                         uint32_t indices[2] = { 0, 0 };
-                        if (!matBg->textureIndices.empty()) indices[0] = matBg->textureIndices[0];
+                        if (dp.textureOverride != 0) {
+                            indices[0] = ctx.gfx->get_texture_index(dp.textureOverride);
+                        } else if (!matBg->textureIndices.empty()) {
+                            indices[0] = matBg->textureIndices[0];
+                        }
                         if (!matBg->samplerIndices.empty()) indices[1] = matBg->samplerIndices[0];
                         ctx.gfx->cmd_push_constants(ctx.cmd, 0, 2, indices);
                     }
                     
-                    struct { glm::mat4 w; glm::vec4 c; } cbData { dp.worldMatrix, dp.color };
+                    struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
                     ctx.gfx->update_buffer(db.constant, 0, &cbData, sizeof(cbData));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, db.constant, 0);
 

@@ -5,6 +5,8 @@
 
 using nlohmann::json;
 
+namespace jaeng {
+
 MaterialMetadata fromJson(const json& matJson) {
     MaterialMetadata m {
         .name = matJson["name"].get<std::string>(),
@@ -217,3 +219,5 @@ void MaterialSystem::setVectorParam(MaterialHandle handle, const std::string& na
 void MaterialSystem::updateMaterialParameters(MaterialHandle handle) {
     // Moved to Render Thread via extraction Proxies to prevent COMMAND_LIST_CLOSED crashes.
 }
+
+} // namespace jaeng

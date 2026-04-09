@@ -59,7 +59,7 @@ static bool vk_init(const RendererDesc* desc) {
     auto res = g_ctx->device.init(true);
     if (res.hasError()) return false;
 
-    (void)g_ctx->descriptors.init(&g_ctx->device, 1024);
+    (void)g_ctx->descriptors.init(&g_ctx->device, 4096);
 
     g_ctx->imageAvailableSemaphore = g_ctx->device.device.createSemaphore({});
     g_ctx->renderFinishedSemaphore = g_ctx->device.device.createSemaphore({});
@@ -100,8 +100,8 @@ static bool vk_init(const RendererDesc* desc) {
     g_ctx->device.device.bindBufferMemory(g_ctx->dynamicBuffer, g_ctx->dynamicMemory, 0);
     g_ctx->mappedDynamicMemory = g_ctx->device.device.mapMemory(g_ctx->dynamicMemory, 0, VulkanContext::DYNAMIC_BUFFER_SIZE);
 
-    // Pre Bind Slots for Dynamic Ring Buffer
-    for (uint32_t i = 1; i < 8; ++i) {
+    // Pre Bind all 8 Slots for Dynamic Ring Buffer (Slot 0 is our push constants fallback)
+    for (uint32_t i = 0; i < 8; ++i) {
         g_ctx->descriptors.updateUniform(i, g_ctx->dynamicBuffer, 0, 4096);
     }
 
@@ -175,22 +175,36 @@ static void vk_shutdown() {
     g_ctx = nullptr;
 }
 
-static void vk_begin_frame() {
-    if (!g_ctx || g_ctx->swapchains.empty()) return;
+static bool vk_begin_frame() {
+    if (!g_ctx || g_ctx->swapchains.empty()) return false;
     
     try {
-        g_ctx->device.device.waitIdle();
         (void)g_ctx->device.device.waitForFences(g_ctx->inFlightFence, true, UINT64_MAX);
-        g_ctx->device.device.resetFences(g_ctx->inFlightFence);
 
         auto it = g_ctx->swapchains.begin();
-        if (it != g_ctx->swapchains.end() && it->second.swapchain) {
-            it->second.acquireNextImage(&g_ctx->device, g_ctx->imageAvailableSemaphore);
+        if (it != g_ctx->swapchains.end()) {
+            it->second.imageAcquired = false; // Reset before trying
+            if (it->second.swapchain) {
+                vk::Result res = it->second.acquireNextImage(&g_ctx->device, g_ctx->imageAvailableSemaphore);
+                if (res == vk::Result::eSuccess || res == vk::Result::eSuboptimalKHR) {
+                    it->second.imageAcquired = true;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
         }
 
+        // Only reset the fence if we are actually going to submit something
+        g_ctx->device.device.resetFences(g_ctx->inFlightFence);
         g_ctx->currentDynamicOffset = 0; // Reset the ring buffer
+        return true;
     } catch (const std::exception& e) {
         JAENG_LOG_ERROR("vk_begin_frame exception: {}", e.what());
+        return false;
     }
 }
 
@@ -241,32 +255,19 @@ static TextureHandle vk_get_depth_buffer(SwapchainHandle h) {
 static void vk_present(SwapchainHandle h) {
     if (!g_ctx) return;
     auto it = g_ctx->swapchains.find(h);
-    if (it != g_ctx->swapchains.end() && it->second.swapchain) {
+    if (it != g_ctx->swapchains.end() && it->second.swapchain && it->second.imageAcquired) {
+        // We MUST reset this flag before attempting present, so that if present fails (or throws),
+        // we don't try to reuse this state in the next frame's submit.
+        it->second.imageAcquired = false;
         try {
-            g_ctx->oneShotCmd.reset();
-            g_ctx->oneShotCmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-            vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
-            vk::ImageMemoryBarrier barrier(
-                vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlags(),
-                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
-                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
-                it->second.images[it->second.currentImageIndex], range
-            );
-            g_ctx->oneShotCmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, nullptr, nullptr, barrier);
-            g_ctx->oneShotCmd.end();
-            vk::SubmitInfo submitInfo(0, nullptr, nullptr, 1, &g_ctx->oneShotCmd, 0, nullptr);
-            (void)g_ctx->device.graphicsQueue.submit(1, &submitInfo, nullptr);
-            g_ctx->device.device.waitIdle();
-
             uint32_t imageIndex = it->second.currentImageIndex;
             vk::Semaphore waitSems[] = { g_ctx->renderFinishedSemaphore };
             vk::SwapchainKHR swaps[] = { it->second.swapchain };
             uint32_t indices[] = { imageIndex };
             vk::PresentInfoKHR presentInfo(1, waitSems, 1, swaps, indices);
-            vk::Result res = g_ctx->device.graphicsQueue.presentKHR(presentInfo);
+            (void)g_ctx->device.graphicsQueue.presentKHR(presentInfo);
             
         } catch (const vk::OutOfDateKHRError&) {
-            // This is expected during resize. The platform layer will issue a resize event shortly.
             JAENG_LOG_DEBUG("vk_present: Swapchain out of date, waiting for resize event.");
         } catch (const std::exception& e) {
             JAENG_LOG_ERROR("vk_present exception: {}", e.what());

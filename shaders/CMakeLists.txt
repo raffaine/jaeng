@@ -39,14 +39,14 @@ foreach(PIPELINE ${PIPELINES})
 
         if(DXC_EXECUTABLE)
             add_custom_command(TARGET compile_shaders POST_BUILD
-                COMMAND ${DXC_EXECUTABLE} -spirv -T vs_6_6 -E main -Fo ${VERTEX_SPV} ${VERTEX_SHADER} -D VULKAN
-                COMMAND ${DXC_EXECUTABLE} -spirv -T ps_6_6 -E main -Fo ${PIXEL_SPV} ${PIXEL_SHADER} -D VULKAN -D VULKAN_BGRA
+                COMMAND ${DXC_EXECUTABLE} -spirv -T vs_6_6 -E main -Fo ${VERTEX_SPV} ${VERTEX_SHADER} -DJAENG_VULKAN
+                COMMAND ${DXC_EXECUTABLE} -spirv -T ps_6_6 -E main -Fo ${PIXEL_SPV} ${PIXEL_SHADER} -DJAENG_VULKAN -DJAENG_VULKAN_BGRA
                 COMMENT "Pipeline ${PIPELINE}: Compiling SPIR-V"
             )
         elseif(GLSLC_EXECUTABLE)
             add_custom_command(TARGET compile_shaders POST_BUILD
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main ${VERTEX_SHADER} -o ${VERTEX_SPV}
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main -DVULKAN_BGRA ${PIXEL_SHADER} -o ${PIXEL_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main -DJAENG_VULKAN ${VERTEX_SHADER} -o ${VERTEX_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main -DJAENG_VULKAN -DJAENG_VULKAN_BGRA ${PIXEL_SHADER} -o ${PIXEL_SPV}
                 COMMENT "Pipeline ${PIPELINE}: Compiling SPIR-V with glslc"
             )
         endif()

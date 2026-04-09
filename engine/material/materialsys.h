@@ -9,6 +9,8 @@
 #include "imaterialsys.h"
 #include "storage/ifstorage.h"
 
+namespace jaeng {
+
 class MaterialSystem : public IMaterialSystem {
 public:
     static constexpr size_t MAX_MATERIALS = 1024;
@@ -72,3 +74,5 @@ private:
     jaeng::result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
                                              const char* requiredSemantics[]);
 };
+
+} // namespace jaeng

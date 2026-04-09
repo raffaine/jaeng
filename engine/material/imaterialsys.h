@@ -9,6 +9,8 @@
 #include "render/public/renderer_api.h"
 #include "common/result.h"
 
+namespace jaeng {
+
 typedef uint32_t MaterialHandle; // Opaque identifier
 
 struct MaterialBindings {
@@ -105,3 +107,5 @@ public:
     // Event subscription for material changes
     virtual void subscribe(MaterialEventListener* listener) = 0;
 };
+
+} // namespace jaeng

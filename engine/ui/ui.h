@@ -3,6 +3,7 @@
 #include "entity/entity.h"
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <string>
 
 namespace jaeng {
 
@@ -25,6 +26,13 @@ struct RectTransform {
 struct UIRenderable {
     glm::vec4 color{1.0f};
     uint32_t textureHandle = 0; // 0 means untextured
+};
+
+struct UIText {
+    std::string text;
+    uint32_t fontHandle = 0;
+    glm::vec4 color{1.0f};
+    float fontSize = 32.0f;
 };
 
 struct UIInteractable {

@@ -5,10 +5,10 @@ std::vector<uint8_t> createQuadMeshBinary() {
     RAWFormatHeader header{4, 6};
 
     RAWFormatVertex vertices[4] = {
-        {{-0.5f,-0.5f,0.0f},{1,0,0},{0,1}},
-        {{-0.5f, 0.5f,0.0f},{0,1,0},{0,0}},
-        {{ 0.5f, 0.5f,0.0f},{0,0,1},{1,0}},
-        {{ 0.5f,-0.5f,0.0f},{1,1,1},{1,1}}
+        {{-0.5f,-0.5f,0.0f},{1,1,1},{0,0}}, // Top-Left
+        {{-0.5f, 0.5f,0.0f},{1,1,1},{0,1}}, // Bottom-Left
+        {{ 0.5f, 0.5f,0.0f},{1,1,1},{1,1}}, // Bottom-Right
+        {{ 0.5f,-0.5f,0.0f},{1,1,1},{1,0}}  // Top-Right
     };
 
     uint32_t indices[6] = {0,1,2,0,2,3};

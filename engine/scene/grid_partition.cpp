@@ -11,7 +11,9 @@ namespace jaeng {
 
     void GridPartitioner::build() {}
     void GridPartitioner::rebuild() {}
-    void GridPartitioner::reset() { proxies_.clear(); }
+    void GridPartitioner::reset() { 
+        proxies_.clear(); 
+    }
 
     std::vector<RenderProxy> GridPartitioner::queryVisible(const jaeng::math::AABB& /*volume*/) const {
         std::vector<RenderProxy> result;

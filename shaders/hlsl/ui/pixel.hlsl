@@ -21,8 +21,7 @@ struct PSIn {
 
 float4 main(PSIn i) : SV_Target {
     float4 tex = textures[textureIndex].Sample(samplers[samplerIndex], i.uv);
-#ifdef JAENG_VULKAN
-    tex = tex.rgba;
-#endif
+    // tex for font is white (1,1,1) with alpha. 
+    // i.col contains MaterialColor.
     return i.col * tex;
 }

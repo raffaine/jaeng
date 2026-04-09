@@ -134,6 +134,7 @@ struct GraphicsPipelineDesc {
   VertexLayoutHandle vertex_layout;
   TextureFormat      color_format; // single RT
   DepthStencilOptions depth_stencil;
+  bool               enable_blend = false;
 };
 
 enum class BindGroupEntryType {
@@ -159,7 +160,7 @@ struct DepthAttachmentDesc {
 // --- Renderer function table ---
 typedef struct RendererAPI {
     // frame lifecycle
-    void (*begin_frame)();
+    bool (*begin_frame)();
     void (*end_frame)();
 
     // lifecycle

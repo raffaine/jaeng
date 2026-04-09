@@ -2,6 +2,7 @@
 
 #include "platform/public/platform_api.h"
 #include "animation/animation.h"
+#include "material/imaterialsys.h"
 
 #include <vector>
 #include <memory>
@@ -51,6 +52,9 @@ private:
     // Simulation State
     std::vector<jaeng::EntityID> testEntities_;
     float simTime_ = 0.0f;
+    jaeng::EntityID uiTextEntity_ = static_cast<jaeng::EntityID>(-1);
+    jaeng::MaterialHandle uiMaterial_ = 0;
+    jaeng::FontHandle defaultFont_ = 0;
 
     // Animation Test
     std::unique_ptr<jaeng::AnimationClip> testClip_;

@@ -22,12 +22,13 @@ struct VulkanSwapchain {
     vk::DeviceMemory depthMemory;
     vk::ImageView depthView;
     vk::Format depthFormat;
+    bool imageAcquired = false;
 
     jaeng::result<> init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc, vk::SwapchainKHR oldSwapchain = nullptr);
     void shutdown(VulkanDevice* device);
     
     void resize(VulkanDevice* device, Extent2D size);
-    void acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore);
+    vk::Result acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore);
 };
 
 } // namespace jaeng::renderer

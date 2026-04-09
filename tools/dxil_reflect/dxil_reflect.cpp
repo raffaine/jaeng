@@ -99,7 +99,7 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
     std::ofstream out(headerPath);
     out << "#pragma once\n#include \"render/public/renderer_api.h\"\n\n";
     out << "#include <fstream>\n#include <vector>\n#include <stdexcept>\n#include <string>\n\n";
-    out << "// Auto-generated pipeline reflection\nnamespace ShaderReflection {\n\n";
+    out << "// Auto-generated pipeline reflection\nnamespace ShaderReflection { namespace " << rd.name << " {\n\n";
     
     out << "    enum : uint32_t {\n";
     out << "        Stage_None     = 0,\n";
@@ -137,7 +137,7 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
 
     out << "    const char* vsPath = \"" << vertexPath << "\";\n";
     out << "    const char* psPath = \"" << pixelPath  << "\";\n\n";
-    out << "}\n";
+    out << "} }\n";
 }
 
 ReflectData fromReflection(ID3D12ShaderReflection* vsr, ID3D12ShaderReflection* psr, const std::string& name) {

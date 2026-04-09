@@ -8,6 +8,7 @@
         "nlohmann-json",
         "json-schema-validator",
         "vulkan-headers",
-        "vulkan-loader"
+        "vulkan-loader",
+        "stb"
     ]
 }

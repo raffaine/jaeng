@@ -168,10 +168,10 @@ jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 
 void RendererD3D12::shutdown()
 {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    // Ensure GPU is idle before tearing dow
+    // Ensure GPU is idle before tearing down (outside lock to avoid deadlock with callbacks)
     wait_idle();
+
+    std::lock_guard<std::mutex> lock(mtx_);
 
     // Order: pipelines/resources, per-frame, swapchain, descriptors, device
     pipelines_.reset();
@@ -198,7 +198,7 @@ void RendererD3D12::shutdown()
 
 }
 
-void RendererD3D12::begin_frame()
+bool RendererD3D12::begin_frame()
 {
     std::lock_guard<std::mutex> lock(mtx_);
 
@@ -214,7 +214,13 @@ void RendererD3D12::begin_frame()
     fr.gpuDescs->reset();   // resets shader-visible CBV/SRV/UAV & Sampler cursors
     fr.upload->reset();     // resets ring head to 0
 
+    // Reset dynamic addresses
+    resources_->on_all_buffers([](BufferRec& b) {
+        b.gpuAddress = 0;
+    });
+
     frameBegun_ = true;
+    return true;
 }
 
 void RendererD3D12::end_frame()
@@ -393,6 +399,13 @@ jaeng::result<> RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, c
     JAENG_ERROR_IF(!b, jaeng::error_code::no_resource, "[Renderer] No buffer to update");
 
     FrameContext& fr = curFrame();
+
+    // Fast path for uniforms during frame: just stage in ring and save address
+    if (frameBegun_ && (b->usage & BufferUsage_Uniform)) {
+        JAENG_TRY_ASSIGN(UploadSlice us, fr.upload->stage(data, size, 256ull));
+        b->gpuAddress = us.gpuAddress + dst_off;
+        return {};
+    }
 
     // Helper to Generate the required Action to be executed on the CommandList
     auto actionGen = [](BufferRec& b, const UploadSlice& us, uint64_t dst_off, uint64_t size) {
@@ -600,9 +613,18 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     auto& vld = vertexLayouts_[gp->vertex_layout];
 
     // PSO defaults
-    D3D12_BLEND_DESC blend{};
+    D3D12_BLEND_DESC blend = { .RenderTarget{} };
     auto& rt0 = blend.RenderTarget[0];
     rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    if (gp->enable_blend) {
+        rt0.BlendEnable = TRUE;
+        rt0.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        rt0.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        rt0.BlendOp = D3D12_BLEND_OP_ADD;
+        rt0.SrcBlendAlpha = D3D12_BLEND_ONE;
+        rt0.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+        rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    }
 
     D3D12_RASTERIZER_DESC rast{};
     rast.FillMode = D3D12_FILL_MODE_SOLID;
@@ -730,7 +752,8 @@ void RendererD3D12::cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHan
     UINT rootParam = slot + 1;
     if (rootParam > 2) return; 
 
-    cl->SetGraphicsRootConstantBufferView(rootParam, buf->res->GetGPUVirtualAddress() + offset);
+    D3D12_GPU_VIRTUAL_ADDRESS addr = (buf->gpuAddress != 0) ? buf->gpuAddress : (buf->res->GetGPUVirtualAddress() + offset);
+    cl->SetGraphicsRootConstantBufferView(rootParam, addr);
 
     // Make sure the buffer is in CBV-readable state
     Barrier(cl, buf->res.Get(), buf->state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
@@ -876,10 +899,10 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     static RendererAPI api = {};
 
     api.init       = [](const RendererDesc* d) { return g_renderer->init(d).logError().has_value(); };
-    api.shutdown   = []{ g_renderer->shutdown(); };
+    api.shutdown = []{ g_renderer->shutdown(); };
+    api.begin_frame = []{ return g_renderer->begin_frame(); };
+    api.end_frame = []{ g_renderer->end_frame(); };
 
-    api.begin_frame = []{ g_renderer->begin_frame(); };
-    api.end_frame   = []{ g_renderer->end_frame(); };
 
     api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d).orValue(0); };
     api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { if(!g_renderer->resize_swapchain(s,e).logError()); };

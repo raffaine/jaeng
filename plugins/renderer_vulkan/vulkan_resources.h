@@ -22,6 +22,7 @@ struct VulkanTexture {
     vk::DeviceMemory memory;
     vk::ImageView view;
     uint32_t srvIndex;
+    uint32_t width, height;
 };
 
 struct VulkanSampler {

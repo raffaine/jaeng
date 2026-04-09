@@ -20,8 +20,6 @@ jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, Vulka
         { {}, vk::ShaderStageFlagBits::eFragment, fs, "main" }
     };
 
-    vk::PushConstantRange pushConstants(vk::ShaderStageFlagBits::eAll, 0, 128);
-    
     // Use all 3 layouts from the heap
     std::vector<vk::DescriptorSetLayout> layouts = {
         heap->getLayout(0),
@@ -29,7 +27,7 @@ jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, Vulka
         heap->getLayout(2)
     };
 
-    vk::PipelineLayoutCreateInfo layoutInfo({}, layouts, pushConstants);
+    vk::PipelineLayoutCreateInfo layoutInfo({}, layouts);
     vk::PipelineLayout layout = device->device.createPipelineLayout(layoutInfo);
 
     // Dynamic Rendering
@@ -48,6 +46,15 @@ jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, Vulka
     vk::PipelineRasterizationStateCreateInfo rasterizer({}, false, false, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, false, 0, 0, 0, 1.0f);
     vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1);
     vk::PipelineColorBlendAttachmentState colorBlendAttachment(false, vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+    if (desc->enable_blend) {
+        colorBlendAttachment.blendEnable = true;
+        colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd;
+        colorBlendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        colorBlendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        colorBlendAttachment.alphaBlendOp = vk::BlendOp::eAdd;
+    }
     vk::PipelineColorBlendStateCreateInfo colorBlending({}, false, vk::LogicOp::eCopy, 1, &colorBlendAttachment);
     
     vk::PipelineDepthStencilStateCreateInfo depthStencil({}, true, true, vk::CompareOp::eLessOrEqual, false, false);

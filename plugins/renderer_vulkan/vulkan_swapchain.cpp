@@ -167,6 +167,7 @@ void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
 
     // We do NOT destroy the old swapchain yet; we pass it to init()
     swapchain = nullptr;
+    imageAcquired = false;
 
     // Re-initialize with the new size
     SwapchainDesc desc;
@@ -185,9 +186,21 @@ void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
     }
 }
 
-void VulkanSwapchain::acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore) {
-    auto result = device->device.acquireNextImageKHR(swapchain, UINT64_MAX, signalSemaphore, nullptr);
-    currentImageIndex = result.value;
+vk::Result VulkanSwapchain::acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore) {
+    try {
+        // Use a small timeout instead of UINT64_MAX to allow forward progress and avoid validation errors
+        // on some implementations when the window is not visible or minimized.
+        vk::ResultValue<uint32_t> res = device->device.acquireNextImageKHR(swapchain, 1000000000ull /* 1s */, signalSemaphore, nullptr);
+        if (res.result == vk::Result::eSuccess || res.result == vk::Result::eSuboptimalKHR) {
+            currentImageIndex = res.value;
+        }
+        return res.result;
+    } catch (const vk::OutOfDateKHRError&) {
+        return vk::Result::eErrorOutOfDateKHR;
+    } catch (const std::exception& e) {
+        JAENG_LOG_ERROR("acquireNextImage failed: {}", e.what());
+        return vk::Result::eErrorUnknown;
+    }
 }
 
 } // namespace jaeng::renderer

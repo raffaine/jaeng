@@ -29,6 +29,11 @@ WaylandPlatform::WaylandPlatform() {
 
     if (display_) {
         decor_context_ = libdecor_new(display_, const_cast<struct libdecor_interface*>(&decor_interface_));
+        if (decor_context_) {
+            JAENG_LOG_INFO("libdecor context initialized.");
+        } else {
+            JAENG_LOG_ERROR("Failed to initialize libdecor.");
+        }
     }
 }
 
@@ -85,7 +90,8 @@ bool WaylandPlatform::poll_events() {
             { wl_display_get_fd(display_), POLLIN, 0 },
         };
 
-        if (poll(fds, 1, 0) > 0) {
+        int ret = poll(fds, 1, 0);
+        if (ret > 0) {
             wl_display_read_events(display_);
         } else {
             wl_display_cancel_read(display_);

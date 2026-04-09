@@ -12,7 +12,10 @@ else()
   add_executable(sandbox ${SANDBOX_SOURCES})
 endif()
 
-target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_DEF} "JAENG_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/shaders\"")
+target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_DEF} 
+  "JAENG_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/shaders\""
+  "JAENG_ASSET_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+)
 target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
 
