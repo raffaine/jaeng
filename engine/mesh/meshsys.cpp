@@ -2,8 +2,7 @@
 
 jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
 {
-    auto fm = fileManager_.lock();
-    JAENG_ERROR_IF(!fm, jaeng::error_code::resource_not_ready, "[Mesh] File Manager is not available");
+    auto fm = fileManager_;
     auto gfx = renderer_.lock();
     JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Mesh] Renderer is not available.");
 

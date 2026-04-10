@@ -59,6 +59,7 @@ public:
     void* get_native_display_handle() const override { return nullptr; } // Not needed for Win32
     
     IProcessManager& get_process_manager() override { return processManager_; }
+    IFileManager& get_file_manager() override { return *fileManager_; }
 
     int run(std::unique_ptr<IApplication> app) override;
 
@@ -69,6 +70,7 @@ private:
     Win32ProcessManager processManager_;
     EventCallback eventCallback_;
     static Win32Platform* instance_;
+    std::shared_ptr<IFileManager> fileManager_;
 };
 
 } // namespace jaeng::platform

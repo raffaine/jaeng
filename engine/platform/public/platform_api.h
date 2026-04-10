@@ -136,7 +136,7 @@ protected:
     virtual void render(const std::vector<RenderCommand>& inQueue, bool hasNewState, RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) = 0;
 
     // Engine System Accessors for user app
-    IFileManager& fileManager() { return *fileMan_; }
+    IFileManager& fileManager();
     EntityManager& entityManager() { return *entityMan_; }
     IMaterialSystem& materialSystem() { return *matSys_; }
     IMeshSystem& meshSystem() { return *meshSys_; }
@@ -176,7 +176,6 @@ private:
     bool shouldClose_ = false;
     
     // Engine subsystems
-    std::shared_ptr<IFileManager> fileMan_;
     std::shared_ptr<EntityManager> entityMan_;
     std::shared_ptr<IMaterialSystem> matSys_;
     std::shared_ptr<IMeshSystem> meshSys_;
@@ -197,6 +196,7 @@ public:
     virtual void* get_native_display_handle() const = 0;
 
     virtual IProcessManager& get_process_manager() = 0;
+    virtual IFileManager& get_file_manager() = 0;
 
     // The entry point abstraction: takes application and enters the loop
     virtual int run(std::unique_ptr<IApplication> app) = 0;

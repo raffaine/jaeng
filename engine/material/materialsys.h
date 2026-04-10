@@ -15,8 +15,8 @@ class MaterialSystem : public IMaterialSystem {
 public:
     static constexpr size_t MAX_MATERIALS = 1024;
 
-    explicit MaterialSystem(std::shared_ptr<IFileManager>& fm, std::shared_ptr<RendererAPI>& gfx)
-        : fileManager(fm), renderer(gfx) {}
+    explicit MaterialSystem(IFileManager& fm, std::shared_ptr<RendererAPI>& gfx)
+        : fileManager(&fm), renderer(gfx) {}
 
     virtual ~MaterialSystem() = default;
     
@@ -57,7 +57,7 @@ public:
 
 private:
     // External Derpendencies
-    std::weak_ptr<IFileManager> fileManager;
+    IFileManager* fileManager;
     std::weak_ptr<RendererAPI>  renderer;
 
     // Internal Storage

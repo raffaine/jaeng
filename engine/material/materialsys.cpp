@@ -143,8 +143,7 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
 
 jaeng::result<MaterialHandle> MaterialSystem::createMaterial(const std::string& path)
 {
-    auto fm = fileManager.lock();
-    JAENG_ERROR_IF(!fm, jaeng::error_code::resource_not_ready, "[Material] File Manager is not available");
+    auto fm = fileManager;
 
     JAENG_TRY_ASSIGN(MaterialHandle h, _createMaterialMetadata(*fm, path));
 
@@ -168,8 +167,7 @@ jaeng::result<MaterialHandle> MaterialSystem::createMaterial(
 {
     JAENG_ERROR_IF((vertexLayoutCount == 0), jaeng::error_code::invalid_args, "[Material] No Vertex Layout passed.");
 
-    auto fm = fileManager.lock();
-    JAENG_ERROR_IF(!fm, jaeng::error_code::resource_not_ready, "[Material] File Manager is not available");
+    auto fm = fileManager;
 
     JAENG_TRY_ASSIGN(MaterialHandle h, _createMaterialMetadata(*fm, path));
     

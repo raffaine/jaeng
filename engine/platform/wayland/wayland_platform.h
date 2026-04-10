@@ -8,6 +8,7 @@
 #include <string>
 #include "wayland_input.h"
 #include "wayland_process.h"
+#include "storage/win/filestorage.h"
 
 // Forward declare xdg/libdecor types
 struct xdg_wm_base;
@@ -31,6 +32,7 @@ public:
     void* get_native_display_handle() const override { return display_; }
     
     IProcessManager& get_process_manager() override { return processManager_; }
+    IFileManager& get_file_manager() override { return *fileManager_; }
 
     int run(std::unique_ptr<IApplication> app) override;
 
@@ -50,6 +52,7 @@ private:
 
     WaylandInput input_;
     WaylandProcessManager processManager_;
+    std::shared_ptr<IFileManager> fileManager_;
     EventCallback eventCallback_;
 
     bool running_ = true;

@@ -35,14 +35,14 @@ public:
 
 class FontSystem : public IFontSystem {
 public:
-    FontSystem(std::shared_ptr<IFileManager> fm, std::shared_ptr<RendererAPI> renderer);
+    FontSystem(IFileManager& fm, std::shared_ptr<RendererAPI> renderer);
     ~FontSystem();
 
     jaeng::result<FontHandle> loadFont(const std::string& path, float pixelHeight) override;
     jaeng::result<const FontData*> getFont(FontHandle handle) const override;
 
 private:
-    std::weak_ptr<IFileManager> fileManager;
+    IFileManager* fileManager;
     std::weak_ptr<RendererAPI>  renderer;
     
     std::vector<std::unique_ptr<FontData>> fonts;

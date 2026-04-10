@@ -1,6 +1,8 @@
 #include "win32_platform.h"
 #include <windowsx.h>
 
+#include "storage/win/filestorage.h"
+
 namespace jaeng::platform {
 
 Win32Platform* Win32Platform::instance_ = nullptr;
@@ -25,6 +27,7 @@ static KeyCode map_win32_key(WPARAM wParam) {
 
 Win32Platform::Win32Platform() {
     instance_ = this;
+    fileManager_ = std::make_shared<FileManager>();
 }
 
 Win32Platform::~Win32Platform() {

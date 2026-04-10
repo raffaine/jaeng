@@ -5,8 +5,8 @@
 
 namespace jaeng {
 
-FontSystem::FontSystem(std::shared_ptr<IFileManager> fm, std::shared_ptr<RendererAPI> renderer)
-    : fileManager(fm), renderer(renderer) {}
+FontSystem::FontSystem(IFileManager& fm, std::shared_ptr<RendererAPI> renderer)
+    : fileManager(&fm), renderer(renderer) {}
 
 FontSystem::~FontSystem() {
     auto gfx = renderer.lock();
@@ -20,9 +20,9 @@ FontSystem::~FontSystem() {
 }
 
 jaeng::result<FontHandle> FontSystem::loadFont(const std::string& path, float pixelHeight) {
-    auto fm = fileManager.lock();
+    auto fm = fileManager;
     auto gfx = renderer.lock();
-    JAENG_ERROR_IF(!fm || !gfx, jaeng::error_code::resource_not_ready, "[Font] FileManager or Renderer unavailable.");
+    JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Font] Renderer unavailable.");
 
     JAENG_TRY_ASSIGN(auto ttf_data, fm->load(path));
 

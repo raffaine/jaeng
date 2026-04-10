@@ -1,5 +1,4 @@
 #include "platform/public/platform_api.h"
-#include "storage/win/filestorage.h"
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
 #include "ui/fontsys.h"
@@ -26,14 +25,14 @@ namespace jaeng::platform {
         if (swap_ == 0) return false;
 
         
-        fileMan_ = std::make_shared<FileManager>();
-        fileMan_->initialize().orElse([this](auto) {
+        auto& fileMan = platform_.get_file_manager();
+        fileMan.initialize().orElse([this](auto) {
             platform_.show_message_box("Warning", "Failed to initialize FileManager. Continuing with limited capacity.", MessageBoxType::Warning);
         });
         entityMan_ = std::make_shared<EntityManager>();
-        fontSys_ = std::make_shared<FontSystem>(fileMan_, renderer_.gfx);
-        matSys_  = std::make_shared<MaterialSystem>(fileMan_, renderer_.gfx);
-        meshSys_ = std::make_shared<MeshSystem>(fileMan_, renderer_.gfx);
+        fontSys_ = std::make_shared<FontSystem>(fileMan, renderer_.gfx);
+        matSys_  = std::make_shared<MaterialSystem>(fileMan, renderer_.gfx);
+        meshSys_ = std::make_shared<MeshSystem>(fileMan, renderer_.gfx);
         sceneMan_ = std::make_unique<SceneManager>(meshSys_, matSys_, renderer_.gfx);
 
         return app_init(); // Delegate to user app
@@ -88,6 +87,10 @@ namespace jaeng::platform {
 
     bool IApplication::process_main_thread_tasks() {
         return taskScheduler_.process_main_thread_tasks();
+    }
+
+    IFileManager& IApplication::fileManager() {
+        return platform_.get_file_manager();
     }
 
     void IApplication::simulation_loop() {

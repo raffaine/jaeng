@@ -16,6 +16,7 @@ WaylandPlatform* WaylandPlatform::instance_ = nullptr;
 
 WaylandPlatform::WaylandPlatform() {
     instance_ = this;
+    fileManager_ = std::make_shared<FileManager>();
     display_ = wl_display_connect(nullptr);
     if (!display_) {
         JAENG_LOG_ERROR("Failed to connect to Wayland display");
