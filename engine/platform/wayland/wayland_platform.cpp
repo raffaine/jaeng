@@ -115,7 +115,9 @@ int WaylandPlatform::run(std::unique_ptr<IApplication> app) {
     app->start_engine_threads();
 
     while (poll_events() && !app->should_close()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!app->process_main_thread_tasks()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 
     app->stop_engine_threads();

@@ -5,6 +5,11 @@ set(JAENG_SOURCES
   common/pubsub.h
   common/logging.h
   common/result.h
+  common/async/task_scheduler.h
+  common/async/task_scheduler.cpp
+  common/async/task.h
+  common/async/awaiters.h
+  common/async/awaiters.cpp
   platform/public/platform_api.h
   platform/public/application.cpp
   render/frontend/renderer.h

@@ -20,6 +20,7 @@
 #include "storage/ifstorage.h"
 #include "ui/fontsys.h"
 #include "process.h"
+#include "common/async/task_scheduler.h"
 
 namespace jaeng::platform {
 
@@ -114,6 +115,7 @@ public:
     void set_tick_rate(uint32_t hz);
     void start_engine_threads();
     void stop_engine_threads();
+    bool process_main_thread_tasks();
 
 protected:
 
@@ -141,6 +143,7 @@ protected:
     IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
+    async::TaskScheduler& taskScheduler() { return taskScheduler_; }
     IPlatform& platform() { return platform_; }
     IWindow& window() { return *window_; }
     const AppConfig& getConfig() const { return config_; }
@@ -149,6 +152,7 @@ private:
     void simulation_loop();
     void render_loop();
 
+    async::TaskScheduler taskScheduler_;
     std::jthread simThread_;
     std::jthread renderThread_;
     std::atomic<bool> isRunning_ = false;

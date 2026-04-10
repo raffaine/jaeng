@@ -2,6 +2,8 @@
 
 #include "platform/public/platform_api.h"
 #include "platform/public/process.h"
+#include "common/async/task.h"
+#include "common/async/awaiters.h"
 #include "animation/animation.h"
 #include "material/imaterialsys.h"
 
@@ -31,6 +33,9 @@ private:
     void startServer();
     void restartServer();
     void updateServerData();
+
+    jaeng::async::FireAndForget runAsyncTaskTest();
+    void runFutureTest();
 
     struct InputState {
         bool keys[256] = {false};

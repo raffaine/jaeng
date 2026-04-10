@@ -4,16 +4,6 @@
 #include "pix3.h"
 #endif
 
-#include "scene/grid_partition.h"
-#include "scene/perspective_cam.h"
-#include "entity/entity.h"
-#include "entity/transform_sys.h"
-#include "animation/animation.h"
-#include "ui/ui.h"
-#include "common/math/ray.h"
-#include "scene/icamera.h"
-#include "scene/render_sys.h"
-
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -34,6 +24,7 @@
 #include <chrono>
 #include <cerrno>
 #include <filesystem>
+#include <sstream>
 
 #ifdef JAENG_LINUX
 #include <sys/socket.h>
@@ -54,10 +45,69 @@
 #define SOCKET_TYPE SOCKET
 #define INVALID_SOCKET_VAL INVALID_SOCKET
 #define CLOSE_SOCKET closesocket
+
+#ifdef Yield
+// Windows defines this which breaks our definition
+#undef Yield
 #endif
+#endif
+
+#include "scene/grid_partition.h"
+#include "scene/perspective_cam.h"
+#include "entity/entity.h"
+#include "entity/transform_sys.h"
+#include "animation/animation.h"
+#include "ui/ui.h"
+#include "common/math/ray.h"
+#include "scene/icamera.h"
+#include "scene/render_sys.h"
 
 using namespace jaeng;
 using namespace jaeng::platform;
+
+jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
+    auto get_tid = []() {
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        return ss.str();
+    };
+
+    JAENG_LOG_INFO("Async Task Started on thread {}", get_tid());
+    
+    // Simulate some work on a worker thread
+    co_await jaeng::async::SwitchToWorker();
+    JAENG_LOG_INFO("Async Task now on worker thread {}", get_tid());
+    
+    // Test Yield by looping and yielding
+    for (int i = 0; i < 3; ++i) {
+        JAENG_LOG_INFO("Async Task heavy work chunk {} on thread {}", i, get_tid());
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        co_await jaeng::async::Yield(); // Yield to let other tasks run
+    }
+    
+    // Back to main thread to update UI or similar
+    co_await jaeng::async::SwitchToMainThread();
+    JAENG_LOG_INFO("Async Task back on main thread {}", get_tid());
+    
+    platform().show_message_box("Async Test", "Background FireAndForget task completed successfully!", MessageBoxType::Info);
+}
+
+void SandboxApp::runFutureTest() {
+    JAENG_LOG_INFO("Future Test Started");
+    
+    taskScheduler().enqueue_async([]() {
+        JAENG_LOG_INFO("Future Test: Step 1 (Background)");
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        return 42;
+    }).then([](int result) {
+        JAENG_LOG_INFO("Future Test: Step 2 (Background, received {})", result);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        return result * 2;
+    }).thenSync([this](int finalResult) {
+        JAENG_LOG_INFO("Future Test: Final Step on main thread, result: {}", finalResult);
+        platform().show_message_box("Future Test", "Future chain completed with result: " + std::to_string(finalResult), MessageBoxType::Info);
+    });
+}
 
 void SandboxApp::startServer() {
     ProcessDesc desc;
@@ -703,6 +753,46 @@ void SandboxApp::setupUI() {
                 .withPivot({0.0f, 0.5f})
                 .withZIndex(120)
                 .withText("Restart Server", 24.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Async_Test_Button")
+            .withRect({140.0f, 40.0f}, {160.0f, 50.0f})
+            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
+            .withPivot({0.0f, 0.0f})
+            .withZIndex(110)
+            .withColor({0.2f, 0.6f, 0.2f, 1.0f})
+            .onClick([this](){ runAsyncTaskTest(); })
+            .onHover([this, e = builder.getCurrent()](bool hovered){
+                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
+                    ur->color = hovered ? glm::vec4(0.3f, 0.8f, 0.3f, 1.0f) : glm::vec4(0.2f, 0.6f, 0.2f, 1.0f);
+                }
+            })
+            .begin("Async_Test_Text")
+                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
+                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
+                .withPivot({0.0f, 0.5f})
+                .withZIndex(120)
+                .withText("Run Async Test", 24.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Future_Test_Button")
+            .withRect({140.0f, 40.0f}, {310.0f, 50.0f})
+            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
+            .withPivot({0.0f, 0.0f})
+            .withZIndex(110)
+            .withColor({0.2f, 0.2f, 0.6f, 1.0f})
+            .onClick([this](){ runFutureTest(); })
+            .onHover([this, e = builder.getCurrent()](bool hovered){
+                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
+                    ur->color = hovered ? glm::vec4(0.3f, 0.3f, 0.8f, 1.0f) : glm::vec4(0.2f, 0.2f, 0.6f, 1.0f);
+                }
+            })
+            .begin("Future_Test_Text")
+                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
+                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
+                .withPivot({0.0f, 0.5f})
+                .withZIndex(120)
+                .withText("Run Future Test", 24.0f, defaultFont_)
             .end()
         .end()
         .begin("Server_Time_Text", &serverTextEntity_)

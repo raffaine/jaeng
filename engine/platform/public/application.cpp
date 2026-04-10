@@ -3,6 +3,7 @@
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
 #include "ui/fontsys.h"
+#include "common/async/awaiters.h"
 #include <chrono>
 
 namespace jaeng::platform {
@@ -69,16 +70,24 @@ namespace jaeng::platform {
 
     void IApplication::start_engine_threads() {
         isRunning_ = true;
+        taskScheduler_.initialize();
+        async::set_current_scheduler(&taskScheduler_);
         simThread_ = std::jthread(&IApplication::simulation_loop, this);
         renderThread_ = std::jthread(&IApplication::render_loop, this);
     }
 
     void IApplication::stop_engine_threads() {
         isRunning_ = false;
+        async::set_current_scheduler(nullptr);
+        taskScheduler_.shutdown();
         renderCv_.notify_one(); // Wake up render thread if it's waiting
         // std::jthread automatically joins on destruction, but we can be explicit
         if (simThread_.joinable()) simThread_.join();
         if (renderThread_.joinable()) renderThread_.join();
+    }
+
+    bool IApplication::process_main_thread_tasks() {
+        return taskScheduler_.process_main_thread_tasks();
     }
 
     void IApplication::simulation_loop() {
