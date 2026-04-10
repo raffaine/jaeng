@@ -18,8 +18,13 @@ target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_D
 )
 target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
+add_dependencies(sandbox TestServer)
+
 
 if(WIN32)
+  # Visual Studio Project Settings
+  set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT sandbox)
+  set_target_properties(sandbox PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$(TargetDir)")
   if(JAENG_FORCE_VULKAN)
     add_dependencies(sandbox compile_shaders renderer_vulkan)
     target_compile_definitions(sandbox PRIVATE JAENG_USE_VULKAN)

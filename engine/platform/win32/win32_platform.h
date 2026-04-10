@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <map>
 #include "platform/public/platform_api.h"
+#include "win32_process.h"
 
 namespace jaeng::platform {
 
@@ -56,12 +57,16 @@ public:
     
     void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) override;
     void* get_native_display_handle() const override { return nullptr; } // Not needed for Win32
+    
+    IProcessManager& get_process_manager() override { return processManager_; }
+
     int run(std::unique_ptr<IApplication> app) override;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
     Win32Input input_;
+    Win32ProcessManager processManager_;
     EventCallback eventCallback_;
     static Win32Platform* instance_;
 };

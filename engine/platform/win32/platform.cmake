@@ -3,6 +3,8 @@
 list(APPEND JAENG_SOURCES
   platform/win32/win32_platform.h
   platform/win32/win32_platform.cpp
+  platform/win32/win32_process.h
+  platform/win32/win32_process.cpp
   storage/win/filestorage.cpp
   storage/win/filestorage.h
 )

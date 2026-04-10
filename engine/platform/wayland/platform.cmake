@@ -53,6 +53,8 @@ list(APPEND JAENG_SOURCES
   platform/wayland/wayland_window.cpp
   platform/wayland/wayland_input.h
   platform/wayland/wayland_input.cpp
+  platform/wayland/wayland_process.h
+  platform/wayland/wayland_process.cpp
   storage/win/filestorage.cpp
   "${XDG_SHELL_CLIENT_HEADER}"
   "${XDG_DECORATION_CLIENT_HEADER}"

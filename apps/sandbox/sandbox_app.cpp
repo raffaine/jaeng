@@ -32,9 +32,192 @@
 
 #include <thread>
 #include <chrono>
+#include <cerrno>
+#include <filesystem>
+
+#ifdef JAENG_LINUX
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
+#define SOCKET_TYPE int
+#define INVALID_SOCKET_VAL -1
+#define CLOSE_SOCKET close
+#else
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#define SOCKET_TYPE SOCKET
+#define INVALID_SOCKET_VAL INVALID_SOCKET
+#define CLOSE_SOCKET closesocket
+#endif
 
 using namespace jaeng;
 using namespace jaeng::platform;
+
+void SandboxApp::startServer() {
+    ProcessDesc desc;
+    
+    // Robustly find TestServer next to current executable
+    std::error_code ec;
+    auto exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) exePath = std::filesystem::path("/proc/self/exe");
+    
+    auto binDir = std::filesystem::canonical(exePath, ec).parent_path();
+    if (ec) binDir = ".";
+
+#ifdef JAENG_LINUX
+    desc.command = (binDir / "TestServer").string();
+#else
+    desc.command = (binDir / "TestServer.exe").string();
+#endif
+    
+    desc.workingDir = binDir.string(); 
+    
+    auto result = platform().get_process_manager().spawn(desc);
+    if (result.hasValue()) {
+        serverProcess_ = std::move(result).logError().value();
+        JAENG_LOG_INFO("Spawned TestServer with PID: {}", serverProcess_->get_id());
+    } else {
+        auto err = std::move(result).logError();
+        JAENG_LOG_ERROR("Failed to spawn TestServer: {}", err.error().message);
+    }
+}
+
+void SandboxApp::restartServer() {
+    if (serverProcess_) {
+        JAENG_LOG_INFO("Killing TestServer (PID: {})...", serverProcess_->get_id());
+        serverProcess_->kill();
+    }
+    startServer();
+}
+
+void SandboxApp::updateServerData() {
+    if (serverProcess_ && !serverProcess_->is_running()) {
+        int32_t code = serverProcess_->get_exit_code();
+        JAENG_LOG_ERROR("TestServer is not running. Exit code: {}", code);
+        serverTime_ = "Server Process Dead (" + std::to_string(code) + ")";
+        return;
+    }
+
+#ifdef JAENG_WIN32
+    static bool wsaStarted = false;
+    if (!wsaStarted) {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        wsaStarted = true;
+    }
+#endif
+
+    // Connect to 127.0.0.1:12346
+    SOCKET_TYPE sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET_VAL) {
+        JAENG_LOG_ERROR("Failed to create socket");
+        return;
+    }
+
+    // Set non-blocking
+#ifdef JAENG_LINUX
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#else
+    u_long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
+#endif
+
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(12347);
+#ifdef JAENG_LINUX
+    serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+#else
+    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+#endif
+
+    int res = connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    if (res < 0) {
+#ifdef JAENG_LINUX
+        if (errno != EINPROGRESS) {
+            JAENG_LOG_ERROR("Connect failed immediately: {} (Port 12346)", errno);
+            CLOSE_SOCKET(sock);
+            serverTime_ = "Server Offline (Connect Error)";
+            return;
+        }
+#else
+        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+            CLOSE_SOCKET(sock);
+            serverTime_ = "Server Offline (Connect Error)";
+            return;
+        }
+#endif
+
+        // Wait for connect to complete (writable) or fail
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(sock, &writefds);
+        struct timeval tv_connect;
+        tv_connect.tv_sec = 0;
+        tv_connect.tv_usec = 500000; // 500ms
+        res = select((int)sock + 1, NULL, &writefds, NULL, &tv_connect);
+        if (res <= 0) {
+             CLOSE_SOCKET(sock);
+             serverTime_ = (res == 0) ? "Server Offline (Connect Timeout)" : "Server Offline (Select Error)";
+             return;
+        }
+
+        // Check if actually connected
+        int error = 0;
+        socklen_t len = sizeof(error);
+        getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
+        if (error != 0) {
+             JAENG_LOG_ERROR("Socket error after select: {} (Port 12346)", error);
+             CLOSE_SOCKET(sock);
+             serverTime_ = "Server Offline (Connect Failed)";
+             return;
+        }
+    }
+
+    // Now connected, wait for data (readable)
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+    struct timeval tv_read;
+    tv_read.tv_sec = 0;
+    tv_read.tv_usec = 100000; // 100ms timeout
+
+    int activity = select((int)sock + 1, &readfds, NULL, NULL, &tv_read);
+
+    if (activity > 0 && FD_ISSET(sock, &readfds)) {
+        char buffer[1024] = {0};
+#ifdef JAENG_LINUX
+        int valread = read(sock, buffer, 1024);
+#else
+        int valread = recv(sock, buffer, 1024, 0);
+#endif
+        if (valread > 0) {
+            serverTime_ = std::string(buffer, valread);
+        } else if (valread == 0) {
+            serverTime_ = "Server Offline (EOF)";
+        } else {
+#ifdef JAENG_LINUX
+            JAENG_LOG_ERROR("Server read error: {}", errno);
+#else
+            JAENG_LOG_ERROR("Server read error: {}", WSAGetLastError());
+#endif
+            serverTime_ = "Server Offline (Read Error)";
+        }
+    } else if (activity == 0) {
+        serverTime_ = "Server Offline (Read Timeout)";
+    } else {
+        serverTime_ = "Server Offline (Read Select Error)";
+    }
+
+    CLOSE_SOCKET(sock);
+}
 
 // Define the backend-specific extensions and files
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
@@ -131,10 +314,14 @@ bool SandboxApp::app_init() {
         scene->setCbFrame(cbFrame_);
     }
 
+    setupUI();
+    startServer();
+
     return true;
 }
 
 void SandboxApp::app_shutdown() {
+    if (serverProcess_) serverProcess_->kill();
 }
 
 void SandboxApp::tick(float dt) {
@@ -160,6 +347,20 @@ void SandboxApp::tick(float dt) {
 
     // Process Animations BEFORE Transform System
     AnimationSystem::update(entityManager(), dt);
+
+    // Poll server data
+    serverPollTimer_ += dt;
+    if (serverPollTimer_ >= 0.5f) {
+        updateServerData();
+        serverPollTimer_ = 0.0f;
+    }
+
+    // Refresh Server UI Text
+    if (serverTextEntity_ != static_cast<EntityID>(-1)) {
+        if (auto* ut = entityManager().getComponent<UIText>(serverTextEntity_)) {
+            ut->text = "Server Time: " + serverTime_;
+        }
+    }
 
     // Update UI Text with selection info (Moved to handler in refactor? 
     // No, keep it here for simple polling if needed, or we could use an event bus later)
@@ -470,40 +671,76 @@ void SandboxApp::setupEntities() {
     entityManager().attachEntity(testEntities_[2], testEntities_[0]); // Planet 2 orbits Sun
     entityManager().attachEntity(testEntities_[3], testEntities_[2]); // Moon orbits Planet 2
 
-    // --- Fluent UI Refactor ---
+    // Run the transform system once to generate the initial matrices
+    TransformSystem::update(entityManager());
+}
+
+void SandboxApp::setupUI() {
     auto quadMesh = meshSystem().loadMesh("/mem/quad-test.raw").orValue(0);
 
     UIBuilder builder(entityManager(), quadMesh, uiMaterial_, &renderer());
-    builder.begin("HUD_Panel")
-        .withRect({200.0f, 150.0f}, {-10.0f, -10.0f})
-        .withAnchors({1.0f, 1.0f}, {1.0f, 1.0f})
-        .withPivot({1.0f, 1.0f})
-        .withZIndex(10)
-        .withColor({0.2f, 0.2f, 0.2f, 0.8f})
-        .begin("Selection_Button")
-            .withRect({150.0f, 50.0f}, {0.0f, 0.0f})
-            .withAnchors({0.5f, 0.5f}, {0.5f, 0.5f})
-            .withPivot({0.5f, 0.5f})
-            .withZIndex(20)
-            .withColor({0.4f, 0.4f, 0.8f, 1.0f})
-            .onClick([](){ JAENG_LOG_INFO("Button Clicked!"); })
+    builder.begin("Server_Panel")
+        .withRect({300.0f, 100.0f}, {10.0f, 10.0f})
+        .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
+        .withPivot({0.0f, 0.0f})
+        .withZIndex(100)
+        .withColor({0.1f, 0.1f, 0.1f, 0.7f})
+        .begin("Restart_Button")
+            .withRect({140.0f, 40.0f}, {10.0f, 50.0f})
+            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
+            .withPivot({0.0f, 0.0f})
+            .withZIndex(110)
+            .withColor({0.6f, 0.2f, 0.2f, 1.0f})
+            .onClick([this](){ restartServer(); })
             .onHover([this, e = builder.getCurrent()](bool hovered){
+                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
+                    ur->color = hovered ? glm::vec4(0.8f, 0.3f, 0.3f, 1.0f) : glm::vec4(0.6f, 0.2f, 0.2f, 1.0f);
+                }
+            })
+            .begin("Restart_Text")
+                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
+                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
+                .withPivot({0.0f, 0.5f})
+                .withZIndex(120)
+                .withText("Restart Server", 24.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Server_Time_Text", &serverTextEntity_)
+            .withRect({280.0f, 40.0f}, {10.0f, 10.0f})
+            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
+            .withPivot({0.0f, 0.0f})
+            .withZIndex(110)
+            .withText("Server Time: Offline", 24.0f, defaultFont_)
+        .end()
+    .end();
+
+    builder.begin("HUD_Panel")
+        .withRect({ 200.0f, 150.0f }, { -10.0f, -10.0f })
+        .withAnchors({ 1.0f, 1.0f }, { 1.0f, 1.0f })
+        .withPivot({ 1.0f, 1.0f })
+        .withZIndex(10)
+        .withColor({ 0.2f, 0.2f, 0.2f, 0.8f })
+        .begin("Selection_Button")
+            .withRect({ 150.0f, 50.0f }, { 0.0f, 0.0f })
+            .withAnchors({ 0.5f, 0.5f }, { 0.5f, 0.5f })
+            .withPivot({ 0.5f, 0.5f })
+            .withZIndex(20)
+            .withColor({ 0.4f, 0.4f, 0.8f, 1.0f })
+            .onClick([this]() { selectionState_.selectedEntity = static_cast<EntityID>(-1); })
+            .onHover([this, e = builder.getCurrent()](bool hovered) {
                 if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
                     ur->color = hovered ? glm::vec4(0.6f, 0.6f, 1.0f, 1.0f) : glm::vec4(0.4f, 0.4f, 0.8f, 1.0f);
                 }
             })
             .begin("Selection_Text", &uiTextEntity_)
-                .withRect({150.0f, 50.0f}, {10.0f, 0.0f})
-                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
-                .withPivot({0.0f, 0.5f})
+                .withRect({ 150.0f, 50.0f }, { 10.0f, 0.0f })
+                .withAnchors({ 0.0f, 0.5f }, { 0.0f, 0.5f })
+                .withPivot({ 0.0f, 0.5f })
                 .withZIndex(30)
                 .withText("No Selection", 32.0f, defaultFont_)
             .end()
         .end()
     .end();
-
-    // Run the transform system once to generate the initial matrices
-    TransformSystem::update(entityManager());
 }
 
 void SandboxApp::setupAnimation() {

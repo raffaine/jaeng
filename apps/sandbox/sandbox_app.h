@@ -1,11 +1,13 @@
 #pragma once
 
 #include "platform/public/platform_api.h"
+#include "platform/public/process.h"
 #include "animation/animation.h"
 #include "material/imaterialsys.h"
 
 #include <vector>
 #include <memory>
+#include <string>
 
 class SandboxApp : public jaeng::platform::IApplication {
 public:
@@ -24,6 +26,11 @@ private:
     void setupResources();
     void setupEntities();
     void setupAnimation();
+    void setupUI();
+
+    void startServer();
+    void restartServer();
+    void updateServerData();
 
     struct InputState {
         bool keys[256] = {false};
@@ -58,4 +65,10 @@ private:
 
     // Animation Test
     std::unique_ptr<jaeng::AnimationClip> testClip_;
+
+    // Server management
+    std::unique_ptr<jaeng::platform::IProcess> serverProcess_;
+    std::string serverTime_ = "Connecting...";
+    float serverPollTimer_ = 0.0f;
+    jaeng::EntityID serverTextEntity_ = static_cast<jaeng::EntityID>(-1);
 };

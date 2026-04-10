@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include "wayland_input.h"
+#include "wayland_process.h"
 
 // Forward declare xdg/libdecor types
 struct xdg_wm_base;
@@ -29,6 +30,8 @@ public:
     void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) override;
     void* get_native_display_handle() const override { return display_; }
     
+    IProcessManager& get_process_manager() override { return processManager_; }
+
     int run(std::unique_ptr<IApplication> app) override;
 
     static void handle_registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);
@@ -46,6 +49,7 @@ private:
     libdecor* decor_context_ = nullptr;
 
     WaylandInput input_;
+    WaylandProcessManager processManager_;
     EventCallback eventCallback_;
 
     bool running_ = true;

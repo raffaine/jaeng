@@ -19,6 +19,7 @@
 #include "scene/scene.h"
 #include "storage/ifstorage.h"
 #include "ui/fontsys.h"
+#include "process.h"
 
 namespace jaeng::platform {
 
@@ -190,6 +191,8 @@ public:
     virtual void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) = 0;
     
     virtual void* get_native_display_handle() const = 0;
+
+    virtual IProcessManager& get_process_manager() = 0;
 
     // The entry point abstraction: takes application and enters the loop
     virtual int run(std::unique_ptr<IApplication> app) = 0;

@@ -69,5 +69,6 @@ endif()
 option(JAENG_BUILD_SANDBOX "Build the sandbox application" ON)
 
 if(JAENG_BUILD_SANDBOX)
+  add_subdirectory(apps/test_server)
   add_subdirectory(apps/sandbox)
 endif()
