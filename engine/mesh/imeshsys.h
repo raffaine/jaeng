@@ -6,6 +6,8 @@
 #include "render/public/renderer_api.h"
 #include "common/result.h"
 
+namespace jaeng {
+
 using MeshHandle = uint32_t;
 
 struct RAWFormatHeader {
@@ -30,11 +32,13 @@ struct Mesh {
 class IMeshSystem {
 public:
     // Load mesh from file (e.g., .obj or custom format)
-    virtual jaeng::result<MeshHandle> loadMesh(const std::string& path) = 0;
+    virtual result<MeshHandle> loadMesh(const std::string& path) = 0;
 
     // Remove mesh
-    virtual jaeng::result<void> removeMesh(MeshHandle handle) = 0;
+    virtual result<void> removeMesh(MeshHandle handle) = 0;
 
     // Get mesh for rendering
-    virtual jaeng::result<const Mesh*> getMesh(MeshHandle handle) const = 0;
+    virtual result<const Mesh*> getMesh(MeshHandle handle) const = 0;
 };
+
+} // namespace jaeng

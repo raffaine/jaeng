@@ -1,10 +1,12 @@
 #include "meshsys.h"
 
-jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
+namespace jaeng {
+
+result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
 {
     auto fm = fileManager_;
     auto gfx = renderer_.lock();
-    JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Mesh] Renderer is not available.");
+    JAENG_ERROR_IF(!gfx, error_code::resource_not_ready, "[Mesh] Renderer is not available.");
 
     // Gets a new handle early or fail fast
     JAENG_TRY_ASSIGN(MeshHandle h, allocateSlot());
@@ -39,12 +41,12 @@ jaeng::result<MeshHandle> MeshSystem::loadMesh(const std::string& path)
     return h;
 }
 
-jaeng::result<void> MeshSystem::removeMesh(MeshHandle handle)
+result<void> MeshSystem::removeMesh(MeshHandle handle)
 {
     auto meshIt = meshes.find(handle);
-    JAENG_ERROR_IF(meshIt == meshes.end(), jaeng::error_code::no_resource, "[Mesh] Mesh is not available.");
+    JAENG_ERROR_IF(meshIt == meshes.end(), error_code::no_resource, "[Mesh] Mesh is not available.");
     auto gfx = renderer_.lock();
-    JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Mesh] Renderer is not available.");
+    JAENG_ERROR_IF(!gfx, error_code::resource_not_ready, "[Mesh] Renderer is not available.");
 
     // Remove resources on renderer
     if (meshIt->second.vertexBuffer) gfx->destroy_buffer(meshIt->second.vertexBuffer);
@@ -56,23 +58,23 @@ jaeng::result<void> MeshSystem::removeMesh(MeshHandle handle)
     return {};
 }
 
-jaeng::result<const Mesh*> MeshSystem::getMesh(MeshHandle handle) const
+result<const Mesh*> MeshSystem::getMesh(MeshHandle handle) const
 {
     auto meshIt = meshes.find(handle);
-    JAENG_ERROR_IF(meshIt == meshes.end(), jaeng::error_code::no_resource, "[Mesh] Mesh is not available.");
+    JAENG_ERROR_IF(meshIt == meshes.end(), error_code::no_resource, "[Mesh] Mesh is not available.");
 
     return &(meshIt->second);
 }
 
-jaeng::result<MeshHandle> MeshSystem::allocateSlot()
+result<MeshHandle> MeshSystem::allocateSlot()
 {
     for (size_t i = 0; i < MeshSystem::MAX_MESH_ENTRIES; ++i) {
         if (!slotUsage.test(i)) {
             slotUsage.set(i);
-            return i;
+            return (MeshHandle)i;
         }
     }
-    JAENG_ERROR(jaeng::error_code::no_resource, "[Mesh] Out of Storage");
+    JAENG_ERROR(error_code::no_resource, "[Mesh] Out of Storage");
 }
 
 void MeshSystem::freeSlot(MeshHandle handle)
@@ -81,3 +83,5 @@ void MeshSystem::freeSlot(MeshHandle handle)
         slotUsage.reset(size_t(handle));
     }
 }
+
+} // namespace jaeng

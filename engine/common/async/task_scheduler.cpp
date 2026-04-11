@@ -9,7 +9,7 @@ TaskScheduler::~TaskScheduler() {
     shutdown();
 }
 
-void TaskScheduler::initialize(uint32_t workerCount) {
+void TaskScheduler::initialize(uint32_t workerCount, uint32_t ioWorkerCount) {
     if (workerCount == 0) {
         workerCount = std::thread::hardware_concurrency();
         if (workerCount > 0) workerCount--; // Leave one core for Main/OS and Sim/Render
@@ -21,20 +21,32 @@ void TaskScheduler::initialize(uint32_t workerCount) {
         workers_.emplace_back(&TaskScheduler::worker_loop, this);
     }
     
-    JAENG_LOG_INFO("TaskScheduler initialized with {} workers", workerCount);
+    for (uint32_t i = 0; i < ioWorkerCount; ++i) {
+        ioWorkers_.emplace_back(&TaskScheduler::io_worker_loop, this);
+    }
+    
+    JAENG_LOG_INFO("TaskScheduler initialized with {} compute workers and {} IO workers", workerCount, ioWorkerCount);
 }
 
 void TaskScheduler::shutdown() {
     {
-        std::lock_guard<std::mutex> lock(asyncMutex_);
+        std::lock_guard<std::mutex> lockAsync(asyncMutex_);
+        std::lock_guard<std::mutex> lockIo(ioMutex_);
         if (stop_) return;
         stop_ = true;
     }
     asyncCv_.notify_all();
+    ioCv_.notify_all();
     for (std::thread& worker : workers_) {
         if (worker.joinable()) worker.join();
     }
     workers_.clear();
+    
+    for (std::thread& worker : ioWorkers_) {
+        if (worker.joinable()) worker.join();
+    }
+    ioWorkers_.clear();
+    
     JAENG_LOG_INFO("TaskScheduler shut down");
 }
 
@@ -63,6 +75,22 @@ void TaskScheduler::worker_loop() {
             
             task = std::move(asyncQueue_.front());
             asyncQueue_.pop_front();
+        }
+        task();
+    }
+}
+
+void TaskScheduler::io_worker_loop() {
+    while (true) {
+        TaskFn task;
+        {
+            std::unique_lock<std::mutex> lock(ioMutex_);
+            ioCv_.wait(lock, [this]() { return stop_ || !ioQueue_.empty(); });
+            
+            if (stop_ && ioQueue_.empty()) return;
+            
+            task = std::move(ioQueue_.front());
+            ioQueue_.pop_front();
         }
         task();
     }

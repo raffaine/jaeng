@@ -8,6 +8,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace jaeng {
+
 // Structs should be in imeshsys.h or common/math/conventions.h or similar.
 // For now, they are in imeshsys.h.
 
@@ -20,16 +22,16 @@ public:
         : renderer_(renderer), fileManager_(&fileManager) {}
 
     // Load mesh from file (e.g., .obj or custom format)
-    jaeng::result<MeshHandle> loadMesh(const std::string& path) override;
+    result<MeshHandle> loadMesh(const std::string& path) override;
 
     // Remove mesh
-    jaeng::result<void> removeMesh(MeshHandle handle) override;
+    result<void> removeMesh(MeshHandle handle) override;
 
     // Get mesh for rendering
-    jaeng::result<const Mesh*> getMesh(MeshHandle handle) const override;
+    result<const Mesh*> getMesh(MeshHandle handle) const override;
 
 private:
-    jaeng::result<MeshHandle> allocateSlot();
+    result<MeshHandle> allocateSlot();
     void freeSlot(MeshHandle handle);
 
     std::weak_ptr<RendererAPI> renderer_;
@@ -39,3 +41,5 @@ private:
     std::bitset<MAX_MESH_ENTRIES> slotUsage; // lightweight slot tracking
     MeshHandle nextHandle = 0;
 };
+
+} // namespace jaeng

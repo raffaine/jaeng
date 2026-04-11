@@ -6,6 +6,8 @@
 #include <typeindex>
 #include <memory>
 
+namespace jaeng {
+
 class EventBus : public std::enable_shared_from_this<EventBus> {
 public:
     template<typename Event>
@@ -60,3 +62,5 @@ private:
         }
     }
 };
+
+} // namespace jaeng

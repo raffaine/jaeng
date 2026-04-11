@@ -47,6 +47,8 @@ public:
     template<typename F>
     auto thenSync(F&& func);
 
+    auto operator co_await() noexcept;
+
 private:
     std::future<T> future_;
 };
@@ -74,7 +76,7 @@ public:
     TaskScheduler();
     ~TaskScheduler();
 
-    void initialize(uint32_t workerCount = 0);
+    void initialize(uint32_t workerCount = 0, uint32_t ioWorkerCount = 1);
     void shutdown();
 
     // Spawns a coroutine as a fire-and-forget task
@@ -105,6 +107,25 @@ public:
         return Future<return_type>(std::move(res));
     }
 
+    // Enqueue an IO task to be executed on dedicated IO thread(s)
+    template<typename F, typename... Args>
+    auto enqueue_io(F&& f, Args&&... args) -> Future<std::invoke_result_t<F, Args...>> {
+        using return_type = std::invoke_result_t<F, Args...>;
+
+        auto task = std::make_shared<std::packaged_task<return_type()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        std::future<return_type> res = task->get_future();
+        {
+            std::lock_guard<std::mutex> lock(ioMutex_);
+            if (stop_) throw std::runtime_error("TaskScheduler is stopped");
+            ioQueue_.emplace_back([task]() { (*task)(); });
+        }
+        ioCv_.notify_one();
+        return Future<return_type>(std::move(res));
+    }
+
     // Enqueue a task to be executed on the Main/OS thread
     template<typename F, typename... Args>
     auto enqueue_sync(F&& f, Args&&... args) -> Future<std::invoke_result_t<F, Args...>> {
@@ -129,13 +150,20 @@ public:
 
 private:
     void worker_loop();
+    void io_worker_loop();
 
     std::vector<std::thread> workers_;
+    std::vector<std::thread> ioWorkers_;
     
     // Async Queue (MPMC)
     std::deque<TaskFn> asyncQueue_;
     std::mutex asyncMutex_;
     std::condition_variable asyncCv_;
+
+    // IO Queue (MPMC)
+    std::deque<TaskFn> ioQueue_;
+    std::mutex ioMutex_;
+    std::condition_variable ioCv_;
 
     // Sync Mailbox (MPSC)
     std::deque<TaskFn> syncQueue_;
@@ -191,5 +219,26 @@ namespace jaeng::async {
                 });
             }).then([](auto syncFuture) { return syncFuture.get(); }); // Unwrap the nested future
         }
+    }
+
+    template<typename T>
+    auto Future<T>::operator co_await() noexcept {
+        struct awaiter {
+            Future<T>* fut;
+
+            bool await_ready() const noexcept {
+                return fut->valid() && fut->future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) noexcept {
+                fut->then([h]([[maybe_unused]] auto&&... args) { h.resume(); });
+            }
+
+            T await_resume() {
+                return fut->get();
+            }
+        };
+
+        return awaiter{this};
     }
 } // namespace jaeng::async

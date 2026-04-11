@@ -2,6 +2,8 @@
 #include "renderer_api.h"
 #include <memory>
 
+namespace jaeng {
+
 #if defined(_WIN32)
 #include <windows.h>
 
@@ -53,3 +55,5 @@ struct RendererPlugin {
     }
 };
 #endif
+
+} // namespace jaeng

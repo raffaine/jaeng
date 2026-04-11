@@ -10,6 +10,11 @@
 #ifdef JAENG_LINUX
 #include <wayland-client.h>
 #include <unistd.h>
+#endif
+
+namespace jaeng {
+
+#ifdef JAENG_LINUX
 static void* g_null_window_handle = nullptr;
 static void null_present(SwapchainHandle) {
     if (g_null_window_handle) {
@@ -109,3 +114,5 @@ private:
     std::atomic<uint32_t> new_height_{ 0 };
     SwapchainHandle resize_handle_{ 0 };
 };
+
+} // namespace jaeng

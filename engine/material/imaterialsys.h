@@ -78,10 +78,10 @@ public:
     virtual ~IMaterialSystem() = default;
 
     // Create material from a virtual path (disk, memory, etc.)
-    virtual jaeng::result<MaterialHandle> createMaterial(const std::string& path) = 0;
+    virtual result<MaterialHandle> createMaterial(const std::string& path) = 0;
 
     // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
-    virtual jaeng::result<MaterialHandle> createMaterial(
+    virtual result<MaterialHandle> createMaterial(
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
@@ -92,17 +92,16 @@ public:
     virtual void destroyMaterial(MaterialHandle handle) = 0;
 
     // Query GPU bindings for rendering
-    virtual jaeng::result<const MaterialBindings*> getBindData(MaterialHandle handle) const = 0;
+    virtual result<const MaterialBindings*> getBindData(MaterialHandle handle) const = 0;
 
     // Query metadata (for editor or debug)
-    virtual jaeng::result<const MaterialMetadata*> getMetadata(MaterialHandle handle) const = 0;
+    virtual result<const MaterialMetadata*> getMetadata(MaterialHandle handle) const = 0;
 
     // Hot-reload material
-    virtual jaeng::result<> reloadMaterial(MaterialHandle handle) = 0;
+    virtual result<> reloadMaterial(MaterialHandle handle) = 0;
 
     // Update material parameters
     virtual void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) = 0;
-    virtual void updateMaterialParameters(MaterialHandle handle) = 0;
 
     // Event subscription for material changes
     virtual void subscribe(MaterialEventListener* listener) = 0;

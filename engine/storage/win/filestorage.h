@@ -4,6 +4,8 @@
 
 #include "storage/ifstorage.h"
 
+namespace jaeng {
+
 class FileManager : public IFileManager {
 public:
     FileManager();
@@ -15,9 +17,10 @@ public:
     FileManager(FileManager&&) noexcept = default;
     FileManager& operator=(FileManager&&) noexcept = default;
 
-    jaeng::result<> initialize() override;
+    result<> initialize() override;
 
-    jaeng::result<std::vector<uint8_t>> load(const std::string& path) override;
+    result<std::vector<uint8_t>> load(const std::string& path) override;
+    async::Future<result<std::vector<uint8_t>>> loadAsync(const std::string& path) override;
 
     void registerMemoryFile(const std::string& path, const void* data, uint64_t byteSize) override;
 
@@ -31,3 +34,5 @@ private:
 
     std::vector<uint8_t> loadFromDisk(const std::string& path);
 };
+
+} // namespace jaeng

@@ -58,7 +58,7 @@ private:
     jaeng::math::Ray getRayFromMouse() const;
 
     // Test resources
-    std::unique_ptr<IFileManager::SubscriptionT> materialSub_;
+    std::unique_ptr<jaeng::IFileManager::SubscriptionT> materialSub_;
     BufferHandle cbFrame_ = 0;
 
     // Simulation State

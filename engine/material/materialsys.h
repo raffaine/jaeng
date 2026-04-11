@@ -26,10 +26,10 @@ public:
     MaterialSystem(MaterialSystem&&) noexcept = default;
     MaterialSystem& operator=(MaterialSystem&&) noexcept = default;
 
-    jaeng::result<MaterialHandle> createMaterial(const std::string& path) override;
+    result<MaterialHandle> createMaterial(const std::string& path) override;
 
     // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
-    jaeng::result<MaterialHandle> createMaterial(
+    result<MaterialHandle> createMaterial(
         const std::string& path,
         const VertexLayoutDesc* vertexLayout,
         size_t vertexLayoutCount,
@@ -40,17 +40,16 @@ public:
     void destroyMaterial(MaterialHandle handle) override;
 
     // Query GPU bindings for rendering
-    jaeng::result<const MaterialBindings*> getBindData(MaterialHandle handle) const override;
+    result<const MaterialBindings*> getBindData(MaterialHandle handle) const override;
     
     // Query Metadata about the material
-    jaeng::result<const MaterialMetadata*> getMetadata(MaterialHandle handle) const override;
+    result<const MaterialMetadata*> getMetadata(MaterialHandle handle) const override;
 
     // Hot-reload material
-    jaeng::result<> reloadMaterial(MaterialHandle handle) override;
+    result<> reloadMaterial(MaterialHandle handle) override;
 
     // Update material parameters
     void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) override;
-    void updateMaterialParameters(MaterialHandle handle) override;
 
     // Event subscription for material changes
     void subscribe(MaterialEventListener* listener) override {}
@@ -70,8 +69,8 @@ private:
     std::bitset<MAX_MATERIALS> slotUsage;
     
     // Common Logic
-    jaeng::result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
-    jaeng::result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
+    result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
+    result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
                                              const char* requiredSemantics[]);
 };
 

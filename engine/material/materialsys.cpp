@@ -18,10 +18,10 @@ MaterialMetadata fromJson(const json& matJson) {
     for (auto& t : matJson["textures"]) {
         TextureData td {
             .path = t["path"],
+            .format = t.contains("format") ? t["format"].get<std::string>() : "rgba8",
             .width = t["width"],
             .height = t["height"]
         };
-        if (t.contains("format")) td.format = t["format"];
         auto s = t["sampler"];
         td.sampler = {s["filter"], s["addressModeU"], s["addressModeV"]};
         m.textures.emplace_back(std::move(td));
@@ -30,8 +30,8 @@ MaterialMetadata fromJson(const json& matJson) {
     if (matJson.contains("parameters")) {
         auto params = matJson["parameters"];
         if (params.contains("color")) {
+            glm::vec4 color(1.0f);
             int i = 0;
-            glm::vec4 color;
             for (auto& ce : params["color"]) {
                 color[i++] = ce.get<float>();
             }
@@ -40,16 +40,18 @@ MaterialMetadata fromJson(const json& matJson) {
         if (params.contains("roughness")) m.scalarParams.emplace("roughness", params["roughness"].get<float>());
         if (params.contains("metallic")) m.scalarParams.emplace("metallic", params["metallic"].get<float>());
     }
+
     for (auto& cbEntry : matJson["constantBuffers"]) {
         m.constantBuffers.emplace_back(cbEntry["name"], cbEntry["size"].get<uint32_t>(), cbEntry["binding"].get<uint32_t>());
     }
+
     if (matJson.contains("pipelineStates")) {
     }
 
     return m;
 }
 
-template <uint64_t N>
+template<size_t N>
 size_t firstAvailable(std::bitset<N>& slotUsage) {
     for (size_t i = 0; i < N; ++i) {
         if (!slotUsage.test(i)) {
@@ -57,13 +59,13 @@ size_t firstAvailable(std::bitset<N>& slotUsage) {
             return i;
         }
     }
-    return 0;
+    return static_cast<size_t>(-1);
 }
 
-jaeng::result<MaterialHandle> MaterialSystem::_createMaterialMetadata(IFileManager& fm, const std::string& path)
+result<MaterialHandle> MaterialSystem::_createMaterialMetadata(IFileManager& fm, const std::string& path)
 {
     // Fail fast in case we are out of slots
-    JAENG_ERROR_IF(slotUsage.count() >= MaterialSystem::MAX_MATERIALS, jaeng::error_code::no_resource, "[Material] No space available");
+    JAENG_ERROR_IF(slotUsage.count() >= MaterialSystem::MAX_MATERIALS, error_code::no_resource, "[Material] No space available");
 
     // Get the File Data from FileManager
     JAENG_TRY_ASSIGN(auto fdata, fm.load(path));
@@ -78,11 +80,11 @@ jaeng::result<MaterialHandle> MaterialSystem::_createMaterialMetadata(IFileManag
 
         return h;        
     } catch (const std::exception& e) {
-        JAENG_ERROR(jaeng::error_code::unknown_error, e.what());
+        JAENG_ERROR(error_code::unknown_error, e.what());
     }
 }
 
-jaeng::result<> MaterialSystem::_createMaterialResources(
+result<> MaterialSystem::_createMaterialResources(
     IFileManager& fm,
     MaterialSystem::Storage& material,
     const VertexLayoutDesc* vtxLayout,
@@ -90,7 +92,7 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
     const char* requiredSemantics[])
 {
     auto gfx = renderer.lock();
-    JAENG_ERROR_IF(!gfx, jaeng::error_code::resource_not_ready, "[Material] Renderer is not available.");
+    JAENG_ERROR_IF(!gfx, error_code::resource_not_ready, "[Material] Renderer is not available.");
 
     // Create Shaders
     {   // Vertex Shader
@@ -106,12 +108,12 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
 
     // Parse Input Layout for required Semantics and Register on Renderer
     material.bg.vertexLayout = gfx->create_vertex_layout(vtxLayout);
-    for (int i = 0; i < (int)vtxLayout[0].attribute_count; i++) {
+    for (int i = 0; i < (int)vtxLayoutCount; i++) {
         material.bg.requiredSemantics.emplace_back(requiredSemantics[i]);
     }
 
     // Create Texture and Sampler Resources
-    for (auto t : material.mat.textures) {
+    for (auto& t : material.mat.textures) {
         JAENG_TRY_ASSIGN(auto pixels, fm.load(t.path));
         TextureDesc td{ TextureFormat::RGBA8_UNORM, t.width, t.height, 1, 1, 0 };
         TextureHandle tex = gfx->create_texture(&td, pixels.data());
@@ -141,14 +143,14 @@ jaeng::result<> MaterialSystem::_createMaterialResources(
     return {};
 }
 
-jaeng::result<MaterialHandle> MaterialSystem::createMaterial(const std::string& path)
+result<MaterialHandle> MaterialSystem::createMaterial(const std::string& path)
 {
     auto fm = fileManager;
 
     JAENG_TRY_ASSIGN(MaterialHandle h, _createMaterialMetadata(*fm, path));
 
     // Retrieves Metadata and future storage
-    auto material = storage[h];
+    // auto material = storage[h];
 
     // Parse Shader Reflect for Material Resource Descriptions
     // Need material to also tell where the reflection is material.mat.reflectPath
@@ -159,13 +161,13 @@ jaeng::result<MaterialHandle> MaterialSystem::createMaterial(const std::string& 
     return h;
 }
 
-jaeng::result<MaterialHandle> MaterialSystem::createMaterial(
+result<MaterialHandle> MaterialSystem::createMaterial(
     const std::string& path,
     const VertexLayoutDesc* vertexLayout,
     size_t vertexLayoutCount,
     const char* requiredSemantics[]) // count should match attributes on vertex layout
 {
-    JAENG_ERROR_IF((vertexLayoutCount == 0), jaeng::error_code::invalid_args, "[Material] No Vertex Layout passed.");
+    JAENG_ERROR_IF((vertexLayoutCount == 0), error_code::invalid_args, "[Material] No Vertex Layout passed.");
 
     auto fm = fileManager;
 
@@ -178,33 +180,32 @@ jaeng::result<MaterialHandle> MaterialSystem::createMaterial(
     return h;
 }
 
-// Destroy material
 void MaterialSystem::destroyMaterial(MaterialHandle handle)
 {
     // TODO: Request Renderer for Resource Destructions
     storage.erase(handle);
 }
 
-// Query GPU bindings for rendering
-jaeng::result<const MaterialBindings*> MaterialSystem::getBindData(MaterialHandle handle) const
+result<const MaterialBindings*> MaterialSystem::getBindData(MaterialHandle handle) const
 {
     auto matIt = storage.find(handle);
-    JAENG_ERROR_IF(matIt == storage.end(), jaeng::error_code::no_resource, "[Material] No Binds available as Material is not available");
+    JAENG_ERROR_IF(matIt == storage.end(), error_code::no_resource, "[Material] No Binds available as Material is not available");
 
     return &(matIt->second).bg;
 }
 
-jaeng::result<const MaterialMetadata*> MaterialSystem::getMetadata(MaterialHandle handle) const
+result<const MaterialMetadata*> MaterialSystem::getMetadata(MaterialHandle handle) const
 {
     auto matIt = storage.find(handle);
-    JAENG_ERROR_IF(matIt == storage.end(), jaeng::error_code::no_resource, "[Material] No Metadata available as Material is not available");
+    JAENG_ERROR_IF(matIt == storage.end(), error_code::no_resource, "[Material] No Metadata available as Material is not available");
 
     return &(matIt->second).mat;
 }
 
-jaeng::result<> MaterialSystem::reloadMaterial(MaterialHandle handle)
+result<> MaterialSystem::reloadMaterial(MaterialHandle handle)
 {
-    return jaeng::Error::fromMessage(static_cast<int>(jaeng::error_code::invalid_operation), "[Material] Not Implemented");
+    // TODO: Implement Material Reloading
+    return Error::fromMessage(static_cast<int>(error_code::invalid_operation), "[Material] Not Implemented");
 }
 
 void MaterialSystem::setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) {
@@ -212,10 +213,6 @@ void MaterialSystem::setVectorParam(MaterialHandle handle, const std::string& na
     if (it != storage.end()) {
         it->second.mat.vectorParams[name] = value;
     }
-}
-
-void MaterialSystem::updateMaterialParameters(MaterialHandle handle) {
-    // Moved to Render Thread via extraction Proxies to prevent COMMAND_LIST_CLOSED crashes.
 }
 
 } // namespace jaeng

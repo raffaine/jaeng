@@ -4,6 +4,9 @@
 #include <vector>
 #include "common/result.h"
 #include "common/pubsub.h"
+#include "common/async/task_scheduler.h"
+
+namespace jaeng {
 
 struct FileChangedEvent {
     enum class ChangeType {
@@ -17,10 +20,13 @@ class IFileManager {
 public:
     virtual ~IFileManager() = default;
 
-    virtual jaeng::result<> initialize() = 0;
+    virtual result<> initialize() = 0;
 
     // Return file contents or error
-    virtual jaeng::result<std::vector<uint8_t>> load(const std::string& path) = 0;
+    virtual result<std::vector<uint8_t>> load(const std::string& path) = 0;
+
+    // Return file contents asynchronously
+    virtual async::Future<jaeng::result<std::vector<uint8_t>>> loadAsync(const std::string& path) = 0;
 
     // Register in-memory file
     virtual void registerMemoryFile(const std::string& path, const void* data, uint64_t byteSize) = 0;
@@ -32,3 +38,5 @@ public:
     using SubscriptionT = EventBus::Subscription<FileChangedEvent>;
     virtual std::unique_ptr<SubscriptionT> track(const std::string& path, std::function<void(const FileChangedEvent&)> callback) = 0;
 };
+
+} // namespace jaeng

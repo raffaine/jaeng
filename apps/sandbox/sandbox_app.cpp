@@ -84,6 +84,17 @@ jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         co_await jaeng::async::Yield(); // Yield to let other tasks run
     }
+
+    // Test Async Asset Pipeline
+    JAENG_LOG_INFO("Testing Async Asset Pipeline (loading /mem/material-test.json)...");
+    auto assetResult = co_await fileManager().loadAsync("/mem/material-test.json");
+    if (assetResult.hasValue()) {
+        auto val = std::move(assetResult).logError().value();
+        JAENG_LOG_INFO("Async load success! Loaded {} bytes.", val.size());
+    } else {
+        auto err = std::move(assetResult).logError().error();
+        JAENG_LOG_ERROR("Async load failed: {}", err.message);
+    }
     
     // Back to main thread to update UI or similar
     co_await jaeng::async::SwitchToMainThread();
