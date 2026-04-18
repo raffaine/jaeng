@@ -16,7 +16,7 @@ public:
         Subscription(std::shared_ptr<EventBus> publisher, size_t id)
             : bus(publisher), id(id) {}
         ~Subscription() {
-            if (auto b = bus.lock()) b->unsubscribe<Event>(id);
+            if (auto b = bus.lock()) b->template unsubscribe<Event>(id);
         }
     private:
         std::weak_ptr<EventBus> bus;

@@ -2,11 +2,17 @@
 #include "renderer_api.h"
 #include <memory>
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#include <string>
+#include <cstdlib>
+#endif
+
 namespace jaeng {
 
 #if defined(_WIN32)
-#include <windows.h>
-
 struct RendererPlugin {
     HMODULE lib = nullptr;
     std::shared_ptr<RendererAPI> api;
@@ -25,11 +31,6 @@ struct RendererPlugin {
     }
 };
 #else
-#include <dlfcn.h>
-#include <string>
-#include <codecvt>
-#include <locale>
-
 struct RendererPlugin {
     void* lib = nullptr;
     std::shared_ptr<RendererAPI> api;
@@ -37,17 +38,25 @@ struct RendererPlugin {
     bool load(const char* dll_path) {
         lib = dlopen(dll_path, RTLD_NOW | RTLD_GLOBAL);
         if (!lib) {
-            JAENG_LOG_ERROR("dlopen failed: {}", dlerror());
+            const char* err = dlerror();
+            JAENG_LOG_ERROR("dlopen failed: {}", err ? err : "Unknown error");
             return false;
         }
         auto loadFn = (PFN_LoadRenderer)dlsym(lib, "LoadRenderer");
-        if (!loadFn) return false;
+        if (!loadFn) {
+            const char* err = dlerror();
+            JAENG_LOG_ERROR("dlsym failed for LoadRenderer: {}", err ? err : "Symbol not found");
+            return false;
+        }
         api = std::make_shared<RendererAPI>();
         return loadFn(api.get());
     }
     bool load(const wchar_t* dll_path) {
-        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        return load(converter.to_bytes(dll_path).c_str());
+        size_t len = std::wcstombs(nullptr, dll_path, 0);
+        if (len == static_cast<size_t>(-1)) return false;
+        std::string path(len, '\0');
+        std::wcstombs(path.data(), dll_path, len);
+        return load(path.c_str());
     }
     void unload() {
         if (lib) { dlclose(lib); lib = nullptr; }

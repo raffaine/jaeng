@@ -37,6 +37,30 @@
                 "CMAKE_PREFIX_PATH": "${sourceDir}/build/linux-debug/vcpkg_installed/arm64-linux",
                 "JAENG_BUILD_SANDBOX": "ON"
             }
+        },
+        {
+            "name": "macos-debug",
+            "displayName": "macOS Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/macos-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "JAENG_BUILD_SANDBOX": "ON",
+                "CMAKE_TOOLCHAIN_FILE": "/Users/raffaine/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "arm64-osx"
+            }
+        },
+        {
+            "name": "ios-debug",
+            "displayName": "iOS Debug",
+            "generator": "Xcode",
+            "binaryDir": "${sourceDir}/build/ios-debug",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "iOS",
+                "JAENG_BUILD_SANDBOX": "ON",
+                "CMAKE_TOOLCHAIN_FILE": "/Users/raffaine/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "arm64-ios"
+            }
         }
     ]
 }

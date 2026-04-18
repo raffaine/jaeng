@@ -3,14 +3,33 @@
 - **Core Tech:** C++20 Game Engine. Cross-platform (Win32 & Wayland), Dynamic Loaded Rendereres (D3D12, Vulkan).
 - **Architecture:** Lock-free, three-thread model (Main/OS, Simulation, Render) utilizing an engine-managed Triple Buffer.
 - **Roadmap:**
-  1. (Completed) **Multithreaded Subsystem Worlds** & Triple Buffering.
-  2. (Completed) **Data-Oriented Scene Graph** (Hierarchical Transforms baked per tick).
-  3. (Completed) **Skeletal Animation System** (ECS-based bones, Animator component).
-  4. (Completed) **Interaction & UI Systems** (Screen-to-world raycasting for entity picking, 2D Orthographic pass for text/UI batching).
-  5. (Completed) **Platform Process Hosting** (Expand Engine to Launch and Manage other Processes through the Platform class in a ProcessManager. Spawned Processes should terminate with the main process.).
-  6. (Completed) **Threading and Async Task Group Infrastructure** (Expose to apps a uniform threading capacity that ensures the three-thread model while enabling apps ability to expand. Main/OS thread will also hold a scheduler for Task distribution into a pool of worker threads, this should be exposed to the app in a way that allows for task chaining and ability to run on scheduler's thread, a form of sync mode. This system should also expose an interface for apps to use C++ co_await semantics)
-  7. (Current) **Asynchronous Asset Pipeline** (Background IO thread pool for lock-free streaming).
-  8. (Next) **Presentation Layer Refactor** (Expose V-Sync and `PresentMode` via `AppConfig` to safely support uncapped framerates across both D3D12 and Vulkan backends).
+## JAENG Apple Expansion Tasks (macOS / iOS)
+
+### 1. Platform & OS Layer Implementation
+* Create Objective-C++ `.mm` bridge files strictly for interfacing with AppKit (macOS) and UIKit (iOS)[cite: 5, 7].
+* Map the `NSApplication` and `UIApplication` run loops directly to the engine's Main/OS thread[cite: 8].
+* Wrap Cocoa window references into existing Context/Device handles to strictly avoid global state[cite: 9, 33].
+* Implement event handling by pushing Cocoa input and window events into the existing lock-free queues to be consumed by the Simulation thread[cite: 10].
+* Ensure this layer adheres to the philosophy of using native implementations over generic libraries like SDL3[cite: 6, 36].
+
+### 2. Metal Renderer Backend
+* Set up `metal-cpp` to act as a dynamically loaded renderer alongside the existing D3D12 and Vulkan backends[cite: 11, 12, 28].
+* Generate Metal command buffers exclusively on the Render thread[cite: 13].
+* Strictly communicate across boundaries using the engine-managed TripleBuffer and double-buffered command queues[cite: 14, 29, 31].
+* Ensure the Simulation thread never blocks waiting on the Metal Render thread[cite: 15, 30].
+* Wrap Metal reference-counted objects (e.g., `MTL::Device`, `MTL::CommandQueue`, `MTL::Buffer`) in `UniqueHandle` patterns to avoid manual release calls[cite: 16, 17, 35].
+* Return the engine's internal result type for all failable Metal initializations instead of throwing exceptions[cite: 18, 34].
+
+### 3. Shader Pipeline Translation
+* Maintain native HLSL as the primary shader language[cite: 20, 37].
+* Integrate SPIRV-Cross into the build pipeline to transpile SPIR-V (compiled via GLSC) into Metal Shading Language (MSL)[cite: 21, 38].
+* Map Metal Tier 2 Argument Buffers to the engine's bindless `ResourceDescriptorHeap[index]` syntax[cite: 22, 39].
+* Configure the pipeline to bind a single top-level Argument Buffer per frame containing all resource descriptors to keep topological passes fast[cite: 23].
+
+### 4. Apple Silicon ECS Optimizations
+  - Continue utilizing flat contiguous arrays and topological passes to maximize data locality on Apple's ARM architecture[cite: 24, 25, 32].
+  - Avoid pointer-chasing and recursive tree traversals to maximize throughput on Apple's unified memory[cite: 26, 33].
+  - (Future) **Presentation Layer Refactor** (Expose V-Sync and `PresentMode` via `AppConfig` to safely support uncapped framerates across both D3D12 and Vulkan backends).
 - **Architecture Preferences:**
   - **Concurrency:** The Simulation thread MUST NEVER block waiting on the Render thread. Communicate across boundaries strictly via the `TripleBuffer` and double-buffered command queues (e.g., `RenderProxy`).
   - **ECS & Data Locality:** Favor flat contiguous arrays and topological passes. Avoid pointer-chasing and recursive tree traversals.

@@ -35,7 +35,7 @@ int APIENTRY WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     return platform->run(std::move(app));
 }
 #else
-int main() {
+int main(int argc, char* argv[]) {
     auto platform = create_platform();
     auto app = std::make_unique<SandboxApp>(*platform);
     return platform->run(std::move(app));

@@ -22,7 +22,11 @@
 #include <filesystem>
 #include <sstream>
 
-#ifdef JAENG_LINUX
+#ifdef JAENG_MACOS
+#include <mach-o/dyld.h>
+#endif
+
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -119,15 +123,32 @@ void SandboxApp::runFutureTest() {
 void SandboxApp::startServer() {
     ProcessDesc desc;
     
-    // Robustly find TestServer next to current executable
-    std::error_code ec;
-    auto exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (ec) exePath = std::filesystem::path("/proc/self/exe");
+    // Discovery path: always check next to executable
+    std::string exeDir;
+    try {
+#ifdef JAENG_WIN32
+        exeDir = "."; // Placeholder
+#elif defined(JAENG_MACOS)
+        char path[1024];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            exeDir = std::filesystem::path(path).parent_path().string();
+        } else {
+            exeDir = ".";
+        }
+#else
+        std::error_code ec;
+        auto exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (ec) exePath = "./sandbox";
+        exeDir = exePath.parent_path().string();
+#endif
+    } catch (...) {
+        exeDir = ".";
+    }
     
-    auto binDir = std::filesystem::canonical(exePath, ec).parent_path();
-    if (ec) binDir = ".";
+    auto binDir = std::filesystem::path(exeDir);
 
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS)
     desc.command = (binDir / "TestServer").string();
 #else
     desc.command = (binDir / "TestServer.exe").string();
@@ -178,7 +199,7 @@ void SandboxApp::updateServerData() {
     }
 
     // Set non-blocking
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
     int flags = fcntl(sock, F_GETFL, 0);
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 #else
@@ -189,7 +210,7 @@ void SandboxApp::updateServerData() {
     struct sockaddr_in serv_addr;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(12347);
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
     serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 #else
     inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
@@ -197,7 +218,7 @@ void SandboxApp::updateServerData() {
 
     int res = connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (res < 0) {
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
         if (errno != EINPROGRESS) {
             JAENG_LOG_ERROR("Connect failed immediately: {} (Port 12346)", errno);
             CLOSE_SOCKET(sock);
@@ -250,7 +271,7 @@ void SandboxApp::updateServerData() {
 
     if (activity > 0 && FD_ISSET(sock, &readfds)) {
         char buffer[1024] = {0};
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
         int valread = read(sock, buffer, 1024);
 #else
         int valread = recv(sock, buffer, 1024, 0);
@@ -260,7 +281,7 @@ void SandboxApp::updateServerData() {
         } else if (valread == 0) {
             serverTime_ = "Server Offline (EOF)";
         } else {
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
             JAENG_LOG_ERROR("Server read error: {}", errno);
 #else
             JAENG_LOG_ERROR("Server read error: {}", WSAGetLastError());
@@ -279,6 +300,8 @@ void SandboxApp::updateServerData() {
 // Define the backend-specific extensions and files
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #define SHADER_EXT ".dxil"
+#elif defined(JAENG_MACOS) || defined(JAENG_IOS)
+#define SHADER_EXT ".msl"
 #else
 #define SHADER_EXT ".spv"
 #endif
@@ -325,6 +348,8 @@ SandboxApp::SandboxApp(IPlatform& platform)
         "jaeng Sandbox", 1280, 720, 
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
         GfxBackend::D3D12
+#elif defined(JAENG_MACOS) || defined(JAENG_IOS)
+        GfxBackend::Metal
 #else
         GfxBackend::Vulkan
 #endif
