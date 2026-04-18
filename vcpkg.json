@@ -1,7 +1,7 @@
 {
     "name": "jaeng",
     "version-string": "0.1.0",
-    "builtin-baseline": "e5a1490e1409d175932ef6014519e9ae149ddb7c",
+    "builtin-baseline": "256acc64012b23a13041d8705805e1f23b43a024",
     "dependencies": [
         { "name": "winpixevent", "platform": "windows" },
         { "name": "directx-dxc", "platform": "windows" },
@@ -10,6 +10,7 @@
         "json-schema-validator",
         "vulkan-headers",
         "vulkan-loader",
-        "stb"
+        "stb",
+        "spirv-cross"
     ]
 }
