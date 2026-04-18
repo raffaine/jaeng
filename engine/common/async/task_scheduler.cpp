@@ -1,4 +1,5 @@
 #include "task_scheduler.h"
+#include "awaiters.h"
 #include "common/logging.h"
 
 namespace jaeng::async {
@@ -64,7 +65,20 @@ bool TaskScheduler::process_main_thread_tasks() {
     return true;
 }
 
+thread_local bool t_isWorker = false;
+thread_local bool t_isIO = false;
+
+bool TaskScheduler::is_worker_thread() const {
+    return t_isWorker;
+}
+
+bool TaskScheduler::is_io_thread() const {
+    return t_isIO;
+}
+
 void TaskScheduler::worker_loop() {
+    t_isWorker = true;
+    set_current_scheduler(this);
     while (true) {
         TaskFn task;
         {
@@ -81,6 +95,9 @@ void TaskScheduler::worker_loop() {
 }
 
 void TaskScheduler::io_worker_loop() {
+    t_isWorker = true;
+    t_isIO = true;
+    set_current_scheduler(this);
     while (true) {
         TaskFn task;
         {

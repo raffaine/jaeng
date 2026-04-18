@@ -143,7 +143,7 @@ protected:
     IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
-    async::TaskScheduler& taskScheduler() { return taskScheduler_; }
+    async::TaskScheduler& taskScheduler() { return *taskScheduler_; }
     IPlatform& platform() { return platform_; }
     IWindow& window() { return *window_; }
     const AppConfig& getConfig() const { return config_; }
@@ -152,7 +152,7 @@ private:
     void simulation_loop();
     void render_loop();
 
-    async::TaskScheduler taskScheduler_;
+    std::unique_ptr<async::TaskScheduler> taskScheduler_;
     std::jthread simThread_;
     std::jthread renderThread_;
     std::atomic<bool> isRunning_ = false;

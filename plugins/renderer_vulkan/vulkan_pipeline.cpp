@@ -12,8 +12,18 @@ jaeng::result<VulkanShaderModule> create_vulkan_shader(VulkanDevice* device, con
 }
 
 jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, VulkanDescriptorHeap* heap, const GraphicsPipelineDesc* desc, const std::map<ShaderModuleHandle, VulkanShaderModule>& shaders, const std::map<VertexLayoutHandle, VulkanVertexLayout>& vertexLayouts, vk::Format colorFormat) {
-    auto vs = shaders.at(desc->vs).module;
-    auto fs = shaders.at(desc->fs).module;
+    auto vsIt = shaders.find(desc->vs);
+    auto fsIt = shaders.find(desc->fs);
+
+    if (vsIt == shaders.end()) {
+        return jaeng::Error::fromMessage((int)error_code::no_resource, std::format("[Vulkan] Vertex shader {} not found", desc->vs));
+    }
+    if (fsIt == shaders.end()) {
+        return jaeng::Error::fromMessage((int)error_code::no_resource, std::format("[Vulkan] Fragment shader {} not found", desc->fs));
+    }
+
+    vk::ShaderModule vs = vsIt->second.module;
+    vk::ShaderModule fs = fsIt->second.module;
 
     std::vector<vk::PipelineShaderStageCreateInfo> stages = {
         { {}, vk::ShaderStageFlagBits::eVertex, vs, "main" },
@@ -38,7 +48,11 @@ jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, Vulka
     renderingInfo.depthAttachmentFormat = depthFormat;
 
     // Vertex Input from stored layout
-    auto& vl = vertexLayouts.at(desc->vertex_layout);
+    auto vlIt = vertexLayouts.find(desc->vertex_layout);
+    if (vlIt == vertexLayouts.end()) {
+        return jaeng::Error::fromMessage((int)error_code::no_resource, std::format("[Vulkan] Vertex layout {} not found", desc->vertex_layout));
+    }
+    auto& vl = vlIt->second;
     vk::PipelineVertexInputStateCreateInfo vertexInput({}, vl.bindings, vl.attributes);
 
     // Minimal pipeline state

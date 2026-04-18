@@ -8,6 +8,7 @@
 
 #include "render/public/renderer_api.h"
 #include "common/result.h"
+#include "common/async/task.h"
 
 namespace jaeng {
 
@@ -45,6 +46,7 @@ struct TextureData {
 };
 
 struct MaterialMetadata {
+    std::string path;
     std::string name;
     std::string vsPath;
     std::string psPath;
@@ -79,6 +81,9 @@ public:
 
     // Create material from a virtual path (disk, memory, etc.)
     virtual result<MaterialHandle> createMaterial(const std::string& path) = 0;
+
+    // Create material asynchronously
+    virtual async::Task<result<MaterialHandle>> createMaterialAsync(const std::string& path) = 0;
 
     // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
     virtual result<MaterialHandle> createMaterial(

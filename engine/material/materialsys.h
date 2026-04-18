@@ -28,6 +28,8 @@ public:
 
     result<MaterialHandle> createMaterial(const std::string& path) override;
 
+    async::Task<result<MaterialHandle>> createMaterialAsync(const std::string& path) override;
+
     // Create Material from a virtual path but with hardcoded layout descriptors (from reflection)
     result<MaterialHandle> createMaterial(
         const std::string& path,
@@ -65,12 +67,24 @@ private:
         MaterialBindings bg;
     };
 
-    std::unordered_map<MaterialHandle, Storage> storage;
+    std::unordered_map<MaterialHandle, std::shared_ptr<Storage>> storage;
     std::bitset<MAX_MATERIALS> slotUsage;
+    mutable std::mutex storageMutex;
     
     // Common Logic
+    struct ReflectionData {
+        uint32_t stride;
+        std::vector<VertexAttributeDesc> attributes;
+        std::vector<std::string> semantics;
+    };
+    result<ReflectionData> _loadReflection(IFileManager& fm, const std::string& path);
     result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
     result<> _createMaterialResources(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
+                                             const char* requiredSemantics[]);
+
+    async::Task<result<ReflectionData>> _loadReflectionAsync(IFileManager& fm, const std::string& path);
+    async::Task<result<MaterialHandle>> _createMaterialMetadataAsync(IFileManager& fm, const std::string& path);
+    async::Task<result<>> _createMaterialResourcesAsync(IFileManager& fm, Storage& m, const VertexLayoutDesc* vtxLayout, size_t vtxLayoutCount, 
                                              const char* requiredSemantics[]);
 };
 

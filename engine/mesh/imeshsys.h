@@ -5,6 +5,7 @@
 
 #include "render/public/renderer_api.h"
 #include "common/result.h"
+#include "common/async/task.h"
 
 namespace jaeng {
 
@@ -33,6 +34,9 @@ class IMeshSystem {
 public:
     // Load mesh from file (e.g., .obj or custom format)
     virtual result<MeshHandle> loadMesh(const std::string& path) = 0;
+
+    // Load mesh asynchronously
+    virtual async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path) = 0;
 
     // Remove mesh
     virtual result<void> removeMesh(MeshHandle handle) = 0;

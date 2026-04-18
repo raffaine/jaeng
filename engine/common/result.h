@@ -171,6 +171,14 @@ private:
 #define JAENG_TRY(expr) \
     { auto _tmp = (expr); if (_tmp.hasError()) return _tmp; }
 
+#define JAENG_TRY_ASSIGN_ASYNC(decl, expr) \
+    auto UNIQUE_NAME(_tmp_) = co_await (expr); \
+    if (UNIQUE_NAME(_tmp_).hasError()) co_return UNIQUE_NAME(_tmp_); \
+    decl = std::move(UNIQUE_NAME(_tmp_)).logError().value()
+
+#define JAENG_TRY_ASYNC(expr) \
+    { auto _tmp = co_await (expr); if (_tmp.hasError()) co_return _tmp; }
+
 // -------------------- Error Macros --------------------
 #ifdef JAENG_WIN32
 #define JAENG_CHECK_HRESULT(hr) \
@@ -188,5 +196,11 @@ private:
     
 #define JAENG_ERROR(code, msg) \
     return jaeng::Error::fromMessage(static_cast<int>(code), msg)
+
+#define JAENG_ERROR_IF_ASYNC(predicate, code, msg) \
+    if (predicate) co_return jaeng::Error::fromMessage(static_cast<int>(code), msg)
+    
+#define JAENG_ERROR_ASYNC(code, msg) \
+    co_return jaeng::Error::fromMessage(static_cast<int>(code), msg)
 
 } // jaeng namespace

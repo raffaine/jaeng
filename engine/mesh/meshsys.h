@@ -24,6 +24,9 @@ public:
     // Load mesh from file (e.g., .obj or custom format)
     result<MeshHandle> loadMesh(const std::string& path) override;
 
+    // Load mesh asynchronously
+    async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path) override;
+
     // Remove mesh
     result<void> removeMesh(MeshHandle handle) override;
 
@@ -39,6 +42,7 @@ private:
 
     std::unordered_map<MeshHandle, Mesh> meshes;
     std::bitset<MAX_MESH_ENTRIES> slotUsage; // lightweight slot tracking
+    mutable std::mutex storageMutex;
     MeshHandle nextHandle = 0;
 };
 

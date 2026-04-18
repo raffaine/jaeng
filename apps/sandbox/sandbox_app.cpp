@@ -10,10 +10,6 @@
 #include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 
-// Shader Includes
-#include "basic.h"
-#include "ui.h"
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -283,11 +279,10 @@ void SandboxApp::updateServerData() {
 // Define the backend-specific extensions and files
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
 #define SHADER_EXT ".dxil"
-#define REFLECT_FILE "basic_reflect.json"
 #else
 #define SHADER_EXT ".spv"
-#define REFLECT_FILE "basic.json"
 #endif
+#define REFLECT_FILE "basic.json"
 
 // Compile-time string concatenation to build the JSON dynamically
 static const char* materialFileData = R"({
@@ -337,7 +332,7 @@ SandboxApp::SandboxApp(IPlatform& platform)
 {}
 
 bool SandboxApp::app_init() {
-    setupResources();
+    setupAsync();
 
     const auto aspect = 1280.f/720.f;
     EntityID camEntity = entityManager().createEntity();
@@ -366,16 +361,12 @@ bool SandboxApp::app_init() {
             return nullptr;
         });
 
-    setupEntities();
-    setupAnimation();
-
     BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
     cbFrame_ = renderer().create_buffer(&cbDesc, nullptr);
     if (auto* scene = sceneManager().getScene("Test")) {
         scene->setCbFrame(cbFrame_);
     }
 
-    setupUI();
     startServer();
 
     return true;
@@ -531,8 +522,10 @@ void SandboxApp::handleSelection() {
             selectionState_.selectedEntity = bestEntity;
             if (bestEntity != static_cast<EntityID>(-1)) {
                 auto mat = *entityManager().getComponent<MaterialComponent>(bestEntity);
-                if (auto metadata = std::move(materialSystem().getMetadata(mat.handle)).logError()) {
-                    selectionState_.originalColor = (*metadata)->vectorParams.at("color");
+                auto res = materialSystem().getMetadata(mat.handle);
+                if (res.hasValue()) {
+                    auto metadata = std::move(res).logError().value();
+                    selectionState_.originalColor = metadata->vectorParams.at("color");
                 }
             }
         }
@@ -667,7 +660,14 @@ static const char* uiMaterialFileData = R"({
   }
 })";
 
-void SandboxApp::setupResources() {
+jaeng::async::FireAndForget SandboxApp::setupAsync() {
+    co_await setupResourcesAsync();
+    setupUI();
+    co_await setupEntitiesAsync();
+    setupAnimation();
+}
+
+jaeng::async::Task<void> SandboxApp::setupResourcesAsync() {
     uint32_t whitePixel = 0xFFFFFFFF;
     fileManager().registerMemoryFile("/mem/white.raw", &whitePixel, sizeof(uint32_t));
 
@@ -694,32 +694,42 @@ void SandboxApp::setupResources() {
         defaultFont_ = fontHandle.value();
     }
     
-    if (auto matHandle = materialSystem().createMaterial("/mem/ui-material.json", &ShaderReflection::ui::vertexLayout, 1, ShaderReflection::ui::inputSemantics).logError()) {
-        uiMaterial_ = matHandle.value();
+    {
+        result<MaterialHandle> matHandle = co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
+        if (matHandle.hasValue()) {
+            uiMaterial_ = std::move(matHandle).logError().value();
+        }
     }
 }
 
-void SandboxApp::setupEntities() {
+jaeng::async::Task<void> SandboxApp::setupEntitiesAsync() {
     testEntities_.resize(4);
     for(int i=0; i<4; ++i) testEntities_[i] = entityManager().createEntity();
 
-    if (auto meshHandle = meshSystem().loadMesh("/mem/mesh-test.raw").logError()) {
-        for (int i = 0; i < 4; i++) {
-            entityManager().addComponent<MeshComponent>(testEntities_[i]) = {meshHandle.value()};
-            BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
-            entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
+    {
+        result<MeshHandle> meshRes = co_await meshSystem().loadMeshAsync("/mem/mesh-test.raw");
+        if (meshRes.hasValue()) {
+            MeshHandle mh = std::move(meshRes).logError().value();
+            for (int i = 0; i < 4; i++) {
+                entityManager().addComponent<MeshComponent>(testEntities_[i]) = {mh};
+                BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
+                entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
+            }
         }
     }
-    if (auto matHandle = materialSystem().createMaterial("/mem/material-test.json", &ShaderReflection::basic::vertexLayout, 1, ShaderReflection::basic::inputSemantics).logError()) {
-        auto h = matHandle.value();
-        for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
-#ifdef JAENG_WIN32
-        materialSub_ = fileManager().track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
-            if (e.change == FileChangedEvent::ChangeType::Modified) {
-                materialSystem().reloadMaterial(h).orElse([](auto) {});
-            }
+    {
+        result<MaterialHandle> matRes = co_await materialSystem().createMaterialAsync("/mem/material-test.json");
+        if (matRes.hasValue()) {
+            MaterialHandle h = std::move(matRes).logError().value();
+            for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
+
+            materialSub_ = fileManager().track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
+                if (e.change == FileChangedEvent::ChangeType::Modified) {
+                    JAENG_LOG_INFO("Hot-reloading material: {}", e.path);
+                    materialSystem().reloadMaterial(h).orElse([](auto) {});
+                }
             });
-#endif
+        }
     }
 
     entityManager().addComponent<Transform>(testEntities_[0]) = Transform{ .position = { 0.0f,  0.0f, 0} }; // The Sun

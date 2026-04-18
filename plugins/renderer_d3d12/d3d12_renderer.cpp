@@ -87,7 +87,7 @@ jaeng::result<> RendererD3D12::executeNow(std::function<void(ID3D12GraphicsComma
 
 jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     hwnd_ = (HWND)desc->platform_window;
     frameCount_ = desc->frame_count ? desc->frame_count : 3;
@@ -171,7 +171,7 @@ void RendererD3D12::shutdown()
     // Ensure GPU is idle before tearing down (outside lock to avoid deadlock with callbacks)
     wait_idle();
 
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     // Order: pipelines/resources, per-frame, swapchain, descriptors, device
     pipelines_.reset();
@@ -200,7 +200,7 @@ void RendererD3D12::shutdown()
 
 bool RendererD3D12::begin_frame()
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     // Determine frame index from swapchain (or keep 0 if not created yet
     frameIndex_ = (swapchain_) ? swapchain_->current_index() : 0;
@@ -225,14 +225,14 @@ bool RendererD3D12::begin_frame()
 
 void RendererD3D12::end_frame()
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     frameBegun_ = false;
 }
 
 jaeng::result<SwapchainHandle> RendererD3D12::create_swapchain(const SwapchainDesc* d)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     JAENG_ERROR_IF(!hwnd_, jaeng::error_code::resource_not_ready, "[Renderer] No Window Handle");
 
     // Create & build RTVs internally
@@ -271,7 +271,7 @@ jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSiz
     
     // Not safe to take the lock if presenting
     JAENG_ERROR_IF(state_ == RendererState::Presenting, jaeng::error_code::resource_not_ready, "[Renderer] Swapchain is presenting, defer this call.");
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     JAENG_ERROR_IF(!swapchain_, jaeng::error_code::no_resource, "[Renderer] No Swapchain.");
 
     // --- Pause presents and quiesce GPU before resizing ---
@@ -307,14 +307,14 @@ jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSiz
 
 void RendererD3D12::destroy_swapchain(SwapchainHandle)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     backbufferHandles_.clear();
     if (swapchain_) swapchain_->destroy();
 }
 
 TextureHandle RendererD3D12::get_current_backbuffer(SwapchainHandle)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     const uint32_t idx = swapchain_->current_index();
     return (idx < backbufferHandles_.size()) ? backbufferHandles_[idx] : 0;
 
@@ -322,9 +322,14 @@ TextureHandle RendererD3D12::get_current_backbuffer(SwapchainHandle)
 
 jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, const void* initial)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     // Create DEFAULT-heap resource; if initial != null, stage via UploadRing and copy
     BufferRec buf{};
+    
     buf.size = d->size_bytes;
+    if (d->usage & BufferUsage_Uniform) {
+        buf.size = (buf.size + 255) & ~255;
+    }
     buf.usage = d->usage;
 
     // Uniform Buffers are 256byte aligned (limiting to 64k as well)
@@ -363,10 +368,11 @@ jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, co
     }
 
     if (d->usage & BufferUsage_Uniform) {
+        UINT alignedSize = (d->size_bytes + 255) & ~255;
         // Build a CPU CBV once and cache it
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{};
         cbv.BufferLocation = buf.res->GetGPUVirtualAddress();
-        cbv.SizeInBytes    = (UINT)buf.size;
+        cbv.SizeInBytes    = alignedSize;
 
         D3D12_CPU_DESCRIPTOR_HANDLE cpu = cpuDesc_->allocate(nullptr);  // CPU CBV/SRV/UAV heap
         device_->dev()->CreateConstantBufferView(&cbv, cpu);            // write once
@@ -387,6 +393,7 @@ jaeng::result<BufferHandle> RendererD3D12::create_buffer(const BufferDesc* d, co
 
 void RendererD3D12::destroy_buffer(BufferHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (BufferRec* buf = resources_->get_buf(h)) {
         buf->res.Reset();
     }
@@ -394,6 +401,7 @@ void RendererD3D12::destroy_buffer(BufferHandle h)
 
 jaeng::result<> RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, const void* data, uint64_t size)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (!data || size == 0) return {};
     auto* b = resources_->get_buf(h);
     JAENG_ERROR_IF(!b, jaeng::error_code::no_resource, "[Renderer] No buffer to update");
@@ -418,23 +426,16 @@ jaeng::result<> RendererD3D12::update_buffer(BufferHandle h, uint64_t dst_off, c
         };
     };
 
-    if (frameBegun_) {
-        // ---- Fast path: record into the active frame's command list using the per-frame ring ----
-        JAENG_TRY_ASSIGN(UploadSlice us, fr.upload->stage(data, size, 256ull));
-        actionGen(*b, us, dst_off, size)(fr.cmd());
-    }
-    else {
-        // ---- Robust path: no frame begun -> perform an immediate one-shot copy and wait ----
-        UploadRing up;
-        JAENG_TRY(up.create(device_->dev(), size));
-        JAENG_TRY_ASSIGN(UploadSlice us, up.stage(data, size, 256ull));
-        JAENG_TRY(executeNow(actionGen(*b, us, dst_off, size)));
-    }
+    UploadRing up;
+    JAENG_TRY(up.create(device_->dev(), size));
+    JAENG_TRY_ASSIGN(UploadSlice us, up.stage(data, size, 256ull));
+    JAENG_TRY(executeNow(actionGen(*b, us, dst_off, size)));
     return {};
 }
 
 jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td, const void* initial)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     TextureRec t {
         .width  = td->width,
         .height = td->height
@@ -463,11 +464,7 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
         UINT rows = 0; UINT64 rowSizeInBytes = 0;
         device_->dev()->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSizeInBytes, &totalBytes);
 
-        UploadRing up;
-        JAENG_TRY(up.create(device_->dev(), totalBytes));
-        JAENG_TRY_ASSIGN(UploadSlice us, up.stage_pitched(static_cast<const uint8_t*>(initial), rows, td->width * 4 /*RGBA8*/, fp));
-
-        auto doCopy = [&](ID3D12GraphicsCommandList* cl) {
+        auto doCopy = [&](ID3D12GraphicsCommandList* cl, const UploadSlice& us, D3D12_PLACED_SUBRESOURCE_FOOTPRINT final_fp) {
             // Transition and copy
             Barrier(cl, t.res.Get(), t.state, D3D12_RESOURCE_STATE_COPY_DEST);
             D3D12_TEXTURE_COPY_LOCATION dstLoc {
@@ -478,7 +475,7 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
             D3D12_TEXTURE_COPY_LOCATION srcLoc {
                 .pResource       = us.resource,
                 .Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-                .PlacedFootprint = fp
+                .PlacedFootprint = final_fp
             };
             cl->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
             Barrier(cl, t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -486,11 +483,18 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
         };
 
         if (frameBegun_) {
-            // We are already recording into g.cmdList this frame
-            doCopy(curFrame().cmd());
+            auto& fr = curFrame();
+            JAENG_TRY_ASSIGN(UploadSlice us, fr.upload->stage_pitched(static_cast<const uint8_t*>(initial), rows, td->width * 4 /*RGBA8*/, fp));
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT final_fp = fp;
+            final_fp.Offset = us.offset;
+            doCopy(fr.cmd(), us, final_fp);
         } else {
-            // No frame yet -> execute a tiny one-shot list and wait
-            JAENG_TRY(executeNow(std::move(doCopy)));
+            UploadRing up;
+            JAENG_TRY(up.create(device_->dev(), totalBytes));
+            JAENG_TRY_ASSIGN(UploadSlice us, up.stage_pitched(static_cast<const uint8_t*>(initial), rows, td->width * 4 /*RGBA8*/, fp));
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT final_fp = fp;
+            final_fp.Offset = us.offset;
+            JAENG_TRY(executeNow([&](ID3D12GraphicsCommandList* cl) { doCopy(cl, us, final_fp); }));
         }
     }
 
@@ -515,6 +519,7 @@ jaeng::result<TextureHandle> RendererD3D12::create_texture(const TextureDesc* td
 
 void RendererD3D12::destroy_texture(TextureHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (TextureRec* tex = resources_->get_tex(h)) {
         tex->res.Reset();
     }
@@ -522,6 +527,7 @@ void RendererD3D12::destroy_texture(TextureHandle h)
 
 SamplerHandle RendererD3D12::create_sampler(const SamplerDesc* sd)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     D3D12_SAMPLER_DESC d{};
     d.Filter   = (sd->filter == SamplerFilter::Nearest) ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     d.AddressU = (sd->address_u == AddressMode::Repeat) ? D3D12_TEXTURE_ADDRESS_MODE_WRAP :
@@ -552,23 +558,27 @@ SamplerHandle RendererD3D12::create_sampler(const SamplerDesc* sd)
 
 void RendererD3D12::destroy_sampler(SamplerHandle)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     // linear CPU heap => no free; TODO: resource table should release records
 }
 
 uint32_t RendererD3D12::get_texture_index(TextureHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (auto* tex = resources_->get_tex(h)) return tex->descriptorIndex;
     return 0;
 }
 
 uint32_t RendererD3D12::get_sampler_index(SamplerHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (auto* smp = resources_->get_samp(h)) return smp->descriptorIndex;
     return 0;
 }
 
 ShaderModuleHandle RendererD3D12::create_shader_module(const ShaderModuleDesc* d)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     ShaderBlob sb{};
     sb.bytes.assign((const uint8_t*)d->data, (const uint8_t*)d->data + d->size);
     return pipelines_->add_shader(std::move(sb));
@@ -576,47 +586,76 @@ ShaderModuleHandle RendererD3D12::create_shader_module(const ShaderModuleDesc* d
 
 void RendererD3D12::destroy_shader_module(ShaderModuleHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     pipelines_->del_shader(h);
 }
 
 VertexLayoutHandle RendererD3D12::create_vertex_layout(const VertexLayoutDesc* vld)
 {
-    std::vector<D3D12_INPUT_ELEMENT_DESC> ils;
-    ils.reserve(vld->attribute_count);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    InputLayout il;
+    il.stride = vld->stride;
+    il.ieds.reserve(vld->attribute_count);
+    il.semanticNames.reserve(vld->attribute_count);
+
     for (uint32_t i = 0; i < vld->attribute_count; ++i) {
         const auto& a = vld->attributes[i];
+        
+        il.semanticNames.push_back(a.semanticName ? a.semanticName : "");
+
         D3D12_INPUT_ELEMENT_DESC e{};
-        e.SemanticName = (a.location == 0) ? "POSITION" : (a.location == 1) ? "COLOR" : "TEXCOORD";
         e.SemanticIndex = 0;
-        e.Format = (a.location == 2) ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
+        
+        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+        switch (a.format) {
+            case VertexAttributeFormat::Float:  format = DXGI_FORMAT_R32_FLOAT; break;
+            case VertexAttributeFormat::Float2: format = DXGI_FORMAT_R32G32_FLOAT; break;
+            case VertexAttributeFormat::Float3: format = DXGI_FORMAT_R32G32B32_FLOAT; break;
+            case VertexAttributeFormat::Float4: format = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+            case VertexAttributeFormat::UByte4: format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+            default: format = DXGI_FORMAT_R32G32B32_FLOAT; break;
+        }
+        e.Format = format;
         e.InputSlot = 0;
         e.AlignedByteOffset = a.offset;
         e.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-        ils.push_back(e);
+        il.ieds.push_back(e);
     }
 
-    vertexLayouts_.emplace_back(std::move(ils), vld->stride);
-    return (VertexLayoutHandle)(vertexLayouts_.size() - 1);
+    auto upIl = std::make_unique<InputLayout>(std::move(il));
+    for (size_t i = 0; i < upIl->ieds.size(); ++i) {
+        upIl->ieds[i].SemanticName = upIl->semanticNames[i].c_str();
+    }
+    vertexLayouts_.push_back(std::move(upIl));
+
+    return (VertexLayoutHandle)(vertexLayouts_.size());
 }
 
-PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDesc* gp)
+void RendererD3D12::destroy_vertex_layout(VertexLayoutHandle)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    // linear storage for now, no-op
+}
+
+PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDesc* d)
+{
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     // Use Global Root Signature
     ComPtr<ID3D12RootSignature> root = globalRootSig_;
     if (!root) return 0;
 
-    auto* vsb = pipelines_->get_shader(gp->vs);
-    auto* psb = pipelines_->get_shader(gp->fs);
+    auto* vsb = pipelines_->get_shader(d->vs);
+    auto* psb = pipelines_->get_shader(d->fs);
     if (!vsb) return 0;
 
-    if (gp->vertex_layout >= vertexLayouts_.size()) return 0;
-    auto& vld = vertexLayouts_[gp->vertex_layout];
+    if (d->vertex_layout == 0 || d->vertex_layout > vertexLayouts_.size()) return 0;
+    auto& vld = vertexLayouts_[d->vertex_layout - 1];
 
     // PSO defaults
     D3D12_BLEND_DESC blend = { .RenderTarget{} };
     auto& rt0 = blend.RenderTarget[0];
     rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-    if (gp->enable_blend) {
+    if (d->enable_blend) {
         rt0.BlendEnable = TRUE;
         rt0.SrcBlend = D3D12_BLEND_SRC_ALPHA;
         rt0.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
@@ -628,16 +667,17 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
 
     D3D12_RASTERIZER_DESC rast{};
     rast.FillMode = D3D12_FILL_MODE_SOLID;
-    rast.CullMode = D3D12_CULL_MODE_FRONT; // Flip to see if it fixes inversion
-    rast.DepthClipEnable = TRUE;
+    rast.CullMode = d->enable_blend ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
+    rast.FrontCounterClockwise = TRUE;
+    rast.DepthClipEnable = d->enable_blend ? FALSE : TRUE;
 
     D3D12_DEPTH_STENCIL_DESC depth{};
-    if (depthManager_ && gp->depth_stencil.enableDepth) {
+    if (depthManager_ && d->depth_stencil.enableDepth) {
         depth.DepthEnable = TRUE;
-        depth.DepthFunc = ConvertDepthFunc(gp->depth_stencil.depthFunc);
+        depth.DepthFunc = ConvertDepthFunc(d->depth_stencil.depthFunc);
         depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     }
-    depth.StencilEnable = FALSE; // gp->depth_stencil.enableStencil;
+    depth.StencilEnable = FALSE; // d->depth_stencil.enableStencil;
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
     pso.pRootSignature   = root.Get();
@@ -647,8 +687,9 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     pso.SampleMask       = UINT_MAX;
     pso.RasterizerState  = rast;
     pso.DepthStencilState= depth;
-    pso.DSVFormat        = (depth.DepthEnable) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
-    pso.InputLayout      = { vld.ieds.data(), (UINT)vld.ieds.size() };
+    pso.DSVFormat        = (depthManager_ && d->depth_stencil.enableDepth) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
+    pso.InputLayout      = { vld->ieds.data(), (UINT)vld->ieds.size() };
+
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1;
     pso.RTVFormats[0]    = DXGI_FORMAT_B8G8R8A8_UNORM; // Force format for now to ensure it matches swapchain
@@ -658,22 +699,23 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     rec.root = root;
 
     if (FAILED(device_->dev()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&rec.pso)))) return 0;
-    rec.topo         = (gp->topology == PrimitiveTopology::TriangleStrip) ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP :
-                       (gp->topology == PrimitiveTopology::LineList)     ? D3D_PRIMITIVE_TOPOLOGY_LINELIST :
+    rec.topo         = (d->topology == PrimitiveTopology::TriangleStrip) ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP :
+                       (d->topology == PrimitiveTopology::LineList)     ? D3D_PRIMITIVE_TOPOLOGY_LINELIST :
                                                                            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    rec.vertexStride = vld.stride;
+    rec.vertexStride = vld->stride;
 
     return pipelines_->add_pipeline(std::move(rec));
 }
 
 void RendererD3D12::destroy_pipeline(PipelineHandle h)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     pipelines_->del_pipeline(h);
 }
 
 CommandListHandle RendererD3D12::begin_commands()
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (!frameBegun_) begin_frame();
     return 1; // single list in this backend (FrameContext::cmd())
 }
@@ -705,7 +747,7 @@ void RendererD3D12::cmd_begin_pass(CommandListHandle, LoadOp load_op,
     D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
     D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
 
-    if (depthManager_ && depth) {
+    if (depthManager_ && depth && depth->tex > 0) {
         dsv = depthManager_->get_dsv();
         Barrier(cl, depthManager_->dsv_resource(), depthManager_->resState, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         depthManager_->resState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -862,20 +904,20 @@ void RendererD3D12::end_commands(CommandListHandle) {
 
 void RendererD3D12::submit(CommandListHandle* /*lists*/, uint32_t /*list_count*/)
 {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     auto* cl = curFrame().cmd();
-    
+
     ID3D12CommandList* one[] = { cl };
     device_->queue()->ExecuteCommandLists(1, one);
-    
+
     // Signal fence and store value for this frame, so begin_frame can wait next time
     auto fv = device_->signal();
     auto& fc = curFrame();
     fc.fenceValue = fv;
 }
-
 void RendererD3D12::present(SwapchainHandle)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     state_ = RendererState::Presenting;
     // Present (respect tearing flag)
     UINT syncInterval = (tearing_)? 0 : 1;
@@ -925,6 +967,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     api.create_shader_module = [](const ShaderModuleDesc* d) { return g_renderer->create_shader_module(d); };
     api.destroy_shader_module= [](ShaderModuleHandle h) { g_renderer->destroy_shader_module(h); };
     api.create_vertex_layout = [](const VertexLayoutDesc* d){ return g_renderer->create_vertex_layout(d); };
+    api.destroy_vertex_layout = [](VertexLayoutHandle h){ g_renderer->destroy_vertex_layout(h); };
     api.create_graphics_pipeline = [](const GraphicsPipelineDesc* d) { return g_renderer->create_graphics_pipeline(d); };
     api.destroy_pipeline= [](PipelineHandle h) { g_renderer->destroy_pipeline(h); };
 

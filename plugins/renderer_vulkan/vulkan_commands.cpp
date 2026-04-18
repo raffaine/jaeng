@@ -328,6 +328,7 @@ void vk_end_commands(CommandListHandle) {
 
 void vk_submit(CommandListHandle* lists, uint32_t list_count) {
     if (!g_ctx) return;
+    std::lock_guard<std::mutex> lock(g_ctx->graphicsQueueMutex);
     
     bool hasActiveSwapchain = false;
     for (auto& [h, sw] : g_ctx->swapchains) {
