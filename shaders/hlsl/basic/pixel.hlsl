@@ -2,9 +2,6 @@
 #ifdef JAENG_VULKAN
 Texture2D textures[] : register(t0, space1);
 SamplerState samplers[] : register(s0, space2);
-#else
-Texture2D textures[] : register(t0, space0);
-SamplerState samplers[] : register(s0, space0);
 #endif
 
 cbuffer PushConstants : register(b0, space0)
@@ -20,9 +17,13 @@ struct PSIn {
 };
 
 float4 main(PSIn i) : SV_Target {
-    float4 tex = textures[textureIndex].Sample(samplers[samplerIndex], i.uv);
 #ifdef JAENG_VULKAN
+    float4 tex = textures[textureIndex].Sample(samplers[samplerIndex], i.uv);
     tex = tex.rgba;
+#else
+    Texture2D texResource = ResourceDescriptorHeap[textureIndex];
+    SamplerState smpResource = SamplerDescriptorHeap[samplerIndex];
+    float4 tex = texResource.Sample(smpResource, i.uv);
 #endif
     return i.col * tex;
 }

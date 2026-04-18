@@ -1,6 +1,9 @@
 #pragma once
 
 #include <unordered_map>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 #include "storage/ifstorage.h"
 
@@ -9,7 +12,7 @@ namespace jaeng {
 class FileManager : public IFileManager {
 public:
     FileManager();
-    virtual ~FileManager() = default;
+    virtual ~FileManager();
 
     FileManager(const FileManager&) = delete;
     FileManager& operator=(const FileManager&) = delete;
@@ -30,9 +33,22 @@ public:
 
 private:
     std::unordered_map<std::string, std::vector<uint8_t>> memoryFiles;
+    mutable std::mutex storageMutex_;
     std::shared_ptr<EventBus> eventBus;
 
     std::vector<uint8_t> loadFromDisk(const std::string& path);
+
+    // File Watcher
+    void watcherLoop();
+    std::atomic<bool> stopWatcher_{false};
+    std::thread watcherThread_;
+    std::mutex watcherMutex_;
+
+#ifdef JAENG_LINUX
+    int inotifyFd_ = -1;
+    std::unordered_map<int, std::string> watchDescriptors_;
+    std::unordered_map<std::string, int> pathToWatch_;
+#endif
 };
 
 } // namespace jaeng

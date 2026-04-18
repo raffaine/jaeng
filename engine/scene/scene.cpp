@@ -29,30 +29,58 @@ void Scene::buildDrawList(const math::AABB& volume)
     // Retrieve the reference to Mesh and Material Systems
     auto meshSystem = meshSys.lock();
     auto matSystem = matSys.lock();
-    if (!meshSystem || !matSystem) return;
+    if (!meshSystem || !matSystem) {
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            JAENG_LOG_ERROR("[Scene] Failed to lock meshSystem ({}) or matSystem ({})", (bool)meshSystem, (bool)matSystem);
+            loggedOnce = true;
+        }
+        return;
+    }
 
     // Collect the ComponentPack of all entities in the volume and iterate
     auto proxies = partitioner->queryVisible(volume);
     for (auto& proxy : proxies) {
-        auto* mesh  = meshSystem->getMesh(proxy.mesh).orValue(nullptr);
-        auto* matBg = matSystem->getBindData(proxy.material).orValue(nullptr);
+        auto meshRes = meshSystem->getMesh(proxy.mesh);
+        auto matBgRes = matSystem->getBindData(proxy.material);
 
-        // Collet the Material Bindings and Mesh Data, if not available, skip
-        if(!mesh || !matBg) continue;
+        if (!meshRes.hasValue() || !matBgRes.hasValue()) continue;
+        
+        auto* mesh = std::move(meshRes).logError().value();
+        auto* matBg = std::move(matBgRes).logError().value();
+
+        // Safety: Ensure shaders and layout are valid handles
+        if (matBg->vertexShader == 0 || matBg->pixelShader == 0 || matBg->vertexLayout == 0) continue;
 
         // Creates or Retrieves the Pipeline
         PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology, .enableBlend = false };
         auto pso = pipelineCache->getPipeline(pk);
         if (!pso.has_value()) {
             auto gfx = renderer.lock();
-            if (!gfx) return; // no point in continuing without the renderer
+            if (!gfx) return; 
+            
             // Creates Pipeline and Stores it in the cache
             GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, mesh->topology, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
-            pdesc.depth_stencil.enableDepth = true; // always enable depth for now (TODO: material should tell this)
+            
+            // Get DepthStencil from Material
+            auto metaRes = matSystem->getMetadata(proxy.material);
+            if (metaRes.hasValue()) {
+                auto meta = std::move(metaRes).logError().value();
+                pdesc.depth_stencil.enableDepth = meta->depthStencil.depthTest;
+                pdesc.depth_stencil.depthWrite = meta->depthStencil.depthWrite;
+                pdesc.depth_stencil.depthFunc = DepthStencilOptions::DepthFunc::LessEqual;
+            } else {
+                pdesc.depth_stencil.enableDepth = true; // fallback
+            }
+
             pdesc.enable_blend = false;
-            pso = gfx->create_graphics_pipeline(&pdesc);
+            auto newPso = gfx->create_graphics_pipeline(&pdesc);
+            if (newPso == 0) continue; // Skip if pipeline creation failed
+            pso = newPso;
             pipelineCache->storePipeline(pk, *pso);
         }
+
+        if (*pso == 0) continue;
 
         // TODO: Sort data in a way that shared pipeline and group bindings are grouped together in the same DrawBatch
         DrawPacket dp{.entityId = static_cast<int>(proxy.id),
@@ -84,15 +112,21 @@ void Scene::buildDrawList(const math::AABB& volume)
     for (auto& pair : uiProxies) {
         sortedUIProxies.push_back(pair.second);
     }
+    
     std::sort(sortedUIProxies.begin(), sortedUIProxies.end(), [](const UIRenderProxy& a, const UIRenderProxy& b) {
         return a.zIndex < b.zIndex; // Lower z-index draws first
     });
 
     for (auto& proxy : sortedUIProxies) {
-        auto* mesh  = meshSystem->getMesh(proxy.mesh).orValue(nullptr);
-        auto* matBg = matSystem->getBindData(proxy.material).orValue(nullptr);
+        auto meshRes = meshSystem->getMesh(proxy.mesh);
+        auto matBgRes = matSystem->getBindData(proxy.material);
 
-        if(!mesh || !matBg) continue;
+        if(!meshRes.hasValue() || !matBgRes.hasValue()) continue;
+        auto* mesh = std::move(meshRes).logError().value();
+        auto* matBg = std::move(matBgRes).logError().value();
+
+        // Safety: Ensure shaders and layout are valid handles
+        if (matBg->vertexShader == 0 || matBg->pixelShader == 0 || matBg->vertexLayout == 0) continue;
 
         PipelineCache::Key pk { .material = proxy.material, .topology = mesh->topology, .enableBlend = true };
         auto pso = pipelineCache->getPipeline(pk);
@@ -102,9 +136,13 @@ void Scene::buildDrawList(const math::AABB& volume)
             GraphicsPipelineDesc pdesc{matBg->vertexShader, matBg->pixelShader, mesh->topology, matBg->vertexLayout, TextureFormat::BGRA8_UNORM};
             pdesc.depth_stencil.enableDepth = false; // Disable depth test for UI
             pdesc.enable_blend = true;
-            pso = gfx->create_graphics_pipeline(&pdesc);
+            auto newPso = gfx->create_graphics_pipeline(&pdesc);
+            if (newPso == 0) continue;
+            pso = newPso;
             pipelineCache->storePipeline(pk, *pso);
         }
+
+        if (*pso == 0) continue;
 
         // We assume the quad is centered at origin with size 1x1.
         // Transform the 1x1 quad (which extends from -0.5 to 0.5) to match the RectTransform which spans from 0 to W and 0 to H
@@ -183,7 +221,9 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
 
-                auto* matBg = matSysRef->getBindData(db.material).orValue(nullptr);
+                auto matBgRes = matSysRef->getBindData(db.material);
+                if (!matBgRes.hasValue()) continue;
+                auto* matBg = std::move(matBgRes).logError().value();
 
                 for (auto& dp : db.packets) {
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, dp.vertexBuffer, 0);
@@ -231,7 +271,9 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
 
-                auto* matBg = matSysRef->getBindData(db.material).orValue(nullptr);
+                auto matBgRes = matSysRef->getBindData(db.material);
+                if (!matBgRes.hasValue()) continue;
+                auto* matBg = std::move(matBgRes).logError().value();
 
                 for (auto& dp : db.packets) {
                     ctx.gfx->cmd_set_vertex_buffer(ctx.cmd, 0, dp.vertexBuffer, 0);

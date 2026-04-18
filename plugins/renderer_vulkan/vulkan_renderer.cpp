@@ -278,6 +278,7 @@ static void vk_present(SwapchainHandle h) {
 static BufferHandle vk_create_buffer(const BufferDesc* desc, const void* initial_data) {
     auto res = create_vulkan_buffer(&g_ctx->device, desc, initial_data);
     if (res.hasError()) return 0;
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     BufferHandle h = g_ctx->nextBufferHandle++;
     g_ctx->buffers[h] = std::move(res).logError().value();
     return h;
@@ -308,6 +309,7 @@ static bool vk_update_buffer(BufferHandle h, uint64_t offset, const void* data, 
 }
 
 static void vk_destroy_buffer(BufferHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->buffers.find(h);
     if (it != g_ctx->buffers.end()) {
         g_ctx->device.device.destroyBuffer(it->second.buffer);
@@ -319,12 +321,14 @@ static void vk_destroy_buffer(BufferHandle h) {
 static TextureHandle vk_create_texture(const TextureDesc* desc, const void* initial_data) {
     auto res = create_vulkan_texture(&g_ctx->device, &g_ctx->descriptors, desc, initial_data);
     if (res.hasError()) return 0;
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     TextureHandle h = g_ctx->nextTextureHandle++;
     g_ctx->textures[h] = std::move(res).logError().value();
     return h;
 }
 
 static void vk_destroy_texture(TextureHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->textures.find(h);
     if (it != g_ctx->textures.end()) {
         g_ctx->device.device.destroyImageView(it->second.view);
@@ -335,6 +339,7 @@ static void vk_destroy_texture(TextureHandle h) {
 }
 
 static uint32_t vk_get_texture_index(TextureHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->textures.find(h);
     if (it == g_ctx->textures.end()) return 0;
     return it->second.srvIndex;
@@ -345,12 +350,14 @@ static SamplerHandle vk_create_sampler(const SamplerDesc* desc) {
     vk::Sampler s = g_ctx->device.device.createSampler(info);
     uint32_t idx = g_ctx->descriptors.allocateSampler();
     g_ctx->descriptors.updateSampler(idx, s);
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     SamplerHandle h = g_ctx->nextSamplerHandle++;
     g_ctx->samplers[h] = VulkanSampler{ s, idx };
     return h;
 }
 
 static uint32_t vk_get_sampler_index(SamplerHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->samplers.find(h);
     if (it == g_ctx->samplers.end()) return 0;
     return it->second.samplerIndex;
@@ -359,12 +366,14 @@ static uint32_t vk_get_sampler_index(SamplerHandle h) {
 static ShaderModuleHandle vk_create_shader_module(const ShaderModuleDesc* desc) {
     auto res = create_vulkan_shader(&g_ctx->device, desc);
     if (res.hasError()) return 0;
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     ShaderModuleHandle h = g_ctx->nextShaderHandle++;
     g_ctx->shaders[h] = std::move(res).logError().value();
     return h;
 }
 
 static void vk_destroy_shader_module(ShaderModuleHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->shaders.find(h);
     if (it != g_ctx->shaders.end()) {
         g_ctx->device.device.destroyShaderModule(it->second.module);
@@ -373,27 +382,46 @@ static void vk_destroy_shader_module(ShaderModuleHandle h) {
 }
 
 static VertexLayoutHandle vk_create_vertex_layout(const VertexLayoutDesc* desc) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     VertexLayoutHandle h = g_ctx->nextVertexLayoutHandle++;
     auto& vl = g_ctx->vertexLayouts[h];
     
     vl.bindings.push_back({ 0, desc->stride, vk::VertexInputRate::eVertex });
     for (uint32_t i = 0; i < desc->attribute_count; ++i) {
-        vk::Format format = vk::Format::eR32G32B32Sfloat; 
-        if (desc->attributes[i].offset == 24) format = vk::Format::eR32G32Sfloat; // UV is 2 floats
+        vk::Format format = vk::Format::eUndefined;
+        switch (desc->attributes[i].format) {
+            case VertexAttributeFormat::Float:  format = vk::Format::eR32Sfloat; break;
+            case VertexAttributeFormat::Float2: format = vk::Format::eR32G32Sfloat; break;
+            case VertexAttributeFormat::Float3: format = vk::Format::eR32G32B32Sfloat; break;
+            case VertexAttributeFormat::Float4: format = vk::Format::eR32G32B32A32Sfloat; break;
+            case VertexAttributeFormat::UByte4: format = vk::Format::eR8G8B8A8Unorm; break;
+            default: format = vk::Format::eR32G32B32Sfloat; break;
+        }
         vl.attributes.push_back({ desc->attributes[i].location, 0, format, desc->attributes[i].offset });
     }
     return h;
 }
 
+static void vk_destroy_vertex_layout(VertexLayoutHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
+    g_ctx->vertexLayouts.erase(h);
+}
+
 static PipelineHandle vk_create_graphics_pipeline(const GraphicsPipelineDesc* desc) {
+    JAENG_LOG_DEBUG("vk_create_graphics_pipeline: vs={}, fs={}, layout={}", desc->vs, desc->fs, desc->vertex_layout);
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto res = create_vulkan_pipeline(&g_ctx->device, &g_ctx->descriptors, desc, g_ctx->shaders, g_ctx->vertexLayouts, g_ctx->swapchainFormat);
-    if (res.hasError()) return 0;
+    if (res.hasError()) {
+        JAENG_LOG_ERROR("Pipeline creation failed: {}", std::move(res).logError().error().message);
+        return 0;
+    }
     PipelineHandle h = g_ctx->nextPipelineHandle++;
     g_ctx->pipelines[h] = std::move(res).logError().value();
     return h;
 }
 
 static void vk_destroy_pipeline(PipelineHandle h) {
+    std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     auto it = g_ctx->pipelines.find(h);
     if (it != g_ctx->pipelines.end()) {
         g_ctx->device.device.destroyPipeline(it->second.pipeline);
@@ -440,6 +468,7 @@ RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     out_api->create_shader_module = vk_create_shader_module;
     out_api->destroy_shader_module = vk_destroy_shader_module;
     out_api->create_vertex_layout = vk_create_vertex_layout;
+    out_api->destroy_vertex_layout = vk_destroy_vertex_layout;
     out_api->create_graphics_pipeline = vk_create_graphics_pipeline;
     out_api->destroy_pipeline = vk_destroy_pipeline;
     out_api->begin_commands = vk_begin_commands;

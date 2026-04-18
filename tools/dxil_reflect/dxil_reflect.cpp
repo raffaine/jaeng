@@ -113,7 +113,7 @@ void outputHeader(const ReflectData& rd, const char* headerPath, const char* ver
 
     out << "    static constexpr VertexAttributeDesc vertexAttributes[] = {\n";
     for (int i = 0; i < (int)rd.vsParams.size(); i++) {
-        out << "        { " << i << ", 0, " << rd.vsParams[i].offset << " }, // " << rd.vsParams[i].semanticName << "\n";
+        out << "        { " << i << ", VertexAttributeFormat::Float, " << rd.vsParams[i].offset << " }, // " << rd.vsParams[i].semanticName << "\n";
     }
     out << "    };\n\n";
 

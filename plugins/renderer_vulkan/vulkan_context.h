@@ -5,12 +5,15 @@
 #include "vulkan_swapchain.h"
 #include "vulkan_resources.h"
 #include <map>
+#include <mutex>
 
 namespace jaeng::renderer {
 
 struct VulkanContext {
     VulkanDevice device;
     VulkanDescriptorHeap descriptors;
+    mutable std::mutex resourceMutex;
+    mutable std::mutex graphicsQueueMutex;
     
     void* platformWindow = nullptr;
     void* platformDisplay = nullptr;

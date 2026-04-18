@@ -57,6 +57,7 @@ public:
     ShaderModuleHandle create_shader_module(const ShaderModuleDesc*);
     void destroy_shader_module(ShaderModuleHandle);
     VertexLayoutHandle create_vertex_layout(const VertexLayoutDesc*);
+    void destroy_vertex_layout(VertexLayoutHandle);
     PipelineHandle create_graphics_pipeline(const GraphicsPipelineDesc*);
     void destroy_pipeline(PipelineHandle);
 
@@ -88,7 +89,7 @@ public:
     static bool LoadRenderer(RendererAPI* out_api);
 
 private:
-    std::mutex mtx_;
+    std::recursive_mutex mtx_;
     Microsoft::WRL::ComPtr<IDXGIFactory6> factory_;
     std::unique_ptr<D3D12Device> device_;
     std::unique_ptr<D3D12Swapchain> swapchain_;
@@ -103,10 +104,11 @@ private:
 
     struct InputLayout {
         std::vector<D3D12_INPUT_ELEMENT_DESC> ieds;
+        std::vector<std::string> semanticNames;
         uint32_t stride;
     };
     std::unique_ptr<ResourceTable> resources_; // buffers, textures, samplers, shader blobs
-    std::vector<InputLayout>  vertexLayouts_;  // vertex layout descriptors
+    std::vector<std::unique_ptr<InputLayout>>  vertexLayouts_;  // vertex layout descriptors
     std::unique_ptr<PipelineTable> pipelines_; // root signatures, PSOs
 
     std::unique_ptr<DescriptorAllocatorCPU> dsvDesc_;

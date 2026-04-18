@@ -11,6 +11,10 @@ namespace jaeng::platform {
         : platform_(platform), config_(config) {}
 
     bool IApplication::init() {
+        // Initialize scheduler and set as current early so it's available for subsystems
+        taskScheduler_ = std::make_unique<async::TaskScheduler>();
+        async::set_current_scheduler(taskScheduler_.get());
+
         platform_.set_event_callback([this](const Event& ev) { this->on_event(ev); });
 
         auto windowResult = platform_.create_window({config_.title, config_.width, config_.height});
@@ -69,8 +73,9 @@ namespace jaeng::platform {
 
     void IApplication::start_engine_threads() {
         isRunning_ = true;
-        taskScheduler_.initialize();
-        async::set_current_scheduler(&taskScheduler_);
+        if (taskScheduler_) {
+            taskScheduler_->initialize();
+        }
         simThread_ = std::jthread(&IApplication::simulation_loop, this);
         renderThread_ = std::jthread(&IApplication::render_loop, this);
     }
@@ -78,7 +83,9 @@ namespace jaeng::platform {
     void IApplication::stop_engine_threads() {
         isRunning_ = false;
         async::set_current_scheduler(nullptr);
-        taskScheduler_.shutdown();
+        if (taskScheduler_) {
+            taskScheduler_->shutdown();
+        }
         renderCv_.notify_one(); // Wake up render thread if it's waiting
         // std::jthread automatically joins on destruction, but we can be explicit
         if (simThread_.joinable()) simThread_.join();
@@ -86,7 +93,7 @@ namespace jaeng::platform {
     }
 
     bool IApplication::process_main_thread_tasks() {
-        return taskScheduler_.process_main_thread_tasks();
+        return taskScheduler_ && taskScheduler_->process_main_thread_tasks();
     }
 
     IFileManager& IApplication::fileManager() {

@@ -14,6 +14,7 @@ struct FileChangedEvent {
         Modified,
         Deleted
     } change;
+    std::string path;
 };
 
 class IFileManager {

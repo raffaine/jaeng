@@ -25,10 +25,12 @@ protected:
     void render(const std::vector<jaeng::RenderCommand>& inQueue, bool hasNewState, jaeng::RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) override;
 
 private:
-    void setupResources();
-    void setupEntities();
     void setupAnimation();
     void setupUI();
+
+    jaeng::async::FireAndForget setupAsync();
+    jaeng::async::Task<void> setupResourcesAsync();
+    jaeng::async::Task<void> setupEntitiesAsync();
 
     void startServer();
     void restartServer();

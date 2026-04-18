@@ -107,10 +107,20 @@ struct ShaderModuleDesc {
   uint32_t    format; // 0 = D3D blob
 };
 
+enum class VertexAttributeFormat : uint32_t {
+    Float = 0,
+    Float2,
+    Float3,
+    Float4,
+    UByte4,
+    Unknown
+};
+
 struct VertexAttributeDesc {
   uint32_t location;
-  uint32_t format;
+  VertexAttributeFormat format;
   uint32_t offset;
+  char semanticName[32];
 };
 
 struct VertexLayoutDesc {
@@ -121,6 +131,7 @@ struct VertexLayoutDesc {
 
 struct DepthStencilOptions {
     bool enableDepth = false;
+    bool depthWrite = true;
     bool enableStencil = false;
     float clearDepth = 1.0f;
     uint8_t clearStencil = 0;
@@ -192,6 +203,7 @@ typedef struct RendererAPI {
     ShaderModuleHandle (*create_shader_module)(const ShaderModuleDesc*);
     void              (*destroy_shader_module)(ShaderModuleHandle);
     VertexLayoutHandle (*create_vertex_layout)(const VertexLayoutDesc*);
+    void               (*destroy_vertex_layout)(VertexLayoutHandle);
     PipelineHandle (*create_graphics_pipeline)(const GraphicsPipelineDesc*);
     void           (*destroy_pipeline)(PipelineHandle);
 

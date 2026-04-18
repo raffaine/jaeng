@@ -10,6 +10,7 @@
 #include <future>
 #include <memory>
 #include "task.h"
+#include "common/logging.h"
 
 namespace jaeng::async {
 
@@ -21,36 +22,126 @@ TaskScheduler* get_current_scheduler();
 template<typename T>
 class Future {
 public:
-    Future() = default;
-    explicit Future(std::future<T> fut) : future_(std::move(fut)) {}
+    struct SharedState {
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::optional<T> value;
+        std::vector<std::function<void()>> callbacks;
+        bool ready = false;
 
-    Future(Future&& other) noexcept = default;
-    Future& operator=(Future&& other) noexcept = default;
+        void set_value(T val) {
+            std::vector<std::function<void()>> to_call;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                value = std::move(val);
+                ready = true;
+                to_call = std::move(callbacks);
+            }
+            cv.notify_all();
+            for (auto& cb : to_call) cb();
+        }
 
-    T get() {
-        return future_.get();
+        T get() {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait(lock, [this] { return ready; });
+            return std::move(*value);
+        }
+
+        void then(std::function<void()> cb) {
+            bool run_now = false;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                if (ready) {
+                    run_now = true;
+                } else {
+                    callbacks.push_back(std::move(cb));
+                }
+            }
+            if (run_now) cb();
+        }
+    };
+
+    Future() : shared_(std::make_shared<SharedState>()) {}
+    explicit Future(std::shared_ptr<SharedState> shared) : shared_(std::move(shared)) {}
+
+    T get() { return shared_->get(); }
+    void wait() const { 
+        std::unique_lock<std::mutex> lock(shared_->mtx);
+        shared_->cv.wait(lock, [this] { return shared_->ready; });
     }
+    bool valid() const noexcept { return shared_ != nullptr; }
+    std::shared_ptr<SharedState> get_shared_state() { return shared_; }
 
-    void wait() const {
-        future_.wait();
-    }
-
-    bool valid() const noexcept {
-        return future_.valid();
-    }
-
-    // .then() executes the callback when the future completes, returning a new Future.
     template<typename F>
     auto then(F&& func);
 
-    // .thenSync() executes the callback on the Main/OS thread when the future completes.
     template<typename F>
     auto thenSync(F&& func);
 
     auto operator co_await() noexcept;
 
 private:
-    std::future<T> future_;
+    std::shared_ptr<SharedState> shared_;
+};
+
+// Void specialization
+template<>
+class Future<void> {
+public:
+    struct SharedState {
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::vector<std::function<void()>> callbacks;
+        bool ready = false;
+
+        void set_value() {
+            std::vector<std::function<void()>> to_call;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                ready = true;
+                to_call = std::move(callbacks);
+            }
+            cv.notify_all();
+            for (auto& cb : to_call) cb();
+        }
+
+        void get() {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait(lock, [this] { return ready; });
+        }
+
+        void then(std::function<void()> cb) {
+            bool run_now = false;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                if (ready) {
+                    run_now = true;
+                } else {
+                    callbacks.push_back(std::move(cb));
+                }
+            }
+            if (run_now) cb();
+        }
+    };
+
+    Future() : shared_(std::make_shared<SharedState>()) {}
+    explicit Future(std::shared_ptr<SharedState> shared) : shared_(std::move(shared)) {}
+
+    void get() { shared_->get(); }
+    void wait() const { shared_->get(); }
+    bool valid() const noexcept { return shared_ != nullptr; }
+    std::shared_ptr<SharedState> get_shared_state() { return shared_; }
+
+    template<typename F>
+    auto then(F&& func);
+
+    template<typename F>
+    auto thenSync(F&& func);
+
+    auto operator co_await() noexcept;
+
+private:
+    std::shared_ptr<SharedState> shared_;
 };
 
 struct DetachedTask {
@@ -92,61 +183,72 @@ public:
     template<typename F, typename... Args>
     auto enqueue_async(F&& f, Args&&... args) -> Future<std::invoke_result_t<F, Args...>> {
         using return_type = std::invoke_result_t<F, Args...>;
+        auto shared = std::make_shared<typename Future<return_type>::SharedState>();
 
-        auto task = std::make_shared<std::packaged_task<return_type()>>(
-            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-        );
-
-        std::future<return_type> res = task->get_future();
         {
             std::lock_guard<std::mutex> lock(asyncMutex_);
             if (stop_) throw std::runtime_error("TaskScheduler is stopped");
-            asyncQueue_.emplace_back([task]() { (*task)(); });
+            asyncQueue_.emplace_back([f = std::forward<F>(f), args = std::make_tuple(std::forward<Args>(args)...), shared]() mutable {
+                if constexpr (std::is_void_v<return_type>) {
+                    std::apply(f, std::move(args));
+                    shared->set_value();
+                } else {
+                    shared->set_value(std::apply(f, std::move(args)));
+                }
+            });
         }
         asyncCv_.notify_one();
-        return Future<return_type>(std::move(res));
+        return Future<return_type>(shared);
     }
 
     // Enqueue an IO task to be executed on dedicated IO thread(s)
     template<typename F, typename... Args>
     auto enqueue_io(F&& f, Args&&... args) -> Future<std::invoke_result_t<F, Args...>> {
         using return_type = std::invoke_result_t<F, Args...>;
+        auto shared = std::make_shared<typename Future<return_type>::SharedState>();
 
-        auto task = std::make_shared<std::packaged_task<return_type()>>(
-            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-        );
-
-        std::future<return_type> res = task->get_future();
         {
             std::lock_guard<std::mutex> lock(ioMutex_);
             if (stop_) throw std::runtime_error("TaskScheduler is stopped");
-            ioQueue_.emplace_back([task]() { (*task)(); });
+            ioQueue_.emplace_back([f = std::forward<F>(f), args = std::make_tuple(std::forward<Args>(args)...), shared]() mutable {
+                if constexpr (std::is_void_v<return_type>) {
+                    std::apply(f, std::move(args));
+                    shared->set_value();
+                } else {
+                    shared->set_value(std::apply(f, std::move(args)));
+                }
+            });
         }
         ioCv_.notify_one();
-        return Future<return_type>(std::move(res));
+        return Future<return_type>(shared);
     }
 
     // Enqueue a task to be executed on the Main/OS thread
     template<typename F, typename... Args>
     auto enqueue_sync(F&& f, Args&&... args) -> Future<std::invoke_result_t<F, Args...>> {
         using return_type = std::invoke_result_t<F, Args...>;
+        auto shared = std::make_shared<typename Future<return_type>::SharedState>();
 
-        auto task = std::make_shared<std::packaged_task<return_type()>>(
-            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-        );
-
-        std::future<return_type> res = task->get_future();
         {
             std::lock_guard<std::mutex> lock(syncMutex_);
             if (stop_) throw std::runtime_error("TaskScheduler is stopped");
-            syncQueue_.emplace_back([task]() { (*task)(); });
+            syncQueue_.emplace_back([f = std::forward<F>(f), args = std::make_tuple(std::forward<Args>(args)...), shared]() mutable {
+                if constexpr (std::is_void_v<return_type>) {
+                    std::apply(f, std::move(args));
+                    shared->set_value();
+                } else {
+                    shared->set_value(std::apply(f, std::move(args)));
+                }
+            });
         }
-        return Future<return_type>(std::move(res));
+        return Future<return_type>(shared);
     }
 
-    // Called by the Main/OS thread to process its mailbox
     // Returns true if any tasks were processed
     bool process_main_thread_tasks();
+
+    bool is_worker_thread() const;
+    bool is_io_thread() const;
 
 private:
     void worker_loop();
@@ -179,66 +281,159 @@ namespace jaeng::async {
     template<typename T>
     template<typename F>
     auto Future<T>::then(F&& func) {
-        if constexpr (std::is_void_v<T>) {
-            using return_type = std::invoke_result_t<F>;
-            auto shared_fut = std::make_shared<std::future<T>>(std::move(future_));
-            return get_current_scheduler()->enqueue_async([shared_fut = std::move(shared_fut), func = std::forward<F>(func)]() mutable -> return_type {
-                shared_fut->wait();
-                return func();
-            });
-        } else {
-            using return_type = std::invoke_result_t<F, T>;
-            auto shared_fut = std::make_shared<std::future<T>>(std::move(future_));
-            return get_current_scheduler()->enqueue_async([shared_fut = std::move(shared_fut), func = std::forward<F>(func)]() mutable -> return_type {
-                return func(shared_fut->get());
-            });
-        }
+        using return_type = std::invoke_result_t<F, T>;
+        auto next_shared = std::make_shared<typename Future<return_type>::SharedState>();
+        
+        shared_->then([func = std::forward<F>(func), shared = shared_, next_shared]() mutable {
+            auto* scheduler = get_current_scheduler();
+            auto task = [func = std::move(func), shared, next_shared]() mutable {
+                auto val = shared->get();
+                if constexpr (std::is_void_v<return_type>) {
+                    func(std::move(val));
+                    next_shared->set_value();
+                } else {
+                    next_shared->set_value(func(std::move(val)));
+                }
+            };
+
+            if (scheduler) {
+                scheduler->enqueue_async(std::move(task));
+            } else {
+                task();
+            }
+        });
+        return Future<return_type>(next_shared);
+    }
+
+    template<typename F>
+    auto Future<void>::then(F&& func) {
+        using return_type = std::invoke_result_t<F>;
+        auto next_shared = std::make_shared<typename Future<return_type>::SharedState>();
+        
+        shared_->then([func = std::forward<F>(func), next_shared]() mutable {
+            auto* scheduler = get_current_scheduler();
+            auto task = [func = std::move(func), next_shared]() mutable {
+                if constexpr (std::is_void_v<return_type>) {
+                    func();
+                    next_shared->set_value();
+                } else {
+                    next_shared->set_value(func());
+                }
+            };
+
+            if (scheduler) {
+                scheduler->enqueue_async(std::move(task));
+            } else {
+                task();
+            }
+        });
+        return Future<return_type>(next_shared);
     }
 
     template<typename T>
     template<typename F>
     auto Future<T>::thenSync(F&& func) {
-        if constexpr (std::is_void_v<T>) {
-            using return_type = std::invoke_result_t<F>;
-            auto shared_fut = std::make_shared<std::future<T>>(std::move(future_));
-            // We first enqueue an async task to wait, then that task enqueues the sync callback.
-            // This prevents blocking the main thread while waiting for the future to resolve.
-            return get_current_scheduler()->enqueue_async([shared_fut = std::move(shared_fut), func = std::forward<F>(func)]() mutable {
-                shared_fut->wait();
-                return get_current_scheduler()->enqueue_sync([func = std::move(func)]() mutable -> return_type {
-                    return func();
-                });
-            }).then([](auto syncFuture) { return syncFuture.get(); }); // Unwrap the nested future
-        } else {
-            using return_type = std::invoke_result_t<F, T>;
-            auto shared_fut = std::make_shared<std::future<T>>(std::move(future_));
-            return get_current_scheduler()->enqueue_async([shared_fut = std::move(shared_fut), func = std::forward<F>(func)]() mutable {
-                auto val = shared_fut->get();
-                return get_current_scheduler()->enqueue_sync([val = std::move(val), func = std::move(func)]() mutable -> return_type {
-                    return func(std::move(val));
-                });
-            }).then([](auto syncFuture) { return syncFuture.get(); }); // Unwrap the nested future
-        }
+        using return_type = std::invoke_result_t<F, T>;
+        auto next_shared = std::make_shared<typename Future<return_type>::SharedState>();
+        
+        shared_->then([func = std::forward<F>(func), shared = shared_, next_shared]() mutable {
+            auto* scheduler = get_current_scheduler();
+            auto task = [func = std::move(func), shared, next_shared]() mutable {
+                auto val = shared->get();
+                if constexpr (std::is_void_v<return_type>) {
+                    func(std::move(val));
+                    next_shared->set_value();
+                } else {
+                    next_shared->set_value(func(std::move(val)));
+                }
+            };
+
+            if (scheduler) {
+                scheduler->enqueue_sync(std::move(task));
+            } else {
+                task();
+            }
+        });
+        return Future<return_type>(next_shared);
+    }
+
+    template<typename F>
+    auto Future<void>::thenSync(F&& func) {
+        using return_type = std::invoke_result_t<F>;
+        auto next_shared = std::make_shared<typename Future<return_type>::SharedState>();
+        
+        shared_->then([func = std::forward<F>(func), next_shared]() mutable {
+            auto* scheduler = get_current_scheduler();
+            auto task = [func = std::move(func), next_shared]() mutable {
+                if constexpr (std::is_void_v<return_type>) {
+                    func();
+                    next_shared->set_value();
+                } else {
+                    next_shared->set_value(func());
+                }
+            };
+
+            if (scheduler) {
+                scheduler->enqueue_sync(std::move(task));
+            } else {
+                task();
+            }
+        });
+        return Future<return_type>(next_shared);
     }
 
     template<typename T>
     auto Future<T>::operator co_await() noexcept {
         struct awaiter {
-            Future<T>* fut;
+            std::shared_ptr<typename Future<T>::SharedState> shared;
 
             bool await_ready() const noexcept {
-                return fut->valid() && fut->future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+                std::lock_guard<std::mutex> lock(shared->mtx);
+                return shared->ready;
             }
 
             void await_suspend(std::coroutine_handle<> h) noexcept {
-                fut->then([h]([[maybe_unused]] auto&&... args) { h.resume(); });
+                shared->then([h]() mutable {
+                    auto* scheduler = get_current_scheduler();
+                    if (scheduler) {
+                        scheduler->enqueue_async([h]() { h.resume(); });
+                    } else {
+                        h.resume();
+                    }
+                });
             }
 
             T await_resume() {
-                return fut->get();
+                return shared->get();
             }
         };
+        return awaiter{shared_};
+    }
 
-        return awaiter{this};
+    inline auto Future<void>::operator co_await() noexcept {
+        struct awaiter {
+            std::shared_ptr<Future<void>::SharedState> shared;
+
+            bool await_ready() const noexcept {
+                std::lock_guard<std::mutex> lock(shared->mtx);
+                return shared->ready;
+            }
+
+            void await_suspend(std::coroutine_handle<> h) noexcept {
+                shared->then([h]() mutable {
+                    auto* scheduler = get_current_scheduler();
+                    if (scheduler) {
+                        scheduler->enqueue_async([h]() { h.resume(); });
+                    } else {
+                        h.resume();
+                    }
+                });
+            }
+
+            void await_resume() {
+                shared->get();
+            }
+        };
+        return awaiter{shared_};
     }
 } // namespace jaeng::async

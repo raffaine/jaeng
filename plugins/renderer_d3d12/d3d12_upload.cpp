@@ -65,14 +65,24 @@ jaeng::result<UploadSlice> UploadRing::stage(const void* src, UINT64 size, UINT6
 
 jaeng::result<UploadSlice> UploadRing::stage_pitched(const uint8_t* src, int rows, int pitch, D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp)
 {
-    JAENG_ERROR_IF((!src || rows == 0 || pitch == 0), jaeng::error_code::invalid_args, "[UploadRing] stage(): Null or 0-sized source buffer is invalid");
-    JAENG_ERROR_IF((head_ + rows * pitch) > size_, jaeng::error_code::invalid_args, "[UploadRing] stage(): Out of space");
+    JAENG_ERROR_IF((!src || rows == 0 || pitch == 0), jaeng::error_code::invalid_args, "[UploadRing] stage_pitched(): Null or 0-sized source buffer is invalid");
 
-    for (UINT y = 0; y < rows; ++y) {
-        std::memcpy(mapped_ + head_ + fp.Offset + y * fp.Footprint.RowPitch, src + y * pitch, pitch);
+    // Texture uploads in D3D12 require 512-byte alignment
+    head_ = (head_ + 511ull) & ~511ull;
+
+    UINT64 requiredSize = (rows > 0) ? ((rows - 1) * fp.Footprint.RowPitch + pitch) : 0;
+
+    if ((head_ + requiredSize) > size_) {
+        char msg[256];
+        sprintf_s(msg, "[UploadRing] stage_pitched(): Out of space. head=%llu, rows=%d, rowPitch=%u, pitch=%d, required=%llu, size=%llu",
+                  (unsigned long long)head_, rows, fp.Footprint.RowPitch, pitch, (unsigned long long)requiredSize, (unsigned long long)size_);
+        return jaeng::Error::fromMessage(static_cast<int>(jaeng::error_code::invalid_args), msg);
     }
-    UINT64 offset = head_ + fp.Offset;
-    head_ = offset + rows * fp.Footprint.RowPitch;
+    for (UINT y = 0; y < rows; ++y) {
+        std::memcpy(mapped_ + head_ + y * fp.Footprint.RowPitch, src + y * pitch, pitch);
+    }
+    UINT64 offset = head_;
+    head_ = offset + requiredSize;
     
     return UploadSlice{ buffer_.Get(), offset, buffer_->GetGPUVirtualAddress() + offset, mapped_ + offset };
 }
