@@ -1,6 +1,16 @@
 #include "macos_platform.h"
 #import <AppKit/AppKit.h>
+#import <QuartzCore/CAMetalLayer.h>
 #include "storage/win/filestorage.h"
+
+@interface MacOSMetalView : NSView
+@end
+
+@implementation MacOSMetalView
+- (CALayer *)makeBackingLayer {
+    return [CAMetalLayer layer];
+}
+@end
 
 @interface MacOSAppDelegate : NSObject <NSApplicationDelegate>
 @end
@@ -46,7 +56,7 @@ result<std::unique_ptr<IWindow>> MacOSPlatform::create_window(const WindowDesc& 
     [window setTitle:[NSString stringWithUTF8String:desc.title.c_str()]];
     [window makeKeyAndOrderFront:nil];
     
-    NSView* view = [[NSView alloc] initWithFrame:frame];
+    MacOSMetalView* view = [[MacOSMetalView alloc] initWithFrame:frame];
     [view setWantsLayer:YES];
     [window setContentView:view];
     

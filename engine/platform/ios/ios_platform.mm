@@ -1,6 +1,16 @@
 #include "ios_platform.h"
 #import <UIKit/UIKit.h>
+#import <QuartzCore/CAMetalLayer.h>
 #include "storage/win/filestorage.h"
+
+@interface IOSMetalView : UIView
+@end
+
+@implementation IOSMetalView
++ (Class)layerClass {
+    return [CAMetalLayer class];
+}
+@end
 
 @interface IOSAppDelegate : UIResponder <UIApplicationDelegate>
 @property (strong, nonatomic) UIWindow *window;
@@ -15,11 +25,11 @@
     self.window.backgroundColor = [UIColor blackColor];
     
     UIViewController* vc = [[UIViewController alloc] init];
+    IOSMetalView* view = [[IOSMetalView alloc] initWithFrame:screenBounds];
+    vc.view = view;
+    
     self.window.rootViewController = vc;
     [self.window makeKeyAndVisible];
-    
-    // In a real implementation, we would start a CADisplayLink here
-    // to drive the engine's main thread tasks.
     
     return YES;
 }
@@ -40,15 +50,12 @@ IOSPlatform::~IOSPlatform() {
 }
 
 result<std::unique_ptr<IWindow>> IOSPlatform::create_window(const WindowDesc& desc) {
-    // On iOS, the window is usually created in the AppDelegate.
-    // For this skeleton, we assume the window exists or we return a dummy.
     UIWindow* window = [[UIApplication sharedApplication] keyWindow];
     UIView* view = [window rootViewController].view;
     return jaeng::result<std::unique_ptr<IWindow>>(std::make_unique<IOSWindow>(window, view, desc.width, desc.height));
 }
 
 bool IOSPlatform::poll_events() {
-    // iOS events are handled by the main run loop.
     return true;
 }
 
@@ -66,13 +73,10 @@ void IOSPlatform::show_message_box(const std::string& title, const std::string& 
 
 int IOSPlatform::run(std::unique_ptr<IApplication> app) {
     @autoreleasepool {
-        // UIApplicationMain doesn't return, so the 'app' lifecycle
-        // needs careful management.
         return UIApplicationMain(0, nil, nil, NSStringFromClass([IOSAppDelegate class]));
     }
 }
 
-// Factory function for iOS if defined
 std::unique_ptr<IPlatform> create_platform() {
     return std::make_unique<IOSPlatform>();
 }
