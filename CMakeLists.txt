@@ -23,6 +23,7 @@ endif()
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 if(UNIX AND NOT APPLE)
   find_package(PkgConfig REQUIRED)
@@ -30,13 +31,19 @@ if(UNIX AND NOT APPLE)
   find_program(WAYLAND_SCANNER NAMES wayland-scanner REQUIRED)
 endif()
 
-set(ENGINE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/engine)
-
-if(WIN32)
+if(APPLE)
+  if(IOS)
+    set(JAENG_PLATFORM_DEF JAENG_IOS)
+  else()
+    set(JAENG_PLATFORM_DEF JAENG_MACOS)
+  endif()
+elseif(WIN32)
   set(JAENG_PLATFORM_DEF JAENG_WIN32)
-elseif(UNIX AND NOT APPLE)
+elseif(UNIX)
   set(JAENG_PLATFORM_DEF JAENG_LINUX)
 endif()
+
+set(ENGINE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/engine)
 
 # Tools
 if(WIN32)
@@ -44,17 +51,8 @@ if(WIN32)
 endif()
 
 # Shaders
-if(WIN32)
-  add_subdirectory(shaders)
-else()
-  find_program(DXC_EXECUTABLE NAMES dxc)
-  find_program(GLSLC_EXECUTABLE NAMES glslc)
-  if(DXC_EXECUTABLE OR GLSLC_EXECUTABLE)
-    add_subdirectory(shaders)
-  else()
-    message(WARNING "Neither dxc nor glslc found, skipping shaders")
-  endif()
-endif()
+add_subdirectory(shaders)
+
 option(JAENG_FORCE_VULKAN "Force Vulkan backend on Windows instead of D3D12" OFF)
 
 # Engine Core & Plugins
@@ -63,6 +61,10 @@ add_subdirectory(plugins/renderer_vulkan)
 
 if(WIN32 AND NOT JAENG_FORCE_VULKAN)
   add_subdirectory(plugins/renderer_d3d12)
+endif()
+
+if(APPLE)
+  add_subdirectory(plugins/renderer_metal)
 endif()
 
 # Options

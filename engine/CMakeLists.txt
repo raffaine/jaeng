@@ -31,6 +31,8 @@ set(JAENG_SOURCES
 
 if(WIN32)
   include(platform/win32/platform.cmake)
+elseif(APPLE)
+  include(platform/apple/apple.cmake)
 elseif(UNIX AND NOT APPLE)
   include(platform/wayland/platform.cmake)
 endif()
@@ -40,10 +42,12 @@ target_compile_definitions(jaeng PUBLIC ${JAENG_PLATFORM_DEF})
 
 if(WIN32)
   jaeng_configure_platform_win32(jaeng)
+elseif(APPLE)
+  jaeng_configure_platform_apple(jaeng)
 elseif(UNIX AND NOT APPLE)
   jaeng_configure_platform_wayland(jaeng)
 endif()
 
-target_include_directories(jaeng PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(jaeng PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${Stb_INCLUDE_DIR})
 target_link_libraries(jaeng PUBLIC renderer_api glm::glm)
 target_link_libraries(jaeng PUBLIC nlohmann_json::nlohmann_json nlohmann_json_schema_validator::validator)

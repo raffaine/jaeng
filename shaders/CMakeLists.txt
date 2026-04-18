@@ -37,6 +37,16 @@ foreach(PIPELINE ${PIPELINES})
             )
         endif()
 
+        if(APPLE)
+            set(VERTEX_MSL ${OUTPUT_DIR}/${PIPELINE}_vs.msl)
+            set(PIXEL_MSL ${OUTPUT_DIR}/${PIPELINE}_ps.msl)
+            add_custom_command(TARGET compile_shaders POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E touch ${VERTEX_MSL}
+                COMMAND ${CMAKE_COMMAND} -E touch ${PIXEL_MSL}
+                COMMENT "Pipeline ${PIPELINE}: Generating dummy MSL for Apple"
+            )
+        endif()
+
         if(DXC_EXECUTABLE)
             add_custom_command(TARGET compile_shaders POST_BUILD
                 COMMAND ${DXC_EXECUTABLE} -spirv -T vs_6_6 -E main -Fo ${VERTEX_SPV} ${VERTEX_SHADER} -DJAENG_VULKAN

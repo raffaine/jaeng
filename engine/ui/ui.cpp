@@ -191,7 +191,7 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                         y += lineHeight;
                         continue;
                     }
-                    if (c >= 32 && c < 128) {
+                    if (static_cast<unsigned char>(c) >= 32 && static_cast<unsigned char>(c) < 128) {
                         const auto& glyph = fontData->cdata[c - 32];
                         
                         float gx = x + glyph.xoff * fontScale;

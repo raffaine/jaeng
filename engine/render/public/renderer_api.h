@@ -25,7 +25,7 @@ typedef RendererHandle SwapchainHandle;
 typedef RendererHandle CommandListHandle;
 
 // --- Enums ---
-enum class GfxBackend : uint32_t { D3D12=0, Vulkan=1, OpenGL=2 };
+enum class GfxBackend : uint32_t { D3D12=0, Vulkan=1, OpenGL=2, Metal=3 };
 
 enum class TextureFormat : uint32_t { RGBA8_UNORM=0, BGRA8_UNORM=1, D24S8=2, D32F=3 };
 

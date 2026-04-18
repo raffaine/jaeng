@@ -8,6 +8,13 @@ set(SANDBOX_SOURCES
 
 if(WIN32)
   add_executable(sandbox WIN32 ${SANDBOX_SOURCES})
+elseif(APPLE)
+  add_executable(sandbox MACOSX_BUNDLE ${SANDBOX_SOURCES})
+  set_target_properties(sandbox PROPERTIES
+    MACOSX_BUNDLE_BUNDLE_IDENTIFIER "com.sintropia.jaeng.sandbox"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.sintropia.jaeng.sandbox"
+    MACOSX_BUNDLE_BUNDLE_NAME "jaeng Sandbox"
+  )
 else()
   add_executable(sandbox ${SANDBOX_SOURCES})
 endif()
@@ -18,6 +25,18 @@ target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_D
 )
 target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
+
+if(APPLE)
+  target_link_libraries(sandbox PRIVATE renderer_metal)
+  
+  # Ensure plugins and TestServer are inside the bundle for easy loading
+  add_custom_command(TARGET sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderer_metal> $<TARGET_FILE_DIR:sandbox>/
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:TestServer> $<TARGET_FILE_DIR:sandbox>/
+    COMMENT "Copying dependencies into sandbox bundle"
+  )
+endif()
+
 add_dependencies(sandbox TestServer)
 
 
