@@ -5,6 +5,9 @@
 #include <iostream>
 #include <libdecor.h>
 #include <poll.h>
+#include <unistd.h>
+#include <limits.h>
+#include <filesystem>
 
 extern "C" {
 #include "xdg-shell-client-protocol.h"
@@ -16,7 +19,12 @@ WaylandPlatform* WaylandPlatform::instance_ = nullptr;
 
 WaylandPlatform::WaylandPlatform() {
     instance_ = this;
-    fileManager_ = std::make_shared<FileManager>();
+    auto fm = std::make_shared<FileManager>();
+    fm->set_base_path(get_base_path());
+    fm->set_path_resolver([this](const std::string& path) { return resolve_path(path); });
+    fm->set_exists_func([this](const std::string& path) { return file_exists(path); });
+    fileManager_ = fm;
+
     display_ = wl_display_connect(nullptr);
     if (!display_) {
         JAENG_LOG_ERROR("Failed to connect to Wayland display");
@@ -106,6 +114,25 @@ bool WaylandPlatform::poll_events() {
 
 void WaylandPlatform::show_message_box(const std::string& title, const std::string& content, MessageBoxType type) {
     JAENG_LOG_INFO("[{}] {}", title, content);
+}
+
+std::string WaylandPlatform::get_base_path() const {
+    char result[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
+    if (count != -1) {
+        std::string path(result, count);
+        return path.substr(0, path.find_last_of("/"));
+    }
+    return ".";
+}
+
+std::string WaylandPlatform::resolve_path(const std::string& path) const {
+    if (!path.empty() && path[0] == '/') return path;
+    return get_base_path() + "/" + path;
+}
+
+bool WaylandPlatform::file_exists(const std::string& path) const {
+    return std::filesystem::exists(path);
 }
 
 int WaylandPlatform::run(std::unique_ptr<IApplication> app) {

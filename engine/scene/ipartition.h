@@ -25,15 +25,15 @@ struct RenderProxy {
 };
 
 struct UIRenderProxy {
-    uint32_t id;
-    float x, y, w, h;
-    int32_t zIndex;
-    glm::vec4 color{1.0f};
-    MeshHandle mesh;
-    MaterialHandle material;
-    BufferHandle constant;
-    glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // [x, y, w, h] or [u0, v0, du, dv]
-    TextureHandle textureOverride = 0;
+    uint32_t id{ 0 };
+    float x{ 0.0f }, y{ 0.0f }, w{ 1.0f }, h{ 1.0f };
+    int32_t zIndex{ 0 };
+    glm::vec4 color{ 1.0f };
+    MeshHandle mesh{ 0 };
+    MaterialHandle material{ 0 };
+    BufferHandle constant{ 0 };
+    glm::vec4 uvRect{ 0.0f, 0.0f, 1.0f, 1.0f }; // [x, y, w, h] or [u0, v0, du, dv]
+    TextureHandle textureOverride{ 0 };
 };
 
 enum class RenderCommandType { Update, Destroy, UpdateCamera, UpdateUI, DestroyUI, ClearUI };

@@ -1,16 +1,17 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
-#include <unistd.h>
 #include <stdio.h>
 
 #include "filestorage.h"
 #include "common/logging.h"
 
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX)
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <poll.h>
+#elif defined(JAENG_APPLE)
+#include <unistd.h>
 #endif
 
 namespace jaeng {

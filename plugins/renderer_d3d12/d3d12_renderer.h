@@ -105,7 +105,7 @@ private:
     struct InputLayout {
         std::vector<D3D12_INPUT_ELEMENT_DESC> ieds;
         std::vector<std::string> semanticNames;
-        uint32_t stride;
+        uint32_t stride{ 0 };
     };
     std::unique_ptr<ResourceTable> resources_; // buffers, textures, samplers, shader blobs
     std::vector<std::unique_ptr<InputLayout>>  vertexLayouts_;  // vertex layout descriptors
