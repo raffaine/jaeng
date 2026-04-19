@@ -51,6 +51,7 @@ public:
 
     static void submit(CommandListHandle* lists, uint32_t list_count);
     static void present(SwapchainHandle handle);
+    static void set_platform_drawable(void* drawable);
     static void wait_idle();
 };
 

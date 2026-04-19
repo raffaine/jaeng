@@ -52,8 +52,8 @@ foreach(PIPELINE ${PIPELINES})
         if(APPLE)
             # Use --msl-decoration-binding to preserve bN registers into buffer(N) slots.
             add_custom_command(TARGET compile_shaders POST_BUILD
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main -DJAENG_APPLE ${VERTEX_SHADER} -o ${VERTEX_SPV}
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main -DJAENG_APPLE ${PIXEL_SHADER} -o ${PIXEL_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main ${VERTEX_SHADER} -o ${VERTEX_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main ${PIXEL_SHADER} -o ${PIXEL_SPV}
                 COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${VERTEX_SPV} --output ${VERTEX_MSL}
                 COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${PIXEL_SPV} --output ${PIXEL_MSL}
                 COMMENT "Pipeline ${PIPELINE}: Compiling and Transpiling to MSL"

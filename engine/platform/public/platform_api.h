@@ -107,7 +107,7 @@ public:
     IApplication(IPlatform& platform, const AppConfig& config);
     virtual ~IApplication() = default;
 
-    bool init();
+    bool init(void* device_handle = nullptr);
     void on_event(const Event& ev);
     void shutdown();
     bool should_close() const { return shouldClose_; }
@@ -118,6 +118,7 @@ public:
     void run_one_frame();
     bool process_main_thread_tasks();
     async::TaskScheduler& taskScheduler() { return *taskScheduler_; }
+    void set_platform_drawable(void* drawable) { if (renderer_.gfx && renderer_.gfx->set_platform_drawable) renderer_.gfx->set_platform_drawable(drawable); }
 
 protected:
 
@@ -154,8 +155,8 @@ private:
     void render_loop();
 
     std::unique_ptr<async::TaskScheduler> taskScheduler_;
-    std::jthread simThread_;
-    std::jthread renderThread_;
+    std::thread simThread_;
+    std::thread renderThread_;
     std::atomic<bool> isRunning_ = false;
 
     float fixedDt_ = 1.0f / 60.0f;
@@ -202,6 +203,7 @@ public:
     virtual std::string get_base_path() const = 0;
     virtual std::string resolve_path(const std::string& path) const = 0;
     virtual bool file_exists(const std::string& path) const = 0;
+    virtual bool is_foreground() const { return true; }
 
     // The entry point abstraction: takes application and enters the loop
     virtual int run(std::unique_ptr<IApplication> app) = 0;
@@ -209,5 +211,27 @@ public:
 
 // Factory function
 std::unique_ptr<IPlatform> create_platform();
+
+// Platform-aware threading utilities
+namespace thread {
+    // A platform-optimized yield. On Apple platforms, standard yield can cause hot-loops.
+    inline void yield() {
+#if defined(JAENG_APPLE)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#else
+        std::this_thread::yield();
+#endif
+    }
+
+    // A standard sleep abstraction
+    inline void sleep(uint32_t ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    }
+
+    // A specific sleep profile for when the application is backgrounded or inactive
+    inline void sleep_idle() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
 
 } // namespace jaeng::platform

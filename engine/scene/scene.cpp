@@ -203,7 +203,7 @@ void Scene::processCommands(const std::vector<RenderCommand>& queue) {
     partitioner->build();
 }
 
-void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer)
+void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer, uint32_t width, uint32_t height)
 {
     // 1) Clear pass
     rg.add_pass("Clear", { {
@@ -261,13 +261,12 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
     // 3) UI Pass
     rg.add_pass("UI_Pass", 
         { { .tex = backbuffer } }, { .tex = 0 },
-        [&](const RGPassContext& ctx) {
+        [&, width, height](const RGPassContext& ctx) {
             auto matSysRef = matSys.lock();
             if (!matSysRef) return;
 
-            // Simple ortho matrix. Assuming 1280x720. Ideally we'd get this from the viewport/swapchain size.
-            // For the sandbox, hardcoding 1280x720 matches the configuration.
-            glm::mat4 orthoProj = glm::ortho(0.0f, 1280.0f, 720.0f, 0.0f, -1.0f, 1.0f);
+            // Simple ortho matrix using dynamic viewport dimensions.
+            glm::mat4 orthoProj = glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, -1.0f, 1.0f);
 
             for (auto& db : uiDrawList) {
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);

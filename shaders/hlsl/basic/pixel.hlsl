@@ -6,8 +6,8 @@ SamplerState samplers[] : register(s0, space2);
 #define GET_TEXTURE(idx) textures[idx]
 #define GET_SAMPLER(idx) samplers[idx]
 
-#elif defined(JAENG_APPLE)
-// Metal currently uses discrete arrays (to be evolved to Argument Buffers)
+#elif !defined(__directx_shader_model)
+// Discrete path for Vulkan fallback or Metal (via SPIR-V transpilation)
 Texture2D textures[128] : register(t0, space0);
 SamplerState samplers[16] : register(s0, space0);
 #define GET_TEXTURE(idx) textures[idx]

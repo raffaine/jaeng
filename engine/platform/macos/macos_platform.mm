@@ -159,7 +159,7 @@ int MacOSPlatform::run(std::unique_ptr<IApplication> app) {
     while (!app->should_close()) {
         poll_events();
         if (!app->process_main_thread_tasks()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            jaeng::platform::thread::yield();
         }
     }
 

@@ -66,7 +66,14 @@ bool TaskScheduler::process_main_thread_tasks() {
     }
 
     for (auto& task : readyTasks) {
-        task();
+#ifdef JAENG_APPLE
+        jaeng_apple_run_in_autorelease_pool([](void* ctx) {
+            auto* t = static_cast<TaskFn*>(ctx);
+            if (*t) (*t)();
+        }, &task);
+#else
+        if (task) task();
+#endif
     }
     return true;
 }
@@ -89,25 +96,30 @@ struct TaskWrapper {
 void TaskScheduler::worker_loop() {
     t_isWorker = true;
     set_current_scheduler(this);
+    JAENG_LOG_INFO("[TaskScheduler] Worker thread started");
     while (true) {
         TaskFn task;
         {
             std::unique_lock<std::mutex> lock(asyncMutex_);
             asyncCv_.wait(lock, [this]() { return stop_ || !asyncQueue_.empty(); });
             
-            if (stop_ && asyncQueue_.empty()) return;
+            if (stop_ && asyncQueue_.empty()) {
+                JAENG_LOG_INFO("[TaskScheduler] Worker thread stopping");
+                return;
+            }
             
             task = std::move(asyncQueue_.front());
             asyncQueue_.pop_front();
         }
 
 #ifdef JAENG_APPLE
+        // JAENG_LOG_DEBUG("[TaskScheduler] Running task in autorelease pool");
         jaeng_apple_run_in_autorelease_pool([](void* ctx) {
             auto* t = static_cast<TaskFn*>(ctx);
-            (*t)();
+            if (*t) (*t)();
         }, &task);
 #else
-        task();
+        if (task) task();
 #endif
     }
 }
@@ -116,13 +128,17 @@ void TaskScheduler::io_worker_loop() {
     t_isWorker = true;
     t_isIO = true;
     set_current_scheduler(this);
+    JAENG_LOG_INFO("[TaskScheduler] IO worker thread started");
     while (true) {
         TaskFn task;
         {
             std::unique_lock<std::mutex> lock(ioMutex_);
             ioCv_.wait(lock, [this]() { return stop_ || !ioQueue_.empty(); });
             
-            if (stop_ && ioQueue_.empty()) return;
+            if (stop_ && ioQueue_.empty()) {
+                JAENG_LOG_INFO("[TaskScheduler] IO worker thread stopping");
+                return;
+            }
             
             task = std::move(ioQueue_.front());
             ioQueue_.pop_front();
@@ -131,10 +147,10 @@ void TaskScheduler::io_worker_loop() {
 #ifdef JAENG_APPLE
         jaeng_apple_run_in_autorelease_pool([](void* ctx) {
             auto* t = static_cast<TaskFn*>(ctx);
-            (*t)();
+            if (*t) (*t)();
         }, &task);
 #else
-        task();
+        if (task) task();
 #endif
     }
 }
