@@ -45,7 +45,10 @@ if(APPLE)
       GIT_TAG        main
       GIT_SHALLOW    ON
   )
-  FetchContent_MakeAvailable(metal-cpp)
+  FetchContent_GetProperties(metal-cpp)
+  if(NOT metal-cpp_POPULATED)
+      FetchContent_Populate(metal-cpp)
+  endif()
 
   add_library(metal-cpp-headers INTERFACE)
   target_include_directories(metal-cpp-headers INTERFACE
