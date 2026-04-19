@@ -4,15 +4,22 @@
 #include "ui/fontsys.h"
 #include "common/async/awaiters.h"
 #include <chrono>
+#include <thread>
+
+#ifdef JAENG_APPLE
+#include <Foundation/Foundation.hpp>
+#include <TargetConditionals.h>
+#endif
 
 namespace jaeng::platform {
 
     IApplication::IApplication(IPlatform& platform, const AppConfig& config)
-        : platform_(platform), config_(config) {}
-
-    bool IApplication::init() {
-        JAENG_LOG_INFO("[Engine] init: Starting scheduler...");
+        : platform_(platform), config_(config) {
         taskScheduler_ = std::make_unique<async::TaskScheduler>();
+    }
+
+    bool IApplication::init(void* device_handle) {
+        JAENG_LOG_INFO("[Engine] init: Setting up scheduler...");
         async::set_current_scheduler(taskScheduler_.get());
 
         platform_.set_event_callback([this](const Event& ev) { this->on_event(ev); });
@@ -27,7 +34,7 @@ namespace jaeng::platform {
         JAENG_LOG_INFO("[Engine] init: Window created {}x{}", config_.width, config_.height);
 
         JAENG_LOG_INFO("[Engine] init: Initializing renderer...");
-        if (!renderer_.initialize(config_.backend, window_->get_native_handle(), platform_.get_native_display_handle(), 3)) return false;
+        if (!renderer_.initialize(config_.backend, window_->get_native_handle(), platform_.get_native_display_handle(), 3, device_handle)) return false;
 
         JAENG_LOG_INFO("[Engine] init: Creating swapchain...");
         DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
@@ -48,7 +55,13 @@ namespace jaeng::platform {
 
         JAENG_LOG_INFO("[Engine] init: Calling app_init...");
         bool ok = app_init();
-        JAENG_LOG_INFO("[Engine] init: app_init returned {}", ok);
+        JAENG_LOG_INFO("[Engine] init: app_init returned {}, fixedDt={}", ok, fixedDt_);
+        
+        if (ok) {
+            // Start threads only after resources are loaded
+            start_engine_threads();
+        }
+
         return ok;
     }
 
@@ -82,12 +95,21 @@ namespace jaeng::platform {
     }
 
     void IApplication::start_engine_threads() {
+        if (isRunning_) return;
         isRunning_ = true;
         if (taskScheduler_) {
-            taskScheduler_->initialize();
+            uint32_t workerCount = std::thread::hardware_concurrency();
+#if TARGET_OS_SIMULATOR
+            if (workerCount > 4) workerCount = 4;
+#endif
+            taskScheduler_->initialize(workerCount);
+            JAENG_LOG_INFO("[Engine] Starting engine loops via std::thread ({} workers)", workerCount);
+        } else {
+            JAENG_LOG_INFO("[Engine] Starting engine loops via std::thread (no scheduler)");
         }
-        simThread_ = std::jthread(&IApplication::simulation_loop, this);
-        renderThread_ = std::jthread(&IApplication::render_loop, this);
+
+        simThread_ = std::thread(&IApplication::simulation_loop, this);
+        renderThread_ = std::thread(&IApplication::render_loop, this);
     }
 
     void IApplication::stop_engine_threads() {
@@ -96,8 +118,8 @@ namespace jaeng::platform {
         if (taskScheduler_) {
             taskScheduler_->shutdown();
         }
-        renderCv_.notify_one(); // Wake up render thread if it's waiting
-        // std::jthread automatically joins on destruction, but we can be explicit
+        renderCv_.notify_all(); // Wake up render thread if it's waiting
+
         if (simThread_.joinable()) simThread_.join();
         if (renderThread_.joinable()) renderThread_.join();
     }
@@ -112,6 +134,7 @@ namespace jaeng::platform {
 
     void IApplication::run_one_frame() {
         tick(fixedDt_);
+        JAENG_LOG_DEBUG("[Engine] run_one_frame executed");
         auto& producerQueue = stateBuffer_.get_producer();
         extract_render_state(producerQueue);
         stateBuffer_.push_producer();
@@ -131,16 +154,30 @@ namespace jaeng::platform {
     }
 
     void IApplication::simulation_loop() {
+#ifdef JAENG_APPLE
+        async::set_current_scheduler(taskScheduler_.get());
+#endif
+
         auto lastTime = std::chrono::high_resolution_clock::now();
         float accumulator = 0.0f;
+        JAENG_LOG_INFO("[Engine] Simulation loop started");
 
         while (isRunning_) {
+#ifdef JAENG_APPLE
+            auto* pool = NS::AutoreleasePool::alloc()->init();
+#endif
+
             auto now = std::chrono::high_resolution_clock::now();
             float dt = std::chrono::duration<float>(now - lastTime).count();
             lastTime = now;
 
             if (dt > 0.25f) dt = 0.25f;
             accumulator += dt;
+
+            static uint32_t traceCount = 0;
+            if (traceCount++ % 120 == 0) {
+                JAENG_LOG_DEBUG("[Engine] Sim Loop Trace: dt={}, acc={}, fixedDt={}", dt, accumulator, fixedDt_);
+            }
 
             bool stateChanged = false;
 
@@ -153,6 +190,11 @@ namespace jaeng::platform {
 
             // If the state changed, extract it and hand it off to the render thread
             if (stateChanged) {
+                static uint32_t simFrameCount = 0;
+                if (simFrameCount++ % 60 == 0) {
+                    JAENG_LOG_DEBUG("[Engine] Sim frame produced, notifying render thread");
+                }
+                
                 auto& producerQueue = stateBuffer_.get_producer();
                 extract_render_state(producerQueue);
                 stateBuffer_.push_producer();
@@ -164,13 +206,24 @@ namespace jaeng::platform {
                 renderCv_.notify_one();
             }
             else {
-                // Yield to avoid pegging a CPU core at 100% when no updates occur
-                std::this_thread::yield();
+                // Prevent aggressive spinning on some platforms (like iOS Simulator)
+                jaeng::platform::thread::yield();
             }
+
+#ifdef JAENG_APPLE
+            pool->release();
+#endif
         }
+
+        JAENG_LOG_INFO("[Engine] Simulation loop stopped");
     }
 
     void IApplication::render_loop() {
+#ifdef JAENG_APPLE
+        async::set_current_scheduler(taskScheduler_.get());
+#endif
+
+        JAENG_LOG_INFO("[Engine] Render loop started");
         while (isRunning_) {
             // Wait for the simulation thread to produce a new frame packet
             std::unique_lock<std::mutex> lock(stateMutex_);
@@ -182,26 +235,42 @@ namespace jaeng::platform {
             frameReady_ = false;
             lock.unlock();
 
-            // Check the triple buffer for new data
-            bool hasNewState = stateBuffer_.update_consumer();
+#ifdef JAENG_APPLE
+            auto* pool = NS::AutoreleasePool::alloc()->init();
+#endif
 
-            // Engine strictly owns the resize, compile, and present steps!
-            renderer_.process_pending_resizes();
-            if (renderer_->begin_frame()) {
-                TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
-                TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
+            // Check if we are in foreground before rendering (essential for iOS stability)
+            if (platform_.is_foreground()) {
+                // Check the triple buffer for new data
+                bool hasNewState = stateBuffer_.update_consumer();
 
-                RenderGraph graph;
+                // Engine strictly owns the resize, compile, and present steps!
+                renderer_.process_pending_resizes();
+                if (renderer_->begin_frame()) {
+                    TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
+                    TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
 
-                // Render the extracted state
-                render(stateBuffer_.get_consumer(), hasNewState, graph, backbuffer, depthbuffer);
+                    RenderGraph graph;
 
-                graph.compile();
-                graph.execute(*renderer_.gfx, depthbuffer, nullptr);
-                renderer_->present(swap_);
-                renderer_->end_frame();
+                    // Render the extracted state
+                    render(stateBuffer_.get_consumer(), hasNewState, graph, backbuffer, depthbuffer);
+
+                    graph.compile();
+                    graph.execute(*renderer_.gfx, depthbuffer, nullptr);
+                    renderer_->present(swap_);
+                    renderer_->end_frame();
+                }
+            } else {
+                // Throttle while in background
+                jaeng::platform::thread::sleep_idle();
             }
+
+#ifdef JAENG_APPLE
+            pool->release();
+#endif
         }
+
+        JAENG_LOG_INFO("[Engine] Render loop stopped");
     }
 
 } // namespace jaeng::platform

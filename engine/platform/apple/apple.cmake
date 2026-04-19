@@ -21,6 +21,7 @@ if(APPLE)
         platform/apple/apple_process.cpp
         platform/apple/apple_process.h
         common/apple_utils.mm
+        common/apple_metal_impl.mm
         storage/win/filestorage.cpp
         storage/win/filestorage.h
     )
@@ -34,9 +35,13 @@ if(APPLE)
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 
+    # Note: common/apple_metal_impl.mm is NOT in the ARC list above 
+    # because metal-cpp implementation needs to be compiled without ARC.
+
     function(jaeng_configure_platform_apple target)
         find_library(FOUNDATION_LIBRARY Foundation REQUIRED)
         find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
+        find_library(METAL_LIBRARY Metal REQUIRED)
         
         if(IOS)
             find_library(UIKIT_LIBRARY UIKit REQUIRED)
@@ -46,6 +51,6 @@ if(APPLE)
             target_link_libraries(${target} PRIVATE ${APPKIT_LIBRARY})
         endif()
         
-        target_link_libraries(${target} PRIVATE ${FOUNDATION_LIBRARY} ${QUARTZCORE_LIBRARY})
+        target_link_libraries(${target} PRIVATE ${FOUNDATION_LIBRARY} ${QUARTZCORE_LIBRARY} ${METAL_LIBRARY} metal-cpp-headers)
     endfunction()
 endif()

@@ -2,19 +2,11 @@
 
 #include "platform/public/platform_api.h"
 
-#ifdef __OBJC__
-@class UIWindow;
-@class UIView;
-#else
-typedef void UIWindow;
-typedef void UIView;
-#endif
-
 namespace jaeng::platform {
 
 class IOSWindow : public IWindow {
 public:
-    IOSWindow(UIWindow* window, UIView* view, uint32_t width, uint32_t height);
+    IOSWindow(void* window, void* metalLayer, uint32_t width, uint32_t height);
     ~IOSWindow() override;
 
     void destroy() override;
@@ -24,8 +16,8 @@ public:
     bool is_open() const override { return window_ != nullptr; }
 
 private:
-    UIWindow* window_;
-    UIView* view_;
+    void* window_;
+    void* metalLayer_;
     uint32_t width_;
     uint32_t height_;
 };

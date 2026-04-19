@@ -1,11 +1,9 @@
 #include "ios_window.h"
-#import <UIKit/UIKit.h>
-#import <QuartzCore/CAMetalLayer.h>
 
 namespace jaeng::platform {
 
-IOSWindow::IOSWindow(UIWindow* window, UIView* view, uint32_t width, uint32_t height)
-    : window_(window), view_(view), width_(width), height_(height) {
+IOSWindow::IOSWindow(void* window, void* metalLayer, uint32_t width, uint32_t height)
+    : window_(window), metalLayer_(metalLayer), width_(width), height_(height) {
 }
 
 IOSWindow::~IOSWindow() {
@@ -15,12 +13,12 @@ IOSWindow::~IOSWindow() {
 void IOSWindow::destroy() {
     if (window_) {
         window_ = nullptr;
-        view_ = nullptr;
+        metalLayer_ = nullptr;
     }
 }
 
 void* IOSWindow::get_native_handle() const {
-    return (__bridge void*)view_.layer;
+    return metalLayer_;
 }
 
 } // namespace jaeng::platform

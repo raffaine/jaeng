@@ -33,10 +33,11 @@ static void null_present(SwapchainHandle) {
 
 class Renderer {
 public:
-    bool initialize(GfxBackend backend, void* window_handle, void* display_handle, uint32_t frame_count = 3) {
+    bool initialize(GfxBackend backend, void* window_handle, void* display_handle, uint32_t frame_count = 3, void* device_handle = nullptr) {
         RendererDesc desc{};
         desc.platform_window = window_handle;
         desc.platform_display = display_handle;
+        desc.platform_device = device_handle;
         desc.frame_count = frame_count;
 
 #ifdef JAENG_WIN32

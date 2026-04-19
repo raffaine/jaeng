@@ -1,27 +1,3 @@
-include(FetchContent)
-FetchContent_Declare(
-    metal-cpp
-    GIT_REPOSITORY https://github.com/Unbinilium/Metal.git
-    GIT_TAG        main
-    GIT_SHALLOW    ON
-)
-FetchContent_GetProperties(metal-cpp)
-if(NOT metal-cpp_POPULATED)
-    FetchContent_Populate(metal-cpp)
-endif()
-
-# Define our own Metal interface target for the headers
-add_library(metal-cpp-headers INTERFACE)
-target_include_directories(metal-cpp-headers INTERFACE
-    ${metal-cpp_SOURCE_DIR}/metal-cpp
-    ${metal-cpp_SOURCE_DIR}/metal-cpp-extensions
-)
-target_compile_definitions(metal-cpp-headers INTERFACE
-    NS_PRIVATE_IMPLEMENTATION
-    CA_PRIVATE_IMPLEMENTATION
-    MTL_PRIVATE_IMPLEMENTATION
-)
-
 set(RENDERER_TYPE SHARED)
 if(IOS)
     set(RENDERER_TYPE STATIC)

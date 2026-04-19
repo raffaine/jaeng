@@ -399,8 +399,8 @@ void SandboxApp::app_shutdown() {
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
     static uint32_t frameCount = 0;
-    if (frameCount++ % 100 == 0) {
-        JAENG_LOG_DEBUG("Simulation Frame: {}", frameCount);
+    if (frameCount++ % 60 == 0) {
+        JAENG_LOG_DEBUG("[Sandbox] tick executed, simTime={}", simTime_);
     }
 
     // 1) Update UI Layout
@@ -610,7 +610,7 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
     }
     
     scene->buildDrawList({});
-    scene->renderScene(graph, backbuffer, depthbuffer);
+    scene->renderScene(graph, backbuffer, depthbuffer, getConfig().width, getConfig().height);
 }
 
 void SandboxApp::app_on_event(const Event& ev) {

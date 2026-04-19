@@ -116,7 +116,7 @@ int Win32Platform::run(std::unique_ptr<IApplication> app) {
 
     while (poll_events() && !app->should_close()) {
         if (!app->process_main_thread_tasks()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            jaeng::platform::thread::yield();
         }
     }
 

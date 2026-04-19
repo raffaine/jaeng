@@ -6,19 +6,19 @@
 ## JAENG Apple Expansion Tasks (macOS / iOS)
 
 ### 1. Platform & OS Layer Implementation
-* Create Objective-C++ `.mm` bridge files strictly for interfacing with AppKit (macOS) and UIKit (iOS)[cite: 5, 7].
-* Map the `NSApplication` and `UIApplication` run loops directly to the engine's Main/OS thread[cite: 8].
-* Wrap Cocoa window references into existing Context/Device handles to strictly avoid global state[cite: 9, 33].
-* Implement event handling by pushing Cocoa input and window events into the existing lock-free queues to be consumed by the Simulation thread[cite: 10].
-* Ensure this layer adheres to the philosophy of using native implementations over generic libraries like SDL3[cite: 6, 36].
+- [x] Create Objective-C++ `.mm` bridge files strictly for interfacing with AppKit (macOS) and UIKit (iOS)[cite: 5, 7].
+- [x] Map the `NSApplication` and `UIApplication` run loops directly to the engine's Main/OS thread[cite: 8].
+- [x] Wrap Cocoa window references into existing Context/Device handles to strictly avoid global state[cite: 9, 33].
+- [x] Implement event handling by pushing Cocoa input and window events into the existing lock-free queues to be consumed by the Simulation thread[cite: 10].
+- [x] Ensure this layer adheres to the philosophy of using native implementations over generic libraries like SDL3[cite: 6, 36].
 
 ### 2. Metal Renderer Backend
-* Set up `metal-cpp` to act as a dynamically loaded renderer alongside the existing D3D12 and Vulkan backends[cite: 11, 12, 28].
-* Generate Metal command buffers exclusively on the Render thread[cite: 13].
-* Strictly communicate across boundaries using the engine-managed TripleBuffer and double-buffered command queues[cite: 14, 29, 31].
-* Ensure the Simulation thread never blocks waiting on the Metal Render thread[cite: 15, 30].
-* Wrap Metal reference-counted objects (e.g., `MTL::Device`, `MTL::CommandQueue`, `MTL::Buffer`) in `UniqueHandle` patterns to avoid manual release calls[cite: 16, 17, 35].
-* Return the engine's internal result type for all failable Metal initializations instead of throwing exceptions[cite: 18, 34].
+- [x] Set up `metal-cpp` to act as a dynamically loaded renderer alongside the existing D3D12 and Vulkan backends[cite: 11, 12, 28].
+- [x] Generate Metal command buffers exclusively on the Render thread[cite: 13].
+- [x] Strictly communicate across boundaries using the engine-managed TripleBuffer and double-buffered command queues[cite: 14, 29, 31].
+- [x] Ensure the Simulation thread never blocks waiting on the Metal Render thread[cite: 15, 30].
+- [x] Wrap Metal reference-counted objects (e.g., `MTL::Device`, `MTL::CommandQueue`, `MTL::Buffer`) in `UniqueHandle` patterns to avoid manual release calls[cite: 16, 17, 35].
+- [x] Return the engine's internal result type for all failable Metal initializations instead of throwing exceptions[cite: 18, 34].
 
 ### 3. Shader Pipeline Translation
 * Maintain native HLSL as the primary shader language[cite: 20, 37].

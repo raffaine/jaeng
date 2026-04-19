@@ -52,8 +52,9 @@ struct Extent2D { uint32_t width, height; };
 // --- Descriptors ---
 struct RendererDesc {
     GfxBackend backend;
-    void* platform_window; // HWND for Win32, wl_surface for Wayland
-    void* platform_display; // Optional: wl_display for Wayland
+    void* platform_window; // HWND for Win32, wl_surface for Wayland, CAMetalLayer for Apple
+    void* platform_display; // wl_display for Wayland
+    void* platform_device; // MTLDevice for Apple (optional, prevents simulator hangs)
     uint32_t frame_count;  // 2 or 3
 };
 
@@ -224,6 +225,7 @@ typedef struct RendererAPI {
     void (*end_commands)(CommandListHandle);
 
     // submit/present
+    void (*set_platform_drawable)(void*);
     void (*submit)(CommandListHandle* lists, uint32_t list_count);
     void (*present)(SwapchainHandle);
     void (*wait_idle)();

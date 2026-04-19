@@ -16,6 +16,12 @@ static uint32_t firstAvailable(const std::bitset<MaterialSystem::MAX_MATERIALS>&
     return static_cast<uint32_t>(-1);
 }
 
+#ifdef JAENG_APPLE
+extern "C" {
+    void jaeng_apple_run_in_autorelease_pool(void(*func)(void*), void* context);
+}
+#endif
+
 async::Task<result<MaterialHandle>> MaterialSystem::createMaterialAsync(const std::string& path)
 {
     JAENG_LOG_DEBUG("[Material] createMaterialAsync: {}", path);
