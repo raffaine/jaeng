@@ -60,7 +60,7 @@ public:
     
     IProcessManager& get_process_manager() override { return processManager_; }
     IFileManager& get_file_manager() override { return *fileManager_; }
-
+    std::string get_base_path() const override;
     int run(std::unique_ptr<IApplication> app) override;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

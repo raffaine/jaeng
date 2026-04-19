@@ -11,27 +11,34 @@ namespace jaeng::platform {
         : platform_(platform), config_(config) {}
 
     bool IApplication::init() {
-        // Initialize scheduler and set as current early so it's available for subsystems
+        JAENG_LOG_INFO("[Engine] init: Starting scheduler...");
         taskScheduler_ = std::make_unique<async::TaskScheduler>();
         async::set_current_scheduler(taskScheduler_.get());
 
         platform_.set_event_callback([this](const Event& ev) { this->on_event(ev); });
 
+        JAENG_LOG_INFO("[Engine] init: Creating window...");
         auto windowResult = platform_.create_window({config_.title, config_.width, config_.height});
         if (windowResult.hasError()) return false;
         window_ = std::move(windowResult).logError().value();
 
+        config_.width = window_->get_width();
+        config_.height = window_->get_height();
+        JAENG_LOG_INFO("[Engine] init: Window created {}x{}", config_.width, config_.height);
+
+        JAENG_LOG_INFO("[Engine] init: Initializing renderer...");
         if (!renderer_.initialize(config_.backend, window_->get_native_handle(), platform_.get_native_display_handle(), 3)) return false;
 
+        JAENG_LOG_INFO("[Engine] init: Creating swapchain...");
         DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
         SwapchainDesc swapDesc{{config_.width, config_.height}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo};
         swap_ = renderer_->create_swapchain(&swapDesc);
         if (swap_ == 0) return false;
 
-        
+        JAENG_LOG_INFO("[Engine] init: Initializing subsystems...");
         auto& fileMan = platform_.get_file_manager();
         fileMan.initialize().orElse([this](auto) {
-            platform_.show_message_box("Warning", "Failed to initialize FileManager. Continuing with limited capacity.", MessageBoxType::Warning);
+            platform_.show_message_box("Warning", "Failed to initialize FileManager.", MessageBoxType::Warning);
         });
         entityMan_ = std::make_shared<EntityManager>();
         fontSys_ = std::make_shared<FontSystem>(fileMan, renderer_.gfx);
@@ -39,7 +46,10 @@ namespace jaeng::platform {
         meshSys_ = std::make_shared<MeshSystem>(fileMan, renderer_.gfx);
         sceneMan_ = std::make_unique<SceneManager>(meshSys_, matSys_, renderer_.gfx);
 
-        return app_init(); // Delegate to user app
+        JAENG_LOG_INFO("[Engine] init: Calling app_init...");
+        bool ok = app_init();
+        JAENG_LOG_INFO("[Engine] init: app_init returned {}", ok);
+        return ok;
     }
 
     void IApplication::on_event(const Event& ev) {
@@ -98,6 +108,26 @@ namespace jaeng::platform {
 
     IFileManager& IApplication::fileManager() {
         return platform_.get_file_manager();
+    }
+
+    void IApplication::run_one_frame() {
+        tick(fixedDt_);
+        auto& producerQueue = stateBuffer_.get_producer();
+        extract_render_state(producerQueue);
+        stateBuffer_.push_producer();
+        stateBuffer_.update_consumer();
+        
+        renderer_.process_pending_resizes();
+        if (renderer_->begin_frame()) {
+            TextureHandle backbuffer = renderer_->get_current_backbuffer(swap_);
+            TextureHandle depthbuffer = renderer_->get_depth_buffer(swap_);
+            RenderGraph graph;
+            render(stateBuffer_.get_consumer(), true, graph, backbuffer, depthbuffer);
+            graph.compile();
+            graph.execute(*renderer_.gfx, depthbuffer, nullptr);
+            renderer_->present(swap_);
+            renderer_->end_frame();
+        }
     }
 
     void IApplication::simulation_loop() {

@@ -8,7 +8,7 @@
 #define RENDERER_API __declspec(dllimport)
 #endif
 #else
-#define RENDERER_API
+#define RENDERER_API __attribute__((visibility("default")))
 #endif
 
 extern "C" {

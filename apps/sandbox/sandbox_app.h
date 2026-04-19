@@ -61,13 +61,11 @@ private:
 
     // Test resources
     std::unique_ptr<jaeng::IFileManager::SubscriptionT> materialSub_;
-    BufferHandle cbFrame_ = 0;
 
     // Simulation State
     std::vector<jaeng::EntityID> testEntities_;
     float simTime_ = 0.0f;
     jaeng::EntityID uiTextEntity_ = static_cast<jaeng::EntityID>(-1);
-    jaeng::MaterialHandle uiMaterial_ = 0;
     jaeng::FontHandle defaultFont_ = 0;
 
     // Animation Test

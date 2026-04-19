@@ -23,8 +23,8 @@ public:
     MaterialSystem(const MaterialSystem&) = delete;
     MaterialSystem& operator=(const MaterialSystem&) = delete;
     
-    MaterialSystem(MaterialSystem&&) noexcept = default;
-    MaterialSystem& operator=(MaterialSystem&&) noexcept = default;
+    MaterialSystem(MaterialSystem&&) noexcept = delete;
+    MaterialSystem& operator=(MaterialSystem&&) noexcept = delete;
 
     result<MaterialHandle> createMaterial(const std::string& path) override;
 

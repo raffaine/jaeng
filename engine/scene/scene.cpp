@@ -89,9 +89,10 @@ void Scene::buildDrawList(const math::AABB& volume)
                       .vertexBuffer = mesh->vertexBuffer,
                       .indexBuffer  = mesh->indexBuffer,
                       .indexCount   = static_cast<uint32_t>(mesh->indexCount),
+                      .constant     = proxy.constant
                       };
         // In case shader expects material constant buffer
-        if (matBg->constantBuffers.size() >= 3) {
+        if (matBg->constantBuffers.size() >= 3 && dp.constant == 0) {
             dp.constant = matBg->constantBuffers[2];
         }
 
@@ -158,9 +159,13 @@ void Scene::buildDrawList(const math::AABB& volume)
             .vertexBuffer = mesh->vertexBuffer,
             .indexBuffer  = mesh->indexBuffer,
             .indexCount   = static_cast<uint32_t>(mesh->indexCount),
-            .constant     = matBg->constantBuffers.size() >= 3 ? matBg->constantBuffers[2] : 0,
+            .constant     = proxy.constant,
             .textureOverride = proxy.textureOverride
         };
+
+        if (matBg->constantBuffers.size() >= 3 && dp.constant == 0) {
+            dp.constant = matBg->constantBuffers[2];
+        }
 
         DrawBatch db { .pipeline = *pso, .material = proxy.material, .constant = matBg->constantBuffers[0] };
         if (matBg->constantBuffers.size() >= 2) {
@@ -243,8 +248,9 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     
                     // Unified update for WorldMatrix + Color + UVRect
                     struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
-                    ctx.gfx->update_buffer(db.constant, 0, &cbData, sizeof(cbData));
-                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, db.constant, 0);
+                    auto cbToBind = (dp.constant != 0) ? dp.constant : db.constant;
+                    ctx.gfx->update_buffer(cbToBind, 0, &cbData, sizeof(cbData));
+                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, cbToBind, 0);
 
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, dp.indexCount, 1, 0, 0, 0);
                 }
@@ -291,8 +297,9 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     }
                     
                     struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
-                    ctx.gfx->update_buffer(db.constant, 0, &cbData, sizeof(cbData));
-                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, db.constant, 0);
+                    auto cbToBind = (dp.constant != 0) ? dp.constant : db.constant;
+                    ctx.gfx->update_buffer(cbToBind, 0, &cbData, sizeof(cbData));
+                    ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, cbToBind, 0);
 
                     // which is currently handled globally per material by the app.
 

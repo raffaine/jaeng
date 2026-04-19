@@ -2,6 +2,12 @@
 #include "awaiters.h"
 #include "common/logging.h"
 
+#ifdef JAENG_APPLE
+extern "C" {
+    void jaeng_apple_run_in_autorelease_pool(void(*func)(void*), void* context);
+}
+#endif
+
 namespace jaeng::async {
 
 TaskScheduler::TaskScheduler() {}
@@ -76,6 +82,10 @@ bool TaskScheduler::is_io_thread() const {
     return t_isIO;
 }
 
+struct TaskWrapper {
+    TaskFn* task;
+};
+
 void TaskScheduler::worker_loop() {
     t_isWorker = true;
     set_current_scheduler(this);
@@ -90,7 +100,15 @@ void TaskScheduler::worker_loop() {
             task = std::move(asyncQueue_.front());
             asyncQueue_.pop_front();
         }
+
+#ifdef JAENG_APPLE
+        jaeng_apple_run_in_autorelease_pool([](void* ctx) {
+            auto* t = static_cast<TaskFn*>(ctx);
+            (*t)();
+        }, &task);
+#else
         task();
+#endif
     }
 }
 
@@ -109,7 +127,15 @@ void TaskScheduler::io_worker_loop() {
             task = std::move(ioQueue_.front());
             ioQueue_.pop_front();
         }
+
+#ifdef JAENG_APPLE
+        jaeng_apple_run_in_autorelease_pool([](void* ctx) {
+            auto* t = static_cast<TaskFn*>(ctx);
+            (*t)();
+        }, &task);
+#else
         task();
+#endif
     }
 }
 

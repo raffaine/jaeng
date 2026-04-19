@@ -39,6 +39,20 @@
             }
         },
         {
+            "name": "linux-local",
+            "inherits": "linux-debug",
+            "displayName": "Linux VM Bridge (Local)",
+            "binaryDir": "$env{HOME}/build/jaeng",
+            "cacheVariables": {
+                "VCPKG_INSTALL_DIR": "$env{HOME}/build-linux/vcpkg_installed",
+                "VCPKG_INSTALLED_DIR": "$env{HOME}/build-linux/vcpkg_installed",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
             "name": "macos-debug",
             "displayName": "macOS Debug",
             "generator": "Ninja",

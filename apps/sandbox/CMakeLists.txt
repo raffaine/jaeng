@@ -9,20 +9,29 @@ set(SANDBOX_SOURCES
 if(WIN32)
   add_executable(sandbox WIN32 ${SANDBOX_SOURCES})
 elseif(APPLE)
-  add_executable(sandbox MACOSX_BUNDLE ${SANDBOX_SOURCES})
+  add_executable(sandbox MACOSX_BUNDLE ${SANDBOX_SOURCES} Roboto-Regular.ttf)
   set_target_properties(sandbox PROPERTIES
     MACOSX_BUNDLE_BUNDLE_IDENTIFIER "com.sintropia.jaeng.sandbox"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.sintropia.jaeng.sandbox"
     MACOSX_BUNDLE_BUNDLE_NAME "jaeng Sandbox"
+    RESOURCE "Roboto-Regular.ttf"
   )
 else()
   add_executable(sandbox ${SANDBOX_SOURCES})
 endif()
 
-target_compile_definitions(sandbox PRIVATE UNICODE= _UNICODE= ${JAENG_PLATFORM_DEF} 
-  "JAENG_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/shaders\""
-  "JAENG_ASSET_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
-)
+if(APPLE)
+  target_compile_definitions(sandbox PRIVATE 
+    "JAENG_SHADER_DIR=\"shaders\""
+    "JAENG_ASSET_DIR=\"assets\""
+  )
+else()
+  target_compile_definitions(sandbox PRIVATE 
+    "JAENG_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/shaders\""
+    "JAENG_ASSET_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+  )
+endif()
+
 target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
 
@@ -33,12 +42,14 @@ if(APPLE)
   add_custom_command(TARGET sandbox POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderer_metal> $<TARGET_FILE_DIR:sandbox>/
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:TestServer> $<TARGET_FILE_DIR:sandbox>/
-    COMMENT "Copying dependencies into sandbox bundle"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:sandbox>/shaders
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:sandbox>/assets
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Roboto-Regular.ttf $<TARGET_FILE_DIR:sandbox>/assets/Roboto-Regular.ttf
+    COMMENT "Copying dependencies and shaders into sandbox bundle"
   )
 endif()
 
-add_dependencies(sandbox TestServer)
-
+add_dependencies(sandbox TestServer compile_shaders)
 
 if(WIN32)
   # Visual Studio Project Settings

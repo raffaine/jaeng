@@ -3,11 +3,15 @@
 #include <format>
 #include <string_view>
 
-#ifdef _WIN32
+#ifdef JAENG_WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#endif
+
+#ifdef JAENG_APPLE
+#include <os/log.h>
 #endif
 
 namespace jaeng {
@@ -55,8 +59,11 @@ void log(LogLevel level, std::string_view fmt, Args&&... args) {
 
     std::string final_msg = prefix + msg + "\n";
 
-#ifdef _WIN32
+#ifdef JAENG_WIN32
     OutputDebugStringA(final_msg.c_str());
+#elif defined(JAENG_APPLE)
+    os_log_t log_obj = os_log_create("com.sintropia.jaeng", "engine");
+    os_log_with_type(log_obj, OS_LOG_TYPE_DEFAULT, "%{public}s", final_msg.c_str());
 #else
     if (use_stderr) {
         std::cerr << final_msg << std::flush;

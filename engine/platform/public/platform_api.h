@@ -115,7 +115,9 @@ public:
     void set_tick_rate(uint32_t hz);
     void start_engine_threads();
     void stop_engine_threads();
+    void run_one_frame();
     bool process_main_thread_tasks();
+    async::TaskScheduler& taskScheduler() { return *taskScheduler_; }
 
 protected:
 
@@ -143,7 +145,6 @@ protected:
     IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
-    async::TaskScheduler& taskScheduler() { return *taskScheduler_; }
     IPlatform& platform() { return platform_; }
     IWindow& window() { return *window_; }
     const AppConfig& getConfig() const { return config_; }
@@ -197,6 +198,10 @@ public:
 
     virtual IProcessManager& get_process_manager() = 0;
     virtual IFileManager& get_file_manager() = 0;
+
+    virtual std::string get_base_path() const = 0;
+    virtual std::string resolve_path(const std::string& path) const = 0;
+    virtual bool file_exists(const std::string& path) const = 0;
 
     // The entry point abstraction: takes application and enters the loop
     virtual int run(std::unique_ptr<IApplication> app) = 0;

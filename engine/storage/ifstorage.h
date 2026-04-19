@@ -23,6 +23,8 @@ public:
 
     virtual result<> initialize() = 0;
 
+    virtual void set_base_path(const std::string& path) = 0;
+
     // Return file contents or error
     virtual result<std::vector<uint8_t>> load(const std::string& path) = 0;
 

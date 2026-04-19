@@ -8,7 +8,8 @@
 
 @implementation MacOSMetalView
 - (CALayer *)makeBackingLayer {
-    return [CAMetalLayer layer];
+    CAMetalLayer* layer = [CAMetalLayer layer];
+    return layer;
 }
 @end
 
@@ -39,6 +40,14 @@ MacOSPlatform* MacOSPlatform::instance_ = nullptr;
 MacOSPlatform::MacOSPlatform() {
     instance_ = this;
     fileManager_ = std::make_shared<FileManager>();
+    auto* fm = static_cast<FileManager*>(fileManager_.get());
+    fm->set_base_path(get_base_path());
+    fm->set_exists_func([this](const std::string& path) {
+        return this->file_exists(path);
+    });
+    fm->set_path_resolver([this](const std::string& path) {
+        return this->resolve_path(path);
+    });
 }
 
 MacOSPlatform::~MacOSPlatform() {
@@ -54,11 +63,18 @@ result<std::unique_ptr<IWindow>> MacOSPlatform::create_window(const WindowDesc& 
                                                      backing:NSBackingStoreBuffered
                                                        defer:NO];
     [window setTitle:[NSString stringWithUTF8String:desc.title.c_str()]];
-    [window makeKeyAndOrderFront:nil];
     
     MacOSMetalView* view = [[MacOSMetalView alloc] initWithFrame:frame];
     [view setWantsLayer:YES];
+    [view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    
+    CAMetalLayer* metalLayer = (CAMetalLayer*)view.layer;
+    metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    metalLayer.contentsScale = window.backingScaleFactor;
+    metalLayer.opaque = YES;
+    
     [window setContentView:view];
+    [window makeKeyAndOrderFront:nil];
     
     return jaeng::result<std::unique_ptr<IWindow>>(std::make_unique<MacOSWindow>(window, view, desc.width, desc.height));
 }
@@ -82,7 +98,9 @@ bool MacOSPlatform::poll_events() {
                         break;
                     case NSEventTypeLeftMouseDown:
                         ev.type = Event::Type::MouseDown;
-                        ev.mouse.button = 0;
+                        ev.mouse.button = 272; // Left
+                        ev.mouse.x = (int32_t)[NSEvent mouseLocation].x;
+                        ev.mouse.y = (int32_t)[NSEvent mouseLocation].y;
                         eventCallback_(ev);
                         break;
                     default:
@@ -106,6 +124,25 @@ void MacOSPlatform::show_message_box(const std::string& title, const std::string
     }
     
     [alert runModal];
+}
+
+std::string MacOSPlatform::get_base_path() const {
+    char path[1024];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        std::string pathStr = path;
+        return pathStr.substr(0, pathStr.find_last_of("/"));
+    }
+    return ".";
+}
+
+bool MacOSPlatform::file_exists(const std::string& path) const {
+    return access(path.c_str(), F_OK) == 0;
+}
+
+std::string MacOSPlatform::resolve_path(const std::string& path) const {
+    if (!path.empty() && path[0] == '/') return path;
+    return get_base_path() + "/" + path;
 }
 
 int MacOSPlatform::run(std::unique_ptr<IApplication> app) {

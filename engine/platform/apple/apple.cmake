@@ -20,6 +20,7 @@ if(APPLE)
     list(APPEND JAENG_SOURCES
         platform/apple/apple_process.cpp
         platform/apple/apple_process.h
+        common/apple_utils.mm
         storage/win/filestorage.cpp
         storage/win/filestorage.h
     )
@@ -29,6 +30,7 @@ if(APPLE)
         platform/ios/ios_window.mm
         platform/macos/macos_platform.mm
         platform/macos/macos_window.mm
+        common/apple_utils.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 

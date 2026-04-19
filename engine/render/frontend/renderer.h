@@ -16,6 +16,10 @@
 #include <mach-o/dyld.h>
 #endif
 
+#ifdef JAENG_IOS
+extern "C" bool LoadRenderer(RendererAPI* out_api);
+#endif
+
 namespace jaeng {
 
 #ifdef JAENG_LINUX
@@ -87,9 +91,12 @@ public:
         
         if (tryMetal) {
 #ifdef JAENG_IOS
-            if (plugin.load((const char*)nullptr)) {
-                gfx = plugin.api;
+            gfx = std::make_shared<RendererAPI>();
+            if (LoadRenderer(gfx.get())) {
                 JAENG_LOG_INFO("Using Static Metal renderer (iOS).");
+            } else {
+                JAENG_LOG_ERROR("Failed to initialize Static Metal renderer (iOS).");
+                gfx.reset();
             }
 #elif defined(JAENG_MACOS)
             std::string name = "renderer_metal.dylib";

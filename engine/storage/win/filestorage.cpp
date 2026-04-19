@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
+#include <unistd.h>
+#include <stdio.h>
 
 #include "filestorage.h"
 #include "common/logging.h"
@@ -34,31 +36,28 @@ result<> FileManager::initialize() {
 #ifdef JAENG_LINUX
     inotifyFd_ = inotify_init1(IN_NONBLOCK);
     if (inotifyFd_ == -1) {
-        return { Error::fromMessage((int)error_code::platform_error, "Failed to initialize inotify") };
+        return Error::fromMessage(errno, "Failed to initialize inotify");
     }
     watcherThread_ = std::thread(&FileManager::watcherLoop, this);
 #endif
-    return {};
+    return result<>();
 }
 
 result<std::vector<uint8_t>> FileManager::load(const std::string& path) {
-    JAENG_ERROR_IF(!exists(path), error_code::no_resource, "[FileManager] No file on requested path");
     {
         std::lock_guard<std::mutex> lock(storageMutex_);
         if (auto it = memoryFiles.find(path); it != memoryFiles.end()) {
             return it->second;
         }
     }
-    // Fallback to disk
-    return loadFromDisk(path);
+    
+    auto data = loadFromDisk(path);
+    JAENG_ERROR_IF(data.empty(), error_code::no_resource, "[FileManager] Failed to load: " + path);
+
+    return data;
 }
 
 async::Future<result<std::vector<uint8_t>>> FileManager::loadAsync(const std::string& path) {
-    if (!exists(path)) {
-        async::Future<result<std::vector<uint8_t>>> f;
-        f.get_shared_state()->set_value(Error::fromMessage((int)error_code::no_resource, "[FileManager] No file on requested path"));
-        return f;
-    }
     {
         std::lock_guard<std::mutex> lock(storageMutex_);
         if (auto it = memoryFiles.find(path); it != memoryFiles.end()) {
@@ -76,7 +75,11 @@ async::Future<result<std::vector<uint8_t>>> FileManager::loadAsync(const std::st
     }
 
     return scheduler->enqueue_io([this, path]() -> result<std::vector<uint8_t>> {
-        return loadFromDisk(path);
+        auto data = loadFromDisk(path);
+        if (data.empty()) {
+            return Error::fromMessage((int)error_code::no_resource, "[FileManager] Failed to load: " + path);
+        }
+        return data;
     });
 }
 
@@ -90,12 +93,41 @@ void FileManager::registerMemoryFile(const std::string& path, const void* data, 
     }
 }
 
+static bool file_exists_primitive(const std::string& path) {
+    if (path.empty()) return false;
+    FILE* f = fopen(path.c_str(), "rb");
+    if (f) {
+        fclose(f);
+        return true;
+    }
+    return false;
+}
+
 bool FileManager::exists(const std::string& path) const {
     {
         std::lock_guard<std::mutex> lock(storageMutex_);
         if (memoryFiles.contains(path)) return true;
     }
-    return std::filesystem::exists(path);
+    
+    auto check_exists = [&](const std::string& p) {
+        if (exists_func_) return exists_func_(p);
+        return file_exists_primitive(p);
+    };
+
+    if (check_exists(path)) return true;
+    
+    if (resolver_) {
+        if (check_exists(resolver_(path))) return true;
+    }
+
+    if (!basePath_.empty()) {
+        std::string p = basePath_;
+        if (!p.empty() && p.back() != '/') p += "/";
+        p += path;
+        if (check_exists(p)) return true;
+    }
+    
+    return false;
 }
 
 std::unique_ptr<FileManager::SubscriptionT> FileManager::track(const std::string& path, std::function<void(const FileChangedEvent&)> callback) {
@@ -120,8 +152,67 @@ std::unique_ptr<FileManager::SubscriptionT> FileManager::track(const std::string
 }
 
 std::vector<uint8_t> FileManager::loadFromDisk(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), {});
+    std::string finalPath = path;
+    bool found = false;
+
+    auto check_exists = [&](const std::string& p) {
+        if (exists_func_) return exists_func_(p);
+        return file_exists_primitive(p);
+    };
+
+    if (resolver_) {
+        std::string resolved = resolver_(path);
+        if (!resolved.empty() && check_exists(resolved)) {
+            finalPath = resolved;
+            found = true;
+        }
+    }
+
+    if (!found && check_exists(path)) {
+        found = true;
+    }
+
+    if (!found && !basePath_.empty()) {
+        std::string p = basePath_;
+        if (!p.empty() && p.back() != '/') p += "/";
+        p += path;
+        if (check_exists(p)) {
+            finalPath = p;
+            found = true;
+        }
+    }
+    
+    if (!found) {
+        JAENG_LOG_ERROR("[FileManager] File not found in any location: {}", path);
+        return {};
+    }
+
+    JAENG_LOG_INFO("[FileManager] Opening: {}", finalPath);
+    
+    std::ifstream file(finalPath, std::ios::binary);
+    if (!file.is_open()) {
+        JAENG_LOG_ERROR("[FileManager] Failed to open for read: {}", finalPath);
+        return {};
+    }
+    
+    // Efficiently read file size and content
+    file.seekg(0, std::ios::end);
+    size_t size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    
+    if (size == 0) {
+        JAENG_LOG_WARN("[FileManager] File is empty: {}", finalPath);
+        return {};
+    }
+
+    std::vector<uint8_t> buffer(size);
+    if (file.read((char*)buffer.data(), size)) {
+        JAENG_LOG_DEBUG("[FileManager] Successfully loaded {} bytes from {}", size, finalPath);
+        return buffer;
+    }
+    
+    JAENG_LOG_ERROR("[FileManager] Read error on file: {}", finalPath);
+    return {};
 }
 
 void FileManager::watcherLoop() {

@@ -28,6 +28,7 @@ static KeyCode map_win32_key(WPARAM wParam) {
 Win32Platform::Win32Platform() {
     instance_ = this;
     fileManager_ = std::make_shared<FileManager>();
+    fileManager_->set_base_path(get_base_path());
 }
 
 Win32Platform::~Win32Platform() {
@@ -89,6 +90,23 @@ void Win32Platform::show_message_box(const std::string& title, const std::string
     std::wstring wtitle(title.begin(), title.end());
     std::wstring wcontent(content.begin(), content.end());
     MessageBoxW(NULL, wcontent.c_str(), wtitle.c_str(), uType);
+}
+
+std::string Win32Platform::get_base_path() const {
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string pathStr = path;
+    return pathStr.substr(0, pathStr.find_last_of("\\/"));
+}
+
+bool Win32Platform::file_exists(const std::string& path) const {
+    DWORD dwAttrib = GetFileAttributesA(path.c_str());
+    return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+std::string Win32Platform::resolve_path(const std::string& path) const {
+    if (!path.empty() && (path[0] == '/' || path[1] == ':')) return path;
+    return get_base_path() + "/" + path;
 }
 
 int Win32Platform::run(std::unique_ptr<IApplication> app) {

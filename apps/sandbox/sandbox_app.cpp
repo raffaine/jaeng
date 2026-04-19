@@ -333,8 +333,8 @@ static const char* materialFileData = R"({
     "metallic": 0.0
   },
   "constantBuffers": [
-    { "name": "CBObject", "size": 96, "binding": 0 },
-    { "name": "CBFrame", "size": 64, "binding": 1 }
+    { "name": "CBFrame", "size": 64, "binding": 1 },
+    { "name": "CBObject", "size": 96, "binding": 2 }
   ],
   "pipelineStates": {
     "blend": { "enabled": false, "srcFactor": "one", "dstFactor": "zero" },
@@ -386,14 +386,9 @@ bool SandboxApp::app_init() {
             return nullptr;
         });
 
-    BufferDesc cbDesc{ .size_bytes = 64, .usage = BufferUsage_Uniform };
-    cbFrame_ = renderer().create_buffer(&cbDesc, nullptr);
-    if (auto* scene = sceneManager().getScene("Test")) {
-        scene->setCbFrame(cbFrame_);
-    }
-
     startServer();
 
+    JAENG_LOG_INFO("[Sandbox] App Init Finished!");
     return true;
 }
 
@@ -675,8 +670,8 @@ static const char* uiMaterialFileData = R"({
     "metallic": 0.0
   },
   "constantBuffers": [
-    { "name": "CBObject", "size": 96, "binding": 0 },
-    { "name": "CBFrame", "size": 64, "binding": 1 }
+    { "name": "CBFrame", "size": 64, "binding": 1 },
+    { "name": "CBObject", "size": 96, "binding": 2 }
   ],
   "pipelineStates": {
     "blend": { "enabled": true, "srcFactor": "src_alpha", "dstFactor": "one_minus_src_alpha" },
@@ -720,10 +715,7 @@ jaeng::async::Task<void> SandboxApp::setupResourcesAsync() {
     }
     
     {
-        result<MaterialHandle> matHandle = co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
-        if (matHandle.hasValue()) {
-            uiMaterial_ = std::move(matHandle).logError().value();
-        }
+        co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
     }
 }
 
@@ -773,8 +765,9 @@ jaeng::async::Task<void> SandboxApp::setupEntitiesAsync() {
 
 void SandboxApp::setupUI() {
     auto quadMesh = meshSystem().loadMesh("/mem/quad-test.raw").orValue(0);
+    auto uiMaterial = materialSystem().createMaterial("/mem/ui-material.json").orValue(0);
 
-    UIBuilder builder(entityManager(), quadMesh, uiMaterial_, &renderer());
+    UIBuilder builder(entityManager(), quadMesh, uiMaterial, &renderer());
     builder.begin("Server_Panel")
         .withRect({300.0f, 100.0f}, {10.0f, 10.0f})
         .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
@@ -915,7 +908,6 @@ void SandboxApp::setupAnimation() {
         float midT = startT + (duration / 8.0f);
         moonTrack.scaleKeys.push_back({startT, {0.3f, 0.3f, 0.3f}});
         moonTrack.scaleKeys.push_back({midT,   {0.6f, 0.6f, 0.6f}});
-
         moonTrack.positionKeys.push_back({startT, {0.0f, 1.5f, 0.0f}});
         moonTrack.positionKeys.push_back({midT,   {0.0f, 2.5f, 0.0f}});
     }
@@ -928,7 +920,6 @@ void SandboxApp::setupAnimation() {
         float ratio = (float)i / 16.0f;
         moonTrack.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 8.0f * PI, glm::vec3(0, 1, 0)) });
     }
-
     testClip_->tracks.push_back(std::move(moonTrack));
 
     // Attach Animator to Entity 0 (The Sun)

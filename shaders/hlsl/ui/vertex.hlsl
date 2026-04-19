@@ -7,7 +7,7 @@ cbuffer PushConstants : register(b0, space0)
 
 cbuffer CBFrame : register(b1, space0)
 {
-#ifdef JAENG_VULKAN
+#if defined(JAENG_VULKAN)
     row_major float4x4 ViewProj;
 #else
     float4x4 ViewProj;
@@ -15,7 +15,7 @@ cbuffer CBFrame : register(b1, space0)
 };
 cbuffer CBObject : register(b2, space0)
 {
-#ifdef JAENG_VULKAN
+#if defined(JAENG_VULKAN)
     row_major float4x4 World;
     float4 MaterialColor;
     float4 MaterialUVRect;
@@ -40,9 +40,10 @@ struct VSOut {
 
 VSOut main(VSIn v) {
     VSOut o;
-#ifdef JAENG_VULKAN
+#if defined(JAENG_VULKAN)
     o.pos = mul(mul(float4(v.pos, 1.0), World), ViewProj);
 #else
+    // D3D12 and Metal/Apple use pre-multiplication for column-major matrices
     o.pos = mul(ViewProj, mul(World, float4(v.pos, 1.0)));
 #endif
     // Ignore vertex colors for UI, use white

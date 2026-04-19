@@ -55,3 +55,5 @@ public:
 };
 
 } // namespace jaeng::renderer::metal
+
+extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api);
