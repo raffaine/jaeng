@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.24)
 project(jaeng C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -44,11 +44,11 @@ if(APPLE)
       GIT_REPOSITORY https://github.com/Unbinilium/Metal.git
       GIT_TAG        main
       GIT_SHALLOW    ON
+      # We only need the headers. metal-cpp's root CMakeLists.txt is broken for iOS (requires AppKit).
+      # SOURCE_SUBDIR .nonsense tells FetchContent there is no CMakeLists.txt to run.
+      SOURCE_SUBDIR  .nonsense
   )
-  FetchContent_GetProperties(metal-cpp)
-  if(NOT metal-cpp_POPULATED)
-      FetchContent_Populate(metal-cpp)
-  endif()
+  FetchContent_MakeAvailable(metal-cpp)
 
   add_library(metal-cpp-headers INTERFACE)
   target_include_directories(metal-cpp-headers INTERFACE
