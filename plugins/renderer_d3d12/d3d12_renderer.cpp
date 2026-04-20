@@ -664,6 +664,14 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
         rt0.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
         rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
     }
+    else {
+        rt0.SrcBlend = D3D12_BLEND_ONE;
+        rt0.DestBlend = D3D12_BLEND_ZERO;
+        rt0.BlendOp = D3D12_BLEND_OP_ADD;
+        rt0.SrcBlendAlpha = D3D12_BLEND_ONE;
+        rt0.DestBlendAlpha = D3D12_BLEND_ZERO;
+        rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    }
 
     D3D12_RASTERIZER_DESC rast{};
     rast.FillMode = D3D12_FILL_MODE_SOLID;
@@ -677,6 +685,11 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
         depth.DepthFunc = ConvertDepthFunc(d->depth_stencil.depthFunc);
         depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     }
+    else {
+        depth.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        depth.DepthEnable = FALSE;
+    }
     depth.StencilEnable = FALSE; // d->depth_stencil.enableStencil;
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
@@ -687,7 +700,7 @@ PipelineHandle RendererD3D12::create_graphics_pipeline(const GraphicsPipelineDes
     pso.SampleMask       = UINT_MAX;
     pso.RasterizerState  = rast;
     pso.DepthStencilState= depth;
-    pso.DSVFormat        = (depthManager_ && d->depth_stencil.enableDepth) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
+    pso.DSVFormat        = (depthManager_) ? depthManager_->get_format() : DXGI_FORMAT_UNKNOWN;
     pso.InputLayout      = { vld->ieds.data(), (UINT)vld->ieds.size() };
 
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;

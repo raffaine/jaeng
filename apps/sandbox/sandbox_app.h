@@ -67,6 +67,7 @@ private:
     float simTime_ = 0.0f;
     jaeng::EntityID uiTextEntity_ = static_cast<jaeng::EntityID>(-1);
     jaeng::FontHandle defaultFont_ = 0;
+    jaeng::MaterialHandle uiMaterial_ = 0;
 
     // Animation Test
     std::unique_ptr<jaeng::AnimationClip> testClip_;

@@ -714,8 +714,9 @@ jaeng::async::Task<void> SandboxApp::setupResourcesAsync() {
         defaultFont_ = fontHandle.value();
     }
     
-    {
-        co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
+    result<MaterialHandle> matHandle = co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
+    if (auto matRes = std::move(matHandle).logError()) {
+        uiMaterial_ = matRes.value();
     }
 }
 
@@ -723,30 +724,26 @@ jaeng::async::Task<void> SandboxApp::setupEntitiesAsync() {
     testEntities_.resize(4);
     for(int i=0; i<4; ++i) testEntities_[i] = entityManager().createEntity();
 
-    {
-        result<MeshHandle> meshRes = co_await meshSystem().loadMeshAsync("/mem/mesh-test.raw");
-        if (meshRes.hasValue()) {
-            MeshHandle mh = std::move(meshRes).logError().value();
-            for (int i = 0; i < 4; i++) {
-                entityManager().addComponent<MeshComponent>(testEntities_[i]) = {mh};
-                BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
-                entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
-            }
+    result<MeshHandle> meshRes = co_await meshSystem().loadMeshAsync("/mem/mesh-test.raw");
+    if (meshRes.hasValue()) {
+        MeshHandle mh = std::move(meshRes).logError().value();
+        for (int i = 0; i < 4; i++) {
+            entityManager().addComponent<MeshComponent>(testEntities_[i]) = {mh};
+            BufferDesc cbDesc{ .size_bytes = 96, .usage = BufferUsage_Uniform };
+            entityManager().addComponent<BufferComponent>(testEntities_[i]) = {renderer().create_buffer(&cbDesc, nullptr)};
         }
     }
-    {
-        result<MaterialHandle> matRes = co_await materialSystem().createMaterialAsync("/mem/material-test.json");
-        if (matRes.hasValue()) {
-            MaterialHandle h = std::move(matRes).logError().value();
-            for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
+    result<MaterialHandle> matRes = co_await materialSystem().createMaterialAsync("/mem/material-test.json");
+    if (matRes.hasValue()) {
+        MaterialHandle h = std::move(matRes).logError().value();
+        for (int i = 0; i < 4; i++) entityManager().addComponent<MaterialComponent>(testEntities_[i]) = {h};
 
-            materialSub_ = fileManager().track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
-                if (e.change == FileChangedEvent::ChangeType::Modified) {
-                    JAENG_LOG_INFO("Hot-reloading material: {}", e.path);
-                    materialSystem().reloadMaterial(h).orElse([](auto) {});
-                }
-            });
-        }
+        materialSub_ = fileManager().track("/mem/material-test.json", [this, h](const FileChangedEvent& e) {
+            if (e.change == FileChangedEvent::ChangeType::Modified) {
+                JAENG_LOG_INFO("Hot-reloading material: {}", e.path);
+                materialSystem().reloadMaterial(h).orElse([](auto) {});
+            }
+        });
     }
 
     entityManager().addComponent<Transform>(testEntities_[0]) = Transform{ .position = { 0.0f,  0.0f, 0} }; // The Sun
@@ -765,9 +762,8 @@ jaeng::async::Task<void> SandboxApp::setupEntitiesAsync() {
 
 void SandboxApp::setupUI() {
     auto quadMesh = meshSystem().loadMesh("/mem/quad-test.raw").orValue(0);
-    auto uiMaterial = materialSystem().createMaterial("/mem/ui-material.json").orValue(0);
 
-    UIBuilder builder(entityManager(), quadMesh, uiMaterial, &renderer());
+    UIBuilder builder(entityManager(), quadMesh, uiMaterial_, &renderer());
     builder.begin("Server_Panel")
         .withRect({300.0f, 100.0f}, {10.0f, 10.0f})
         .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})

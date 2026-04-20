@@ -174,11 +174,6 @@ namespace jaeng::platform {
             if (dt > 0.25f) dt = 0.25f;
             accumulator += dt;
 
-            static uint32_t traceCount = 0;
-            if (traceCount++ % 120 == 0) {
-                JAENG_LOG_DEBUG("[Engine] Sim Loop Trace: dt={}, acc={}, fixedDt={}", dt, accumulator, fixedDt_);
-            }
-
             bool stateChanged = false;
 
             // Run deterministic simulation steps

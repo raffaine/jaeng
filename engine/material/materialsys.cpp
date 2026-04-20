@@ -297,6 +297,12 @@ result<MaterialSystem::ReflectionData> MaterialSystem::_loadReflection(IFileMana
         ad.offset = attr["offset"].get<uint32_t>();
         ad.location = static_cast<uint32_t>(rd.attributes.size());
         std::string sem = attr["semantic"].get<std::string>();
+
+        if (sem == "POSITION") ad.format = VertexAttributeFormat::Float3;
+        else if (sem == "COLOR") ad.format = VertexAttributeFormat::Float3;
+        else if (sem == "TEXCOORD") ad.format = VertexAttributeFormat::Float2;
+        else ad.format = VertexAttributeFormat::Float4;
+
         std::strncpy(ad.semanticName, sem.c_str(), sizeof(ad.semanticName)-1);
         rd.attributes.push_back(ad);
         rd.semantics.push_back(sem);
