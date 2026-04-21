@@ -359,7 +359,7 @@ SandboxApp::SandboxApp(IPlatform& platform)
 bool SandboxApp::app_init() {
     setupAsync();
 
-    const auto aspect = 1280.f/720.f;
+    const auto aspect = (float)getConfig().width / (float)getConfig().height;
     EntityID camEntity = entityManager().createEntity();
     auto& t = entityManager().addComponent<Transform>(camEntity);
     t.position = {3.0f, 3.0f, 3.0f}; // Restore original camera position
@@ -398,21 +398,20 @@ void SandboxApp::app_shutdown() {
 
 void SandboxApp::tick(float dt) {
     simTime_ += dt;
-    static uint32_t frameCount = 0;
-    if (frameCount++ % 60 == 0) {
-        JAENG_LOG_DEBUG("[Sandbox] tick executed, simTime={}", simTime_);
-    }
+
+    bool isLeftDown = inputState_.mouseButtons[0] || inputState_.mouseClicked[0];
+    inputState_.mouseClicked[0] = false; // consume fast click for this frame
 
     // 1) Update UI Layout
     UILayoutSystem::update(entityManager(), static_cast<float>(getConfig().width), static_cast<float>(getConfig().height));
 
     // 2) Process UI Interaction
     bool inputConsumed = false;
-    UIInteractionSystem::update(entityManager(), static_cast<float>(inputState_.mousePos.x), static_cast<float>(inputState_.mousePos.y), inputState_.mouseButtons[0], inputConsumed);
+    UIInteractionSystem::update(entityManager(), static_cast<float>(inputState_.mousePos.x), static_cast<float>(inputState_.mousePos.y), isLeftDown, inputConsumed);
 
     if (!inputConsumed) {
         updateCamera(dt);
-        handleSelection();
+        handleSelection(isLeftDown);
     } else {
         isLooking_ = false; // Reset drag if interacting with UI
     }
@@ -514,8 +513,8 @@ void SandboxApp::updateCamera(float dt) {
     }
 }
 
-void SandboxApp::handleSelection() {
-    if (inputState_.mouseButtons[0] && !isLooking_) {
+void SandboxApp::handleSelection(bool isLeftDown) {
+    if (isLeftDown && !isLooking_) {
         auto ray = getRayFromMouse();
         float minT = std::numeric_limits<float>::max();
         EntityID bestEntity = static_cast<EntityID>(-1);
@@ -628,17 +627,41 @@ void SandboxApp::app_on_event(const Event& ev) {
             inputState_.mousePos = {ev.mouse.x, ev.mouse.y};
             break;
         case Event::Type::MouseDown:
-            if (ev.mouse.button == 272) inputState_.mouseButtons[0] = true; // Left
+            inputState_.lastMousePos = inputState_.mousePos;
+            inputState_.mousePos = {ev.mouse.x, ev.mouse.y};
+            if (ev.mouse.button == 272) {
+                inputState_.mouseButtons[0] = true; // Left
+                inputState_.mouseClicked[0] = true;
+            }
             if (ev.mouse.button == 273) inputState_.mouseButtons[2] = true; // Right
             inputState_.lastLookMousePos = inputState_.mousePos;
             break;
         case Event::Type::MouseUp:
+            inputState_.lastMousePos = inputState_.mousePos;
+            inputState_.mousePos = {ev.mouse.x, ev.mouse.y};
             if (ev.mouse.button == 272) inputState_.mouseButtons[0] = false;
             if (ev.mouse.button == 273) inputState_.mouseButtons[2] = false;
             break;
         case Event::Type::MouseScroll:
             inputState_.mouseScroll += ev.scroll.delta;
             break;
+        case Event::Type::WindowResize: {
+            Scene* scene = sceneManager().getScene("Test");
+            if (scene) {
+                if (auto* cam = scene->getCamera()) {
+                    auto* ecs = &entityManager();
+                    // We need to find the camera entity or the component directly
+                    // PerspectiveCamera has the entity ID internally.
+                    // But we can also just iterate all CameraComponents since we usually only have one.
+                    for (auto e : ecs->getAllEntities<CameraComponent>()) {
+                        if (auto* c = ecs->getComponent<CameraComponent>(e)) {
+                            c->aspect = (float)ev.resize.width / (float)ev.resize.height;
+                        }
+                    }
+                }
+            }
+            break;
+        }
         default:
             break;
     }

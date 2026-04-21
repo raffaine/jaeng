@@ -109,8 +109,17 @@ bool MacOSPlatform::poll_events() {
             if (eventCallback_) {
                 Event ev{};
                 NSWindow* window = [event window];
+                if (!window && [NSApp mainWindow]) window = [NSApp mainWindow];
+                
                 if (window) {
-                    NSPoint locationInWindow = [event locationInWindow];
+                    NSPoint locationInWindow;
+                    if ([event window]) {
+                        locationInWindow = [event locationInWindow];
+                    } else {
+                        NSPoint screenLoc = [NSEvent mouseLocation];
+                        locationInWindow = [window convertPointFromScreen:screenLoc];
+                    }
+                    
                     CGFloat height = [[window contentView] bounds].size.height;
                     // Flip Y to top-left origin
                     int32_t x = (int32_t)locationInWindow.x;

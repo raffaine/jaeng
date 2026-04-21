@@ -45,6 +45,7 @@ private:
         jaeng::platform::MousePos lastMousePos;
         jaeng::platform::MousePos lastLookMousePos;
         bool mouseButtons[3] = {false}; // 0: Left, 1: Middle, 2: Right
+        bool mouseClicked[3] = {false}; // Tracks fast clicks across frames
         float mouseScroll = 0.0f;
     } inputState_;
 
@@ -56,7 +57,7 @@ private:
     bool isLooking_ = false;
 
     void updateCamera(float dt);
-    void handleSelection();
+    void handleSelection(bool isLeftDown);
     jaeng::math::Ray getRayFromMouse() const;
 
     // Test resources

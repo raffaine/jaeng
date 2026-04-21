@@ -67,6 +67,8 @@ namespace jaeng::platform {
 
     void IApplication::on_event(const Event& ev) {
         if (ev.type == Event::Type::WindowResize) {
+            config_.width = ev.resize.width;
+            config_.height = ev.resize.height;
             if (swap_ > 0 && renderer_.gfx) {
                 renderer_.queue_resize(swap_, ev.resize.width, ev.resize.height);
             }
@@ -185,12 +187,8 @@ namespace jaeng::platform {
 
             // If the state changed, extract it and hand it off to the render thread
             if (stateChanged) {
-                static uint32_t simFrameCount = 0;
-                if (simFrameCount++ % 60 == 0) {
-                    JAENG_LOG_DEBUG("[Engine] Sim frame produced, notifying render thread");
-                }
-                
                 auto& producerQueue = stateBuffer_.get_producer();
+
                 extract_render_state(producerQueue);
                 stateBuffer_.push_producer();
 

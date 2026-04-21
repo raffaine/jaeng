@@ -12,6 +12,7 @@ static UIWindow* g_window = nil;
 static void* g_metalLayer = nullptr;
 static uint32_t g_cachedWidth = 0;
 static uint32_t g_cachedHeight = 0;
+static float g_cachedScale = 1.0f;
 static std::atomic<bool> g_engineInitialized{false};
 static std::atomic<bool> g_engineInitStarted{false};
 static std::atomic<bool> g_isForeground{false};
@@ -28,12 +29,39 @@ static std::atomic<bool> g_isForeground{false};
     return YES;
 }
 
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    
+    CGFloat scale = self.window.screen.nativeScale;
+    g_cachedScale = (float)scale;
+    uint32_t w = (uint32_t)(self.bounds.size.width * scale);
+    uint32_t h = (uint32_t)(self.bounds.size.height * scale);
+    
+    if (w != g_cachedWidth || h != g_cachedHeight) {
+        g_cachedWidth = w;
+        g_cachedHeight = h;
+        
+        CAMetalLayer* metalLayer = (CAMetalLayer*)self.layer;
+        metalLayer.drawableSize = CGSizeMake(w, h);
+        
+        if (g_app) {
+            jaeng::platform::Event ev{};
+            ev.type = jaeng::platform::Event::Type::WindowResize;
+            ev.resize.width = w;
+            ev.resize.height = h;
+            g_app->on_event(ev);
+        }
+        
+        JAENG_LOG_INFO("[iOS] View resized: {}x{}", w, h);
+    }
+}
+
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
     UITouch* touch = [touches anyObject];
     CGPoint loc = [touch locationInView:self];
-    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
-    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    int32_t x = (int32_t)(loc.x * g_cachedScale);
+    int32_t y = (int32_t)(loc.y * g_cachedScale);
     
     auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
     input.set_mouse_pos(x, y);
@@ -50,8 +78,8 @@ static std::atomic<bool> g_isForeground{false};
     if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
     UITouch* touch = [touches anyObject];
     CGPoint loc = [touch locationInView:self];
-    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
-    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    int32_t x = (int32_t)(loc.x * g_cachedScale);
+    int32_t y = (int32_t)(loc.y * g_cachedScale);
     
     auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
     input.set_mouse_pos(x, y);
@@ -67,8 +95,8 @@ static std::atomic<bool> g_isForeground{false};
     if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
     UITouch* touch = [touches anyObject];
     CGPoint loc = [touch locationInView:self];
-    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
-    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    int32_t x = (int32_t)(loc.x * g_cachedScale);
+    int32_t y = (int32_t)(loc.y * g_cachedScale);
     
     auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
     input.set_mouse_pos(x, y);
