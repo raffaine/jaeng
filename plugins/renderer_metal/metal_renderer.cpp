@@ -13,6 +13,17 @@ constexpr uint32_t MAX_BUFFERS = 4096;
 constexpr uint32_t MAX_TEXTURES = 31;
 constexpr uint32_t MAX_SAMPLERS = 16;
 
+static MTL::VertexFormat to_metal_vertex_format(VertexAttributeFormat format) {
+    switch (format) {
+        case VertexAttributeFormat::Float:  return MTL::VertexFormatFloat;
+        case VertexAttributeFormat::Float2: return MTL::VertexFormatFloat2;
+        case VertexAttributeFormat::Float3: return MTL::VertexFormatFloat3;
+        case VertexAttributeFormat::Float4: return MTL::VertexFormatFloat4;
+        case VertexAttributeFormat::UByte4: return MTL::VertexFormatUChar4Normalized;
+        default: return MTL::VertexFormatInvalid;
+    }
+}
+
 struct MetalSwapchain {
     Extent2D size;
     UniqueHandle<MTL::Texture> depthTexture;
@@ -331,7 +342,7 @@ VertexLayoutHandle MetalRenderer::create_vertex_layout(const VertexLayoutDesc* d
         auto* mtlAttr = mtlDesc->attributes()->object(attr.location);
         mtlAttr->setOffset(attr.offset);
         mtlAttr->setBufferIndex(30); 
-        mtlAttr->setFormat(attr.location == 2 ? MTL::VertexFormatFloat2 : MTL::VertexFormatFloat3);
+        mtlAttr->setFormat(to_metal_vertex_format(attr.format));
     }
     mtlDesc->layouts()->object(30)->setStride(desc->stride);
     g_ctx->vertexLayouts.emplace_back(mtlDesc);
