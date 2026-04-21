@@ -92,12 +92,18 @@ enum class MessageBoxType {
     Error
 };
 
+enum class InputMode {
+    Mouse,
+    Touch
+};
+
 // Configuration for the engine bootstrapper
 struct AppConfig {
     std::string title = "Jaeng Application";
     uint32_t width = 1280;
     uint32_t height = 720;
     GfxBackend backend = GfxBackend::Vulkan;
+    InputMode inputMode = InputMode::Mouse;
 };
 
 class IPlatform;
@@ -119,6 +125,9 @@ public:
     bool process_main_thread_tasks();
     async::TaskScheduler& taskScheduler() { return *taskScheduler_; }
     void set_platform_drawable(void* drawable) { if (renderer_.gfx && renderer_.gfx->set_platform_drawable) renderer_.gfx->set_platform_drawable(drawable); }
+
+    IPlatform& platform() { return platform_; }
+    const AppConfig& getConfig() const { return config_; }
 
 protected:
 
@@ -146,9 +155,7 @@ protected:
     IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
-    IPlatform& platform() { return platform_; }
     IWindow& window() { return *window_; }
-    const AppConfig& getConfig() const { return config_; }
 
 private:
     void simulation_loop();

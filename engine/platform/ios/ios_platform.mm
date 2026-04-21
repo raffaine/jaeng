@@ -23,6 +23,130 @@ static std::atomic<bool> g_isForeground{false};
 + (Class)layerClass {
     return [CAMetalLayer class];
 }
+
+- (BOOL)canBecomeFirstResponder {
+    return YES;
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
+    UITouch* touch = [touches anyObject];
+    CGPoint loc = [touch locationInView:self];
+    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
+    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    
+    auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
+    input.set_mouse_pos(x, y);
+    
+    jaeng::platform::Event ev{};
+    ev.type = jaeng::platform::Event::Type::MouseDown;
+    ev.mouse.x = x;
+    ev.mouse.y = y;
+    ev.mouse.button = 272; // Left
+    g_app->on_event(ev);
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
+    UITouch* touch = [touches anyObject];
+    CGPoint loc = [touch locationInView:self];
+    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
+    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    
+    auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
+    input.set_mouse_pos(x, y);
+    
+    jaeng::platform::Event ev{};
+    ev.type = jaeng::platform::Event::Type::MouseMove;
+    ev.mouse.x = x;
+    ev.mouse.y = y;
+    g_app->on_event(ev);
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!g_app || g_app->getConfig().inputMode != jaeng::platform::InputMode::Mouse) return;
+    UITouch* touch = [touches anyObject];
+    CGPoint loc = [touch locationInView:self];
+    int32_t x = (int32_t)(loc.x * self.contentScaleFactor);
+    int32_t y = (int32_t)(loc.y * self.contentScaleFactor);
+    
+    auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
+    input.set_mouse_pos(x, y);
+    
+    jaeng::platform::Event ev{};
+    ev.type = jaeng::platform::Event::Type::MouseUp;
+    ev.mouse.x = x;
+    ev.mouse.y = y;
+    ev.mouse.button = 272; // Left
+    g_app->on_event(ev);
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self touchesEnded:touches withEvent:event];
+}
+
+static jaeng::platform::KeyCode map_ios_key(UIKeyboardHIDUsage keyCode) {
+    switch (keyCode) {
+        case UIKeyboardHIDUsageKeyboardEscape: return jaeng::platform::KeyCode::Escape;
+        case UIKeyboardHIDUsageKeyboardSpacebar: return jaeng::platform::KeyCode::Space;
+        case UIKeyboardHIDUsageKeyboardW: return jaeng::platform::KeyCode::W;
+        case UIKeyboardHIDUsageKeyboardA: return jaeng::platform::KeyCode::A;
+        case UIKeyboardHIDUsageKeyboardS: return jaeng::platform::KeyCode::S;
+        case UIKeyboardHIDUsageKeyboardD: return jaeng::platform::KeyCode::D;
+        case UIKeyboardHIDUsageKeyboardE: return jaeng::platform::KeyCode::E;
+        case UIKeyboardHIDUsageKeyboardQ: return jaeng::platform::KeyCode::Q;
+        case UIKeyboardHIDUsageKeyboardEqualSign: return jaeng::platform::KeyCode::Plus;
+        case UIKeyboardHIDUsageKeyboardHyphen: return jaeng::platform::KeyCode::Minus;
+        default: return jaeng::platform::KeyCode::Unknown;
+    }
+}
+
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    if (!g_app) {
+        [super pressesBegan:presses withEvent:event];
+        return;
+    }
+    for (UIPress* press in presses) {
+        if (press.key) {
+            jaeng::platform::KeyCode code = map_ios_key(press.key.keyCode);
+            if (code != jaeng::platform::KeyCode::Unknown) {
+                auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
+                input.set_key_state(code, true);
+                
+                jaeng::platform::Event ev{};
+                ev.type = jaeng::platform::Event::Type::KeyDown;
+                ev.key.code = code;
+                g_app->on_event(ev);
+            }
+        }
+    }
+}
+
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    if (!g_app) {
+        [super pressesEnded:presses withEvent:event];
+        return;
+    }
+    for (UIPress* press in presses) {
+        if (press.key) {
+            jaeng::platform::KeyCode code = map_ios_key(press.key.keyCode);
+            if (code != jaeng::platform::KeyCode::Unknown) {
+                auto& input = static_cast<jaeng::platform::IOSInput&>(g_app->platform().get_input());
+                input.set_key_state(code, false);
+                
+                jaeng::platform::Event ev{};
+                ev.type = jaeng::platform::Event::Type::KeyUp;
+                ev.key.code = code;
+                g_app->on_event(ev);
+            }
+        }
+    }
+}
+
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    [self pressesEnded:presses withEvent:event];
+}
+
 @end
 
 @interface IOSSceneDelegate : UIResponder <UIWindowSceneDelegate>
@@ -79,6 +203,7 @@ static id<MTLDevice> g_mainDevice = nil;
     vc.view = view;
     self.window.rootViewController = vc;
     [self.window makeKeyAndVisible];
+    [view becomeFirstResponder];
     g_window = self.window;
     
     JAENG_LOG_INFO("[iOS] Scene connected, size: {}x{}, Metal device: {}", 
@@ -201,9 +326,10 @@ bool IOSPlatform::is_foreground() const { return g_isForeground.load(std::memory
 
 int IOSPlatform::run(std::unique_ptr<IApplication> app) {
     g_app = std::move(app);
-    return UIApplicationMain(0, nil, nil, NSStringFromClass([IOSAppDelegate class]));
+    return UIApplicationMain(0, nullptr, nil, NSStringFromClass([IOSAppDelegate class]));
 }
 
 std::unique_ptr<IPlatform> create_platform() { return std::make_unique<IOSPlatform>(); }
 
 } // namespace jaeng::platform
+

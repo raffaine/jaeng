@@ -35,6 +35,22 @@
 
 namespace jaeng::platform {
 
+static KeyCode map_macos_key(unsigned short keyCode) {
+    switch (keyCode) {
+        case 53: return KeyCode::Escape;
+        case 49: return KeyCode::Space;
+        case 13: return KeyCode::W;
+        case 0:  return KeyCode::A;
+        case 1:  return KeyCode::S;
+        case 2:  return KeyCode::D;
+        case 14: return KeyCode::E;
+        case 12: return KeyCode::Q;
+        case 24: return KeyCode::Plus;
+        case 27: return KeyCode::Minus;
+        default: return KeyCode::Unknown;
+    }
+}
+
 MacOSPlatform* MacOSPlatform::instance_ = nullptr;
 
 MacOSPlatform::MacOSPlatform() {
@@ -92,19 +108,75 @@ bool MacOSPlatform::poll_events() {
             
             if (eventCallback_) {
                 Event ev{};
-                switch ([event type]) {
-                    case NSEventTypeKeyDown:
-                        // Map keys here
-                        break;
-                    case NSEventTypeLeftMouseDown:
-                        ev.type = Event::Type::MouseDown;
-                        ev.mouse.button = 272; // Left
-                        ev.mouse.x = (int32_t)[NSEvent mouseLocation].x;
-                        ev.mouse.y = (int32_t)[NSEvent mouseLocation].y;
-                        eventCallback_(ev);
-                        break;
-                    default:
-                        break;
+                NSWindow* window = [event window];
+                if (window) {
+                    NSPoint locationInWindow = [event locationInWindow];
+                    CGFloat height = [[window contentView] bounds].size.height;
+                    // Flip Y to top-left origin
+                    int32_t x = (int32_t)locationInWindow.x;
+                    int32_t y = (int32_t)(height - locationInWindow.y);
+                    
+                    switch ([event type]) {
+                        case NSEventTypeKeyDown: {
+                            if (![event isARepeat]) {
+                                KeyCode code = map_macos_key([event keyCode]);
+                                input_.set_key_state(code, true);
+                                ev.type = Event::Type::KeyDown;
+                                ev.key.code = code;
+                                eventCallback_(ev);
+                            }
+                            break;
+                        }
+                        case NSEventTypeKeyUp: {
+                            KeyCode code = map_macos_key([event keyCode]);
+                            input_.set_key_state(code, false);
+                            ev.type = Event::Type::KeyUp;
+                            ev.key.code = code;
+                            eventCallback_(ev);
+                            break;
+                        }
+                        case NSEventTypeMouseMoved:
+                        case NSEventTypeLeftMouseDragged:
+                        case NSEventTypeRightMouseDragged:
+                        case NSEventTypeOtherMouseDragged: {
+                            input_.set_mouse_pos(x, y);
+                            ev.type = Event::Type::MouseMove;
+                            ev.mouse.x = x;
+                            ev.mouse.y = y;
+                            eventCallback_(ev);
+                            break;
+                        }
+                        case NSEventTypeLeftMouseDown:
+                        case NSEventTypeRightMouseDown:
+                        case NSEventTypeOtherMouseDown: {
+                            ev.type = Event::Type::MouseDown;
+                            ev.mouse.x = x;
+                            ev.mouse.y = y;
+                            ev.mouse.button = ([event type] == NSEventTypeLeftMouseDown) ? 272 :
+                                              ([event type] == NSEventTypeRightMouseDown) ? 273 : 274;
+                            eventCallback_(ev);
+                            break;
+                        }
+                        case NSEventTypeLeftMouseUp:
+                        case NSEventTypeRightMouseUp:
+                        case NSEventTypeOtherMouseUp: {
+                            ev.type = Event::Type::MouseUp;
+                            ev.mouse.x = x;
+                            ev.mouse.y = y;
+                            ev.mouse.button = ([event type] == NSEventTypeLeftMouseUp) ? 272 :
+                                              ([event type] == NSEventTypeRightMouseUp) ? 273 : 274;
+                            eventCallback_(ev);
+                            break;
+                        }
+                        case NSEventTypeScrollWheel: {
+                            ev.type = Event::Type::MouseScroll;
+                            ev.scroll.delta = (float)[event scrollingDeltaY];
+                            eventCallback_(ev);
+                            break;
+                        }
+                        default:
+                            break;
+                    }
                 }
             }
         }
