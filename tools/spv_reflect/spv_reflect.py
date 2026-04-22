@@ -45,7 +45,8 @@ for inp in inputs:
 
     attributes.append({
         "semantic": semantic,
-        "offset": stride
+        "offset": stride,
+        "location": inp.get("location", 0)
     })
 
     if typ == "vec4":

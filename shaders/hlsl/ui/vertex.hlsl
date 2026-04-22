@@ -46,8 +46,8 @@ VSOut main(VSIn v) {
     // D3D12 and Metal/Apple use pre-multiplication for column-major matrices
     o.pos = mul(ViewProj, mul(World, float4(v.pos, 1.0)));
 #endif
-    // Ignore vertex colors for UI, use white
-    o.col = float4(1.0, 1.0, 1.0, 1.0) * MaterialColor;
+    // Use vertex color so it's not optimized out of the SPIR-V signature
+    o.col = float4(v.col, 1.0) * MaterialColor;
     o.uv = v.uv * MaterialUVRect.zw + MaterialUVRect.xy;
     return o;
 }

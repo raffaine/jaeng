@@ -295,7 +295,11 @@ result<MaterialSystem::ReflectionData> MaterialSystem::_loadReflection(IFileMana
     for (auto& attr : j["attributes"]) {
         VertexAttributeDesc ad{};
         ad.offset = attr["offset"].get<uint32_t>();
-        ad.location = static_cast<uint32_t>(rd.attributes.size());
+        if (attr.contains("location")) {
+            ad.location = attr["location"].get<uint32_t>();
+        } else {
+            ad.location = static_cast<uint32_t>(rd.attributes.size());
+        }
         std::string sem = attr["semantic"].get<std::string>();
 
         if (sem == "POSITION") ad.format = VertexAttributeFormat::Float3;
