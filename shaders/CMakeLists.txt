@@ -56,7 +56,8 @@ foreach(PIPELINE ${PIPELINES})
                 COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main ${PIXEL_SHADER} -o ${PIXEL_SPV}
                 COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${VERTEX_SPV} --output ${VERTEX_MSL}
                 COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${PIXEL_SPV} --output ${PIXEL_MSL}
-                COMMENT "Pipeline ${PIPELINE}: Compiling and Transpiling to MSL"
+                COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/spv_reflect/spv_reflect.py ${SPIRV_CROSS_EXECUTABLE} ${VERTEX_SPV} ${PIXEL_SPV} ${PIPELINE} ${REFLECT_OUT}
+                COMMENT "Pipeline ${PIPELINE}: Compiling and Transpiling to MSL, generating reflection"
             )
         elseif(DXC_EXECUTABLE)
             add_custom_command(TARGET compile_shaders POST_BUILD
