@@ -22,8 +22,6 @@ namespace jaeng::platform {
         JAENG_LOG_INFO("[Engine] init: Setting up scheduler...");
         async::set_current_scheduler(taskScheduler_.get());
 
-        platform_.set_event_callback([this](const Event& ev) { this->on_event(ev); });
-
         JAENG_LOG_INFO("[Engine] init: Creating window...");
         auto windowResult = platform_.create_window({config_.title, config_.width, config_.height});
         if (windowResult.hasError()) return false;
@@ -52,6 +50,9 @@ namespace jaeng::platform {
         matSys_  = std::make_shared<MaterialSystem>(fileMan, renderer_.gfx);
         meshSys_ = std::make_shared<MeshSystem>(fileMan, renderer_.gfx);
         sceneMan_ = std::make_unique<SceneManager>(meshSys_, matSys_, renderer_.gfx);
+
+        // Register event callback after all subsystems are initialized to avoid crashes on early events
+        platform_.set_event_callback([this](const Event& ev) { this->on_event(ev); });
 
         JAENG_LOG_INFO("[Engine] init: Calling app_init...");
         bool ok = app_init();
