@@ -231,8 +231,8 @@ void vk_cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHandle h, uint6
     }
     auto& b = it->second;
 
-    // slot 0 maps to register b1 (index 1 in set 0), slot 1 maps to register b2 (index 2 in set 0)
-    g_ctx->dynamicOffsets[slot + 1] = b.dynamicOffset + (uint32_t)offset;
+    // slot 0 maps to register b5 (index 5 in set 0), slot 1 maps to register b6 (index 6 in set 0)
+    g_ctx->dynamicOffsets[slot + 5] = b.dynamicOffset + (uint32_t)offset;
 
     // Re-bind Set 0 with the updated dynamic offsets for the next draw call
     vk::DescriptorSet set0 = g_ctx->descriptors.getSet(0);

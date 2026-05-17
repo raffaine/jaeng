@@ -343,9 +343,9 @@ static const char* materialFileData = R"({
   }
 })";
 
-SandboxApp::SandboxApp(IPlatform& platform) 
+SandboxApp::SandboxApp(IPlatform& platform)
     : IApplication(platform, AppConfig{
-        "jaeng Sandbox", 1280, 720, 
+        "jaeng Sandbox", 1280, 720,
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
         GfxBackend::D3D12
 #elif defined(JAENG_MACOS) || defined(JAENG_IOS)
@@ -353,9 +353,10 @@ SandboxApp::SandboxApp(IPlatform& platform)
 #else
         GfxBackend::Vulkan
 #endif
-    }) 
-{}
-
+    })
+{
+    stateMachine_ = std::make_unique<jaeng::AppStateMachine>(*this);
+}
 bool SandboxApp::app_init() {
     setupAsync();
 
@@ -397,10 +398,15 @@ void SandboxApp::app_shutdown() {
 }
 
 void SandboxApp::tick(float dt) {
+    if (stateMachine_) stateMachine_->tick(dt);
+    
     simTime_ += dt;
 
     bool isLeftDown = inputState_.mouseButtons[0] || inputState_.mouseClicked[0];
     inputState_.mouseClicked[0] = false; // consume fast click for this frame
+
+    // 0) Process UI Tweens
+    UITweenSystem::update(entityManager(), dt);
 
     // 1) Update UI Layout
     UILayoutSystem::update(entityManager(), static_cast<float>(getConfig().width), static_cast<float>(getConfig().height));
@@ -593,6 +599,8 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
 }
 
 void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewState, RenderGraph& graph, TextureHandle backbuffer, TextureHandle depthbuffer) {
+    if (stateMachine_) stateMachine_->render(inQueue, hasNewState, graph, backbuffer, depthbuffer);
+
     Scene* scene = sceneManager().getScene("Test");
     if (!scene) return;
 
@@ -886,6 +894,40 @@ void SandboxApp::setupUI() {
                 .withPivot({ 0.0f, 0.5f })
                 .withZIndex(30)
                 .withText("No Selection", 32.0f, defaultFont_)
+            .end()
+        .end()
+    .end();
+
+    builder.begin("List_Test_Panel")
+        .withRect({ 250.0f, 300.0f }, { 10.0f, 150.0f })
+        .withAnchors({ 0.0f, 0.5f }, { 0.0f, 0.5f })
+        .withPivot({ 0.0f, 0.5f })
+        .withZIndex(10)
+        .withColor({ 0.1f, 0.15f, 0.2f, 0.0f }) // Start invisible
+        .withTween(UITween::Property::ColorAlpha, 0.0f, 0.9f, 2.0f, UITween::Easing::EaseInOut, true, true) // Ping-pong fade
+        .withVerticalLayout(10.0f, 10.0f) // Spacing 10, padding 10
+        .begin("Item_1")
+            .withRect({ 230.0f, 40.0f })
+            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
+            .begin("Text_1")
+                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Lobby 1: King Table", 20.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Item_2")
+            .withRect({ 230.0f, 40.0f })
+            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
+            .begin("Text_2")
+                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Lobby 2: Empty", 20.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Item_3")
+            .withRect({ 230.0f, 40.0f })
+            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
+            .begin("Text_3")
+                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Lobby 3: Full", 20.0f, defaultFont_)
             .end()
         .end()
     .end();

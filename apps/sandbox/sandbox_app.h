@@ -6,6 +6,7 @@
 #include "common/async/awaiters.h"
 #include "animation/animation.h"
 #include "material/imaterialsys.h"
+#include "common/app_state.h"
 
 #include <vector>
 #include <memory>
@@ -78,4 +79,6 @@ private:
     std::string serverTime_ = "Connecting...";
     float serverPollTimer_ = 0.0f;
     jaeng::EntityID serverTextEntity_ = static_cast<jaeng::EntityID>(-1);
+
+    std::unique_ptr<jaeng::AppStateMachine> stateMachine_;
 };

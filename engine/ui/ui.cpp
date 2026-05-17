@@ -60,11 +60,32 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
         // Push children
         auto* rel = ecs.getComponent<Relationship>(curr.entity);
         if (rel) {
+            auto* vLayout = ecs.getComponent<UIVerticalLayout>(curr.entity);
+            float currentY = vLayout ? -vLayout->padding : 0.0f; // Start at top, going down
+
             EntityID child = rel->firstChild;
+            std::vector<EntityID> childrenToPush;
             while (child != static_cast<EntityID>(-1)) {
-                workStack.push_back({child, rt->worldRect});
+                childrenToPush.push_back(child);
                 auto* childRel = ecs.getComponent<Relationship>(child);
                 child = childRel ? childRel->nextSibling : static_cast<EntityID>(-1);
+            }
+
+            if (vLayout) {
+                for (EntityID c : childrenToPush) {
+                    auto* childRt = ecs.getComponent<RectTransform>(c);
+                    if (childRt) {
+                        childRt->anchorMin.y = 1.0f;
+                        childRt->anchorMax.y = 1.0f;
+                        childRt->pivot.y = 1.0f;
+                        childRt->position.y = currentY;
+                        currentY -= (childRt->size.y + vLayout->spacing);
+                    }
+                }
+            }
+
+            for (auto it = childrenToPush.rbegin(); it != childrenToPush.rend(); ++it) {
+                workStack.push_back({*it, rt->worldRect});
             }
         }
     }
@@ -134,6 +155,59 @@ void UIInteractionSystem::update(EntityManager& ecs, float mouseX, float mouseY,
             if (el.interactable->onHover) el.interactable->onHover(true);
         } else if (wasHovered && !el.interactable->isHovered) {
             if (el.interactable->onHover) el.interactable->onHover(false);
+        }
+    }
+}
+
+void UITweenSystem::update(EntityManager& ecs, float dt) {
+    const auto& entities = ecs.getAllEntities<UITween>();
+    for (auto e : entities) {
+        auto* tween = ecs.getComponent<UITween>(e);
+        if (!tween || !tween->isPlaying) continue;
+
+        if (tween->forwards) {
+            tween->currentTime += dt;
+            if (tween->currentTime >= tween->duration) {
+                tween->currentTime = tween->duration;
+                if (tween->isPingPong) {
+                    tween->forwards = false;
+                } else if (tween->isLooping) {
+                    tween->currentTime = 0.0f;
+                } else {
+                    tween->isPlaying = false;
+                }
+            }
+        } else {
+            tween->currentTime -= dt;
+            if (tween->currentTime <= 0.0f) {
+                tween->currentTime = 0.0f;
+                tween->forwards = true;
+                if (!tween->isLooping && !tween->isPingPong) {
+                    tween->isPlaying = false;
+                }
+            }
+        }
+
+        float t = tween->duration > 0.0f ? tween->currentTime / tween->duration : 1.0f;
+        if (tween->easing == UITween::Easing::EaseInOut) {
+            t = t < 0.5f ? 2.0f * t * t : -1.0f + (4.0f - 2.0f * t) * t;
+        }
+
+        float val = tween->startValue + (tween->endValue - tween->startValue) * t;
+
+        if (tween->targetProperty == UITween::Property::PositionX || tween->targetProperty == UITween::Property::PositionY || tween->targetProperty == UITween::Property::SizeX || tween->targetProperty == UITween::Property::SizeY) {
+            auto* rt = ecs.getComponent<RectTransform>(e);
+            if (rt) {
+                if (tween->targetProperty == UITween::Property::PositionX) rt->position.x = val;
+                if (tween->targetProperty == UITween::Property::PositionY) rt->position.y = val;
+                if (tween->targetProperty == UITween::Property::SizeX) rt->size.x = val;
+                if (tween->targetProperty == UITween::Property::SizeY) rt->size.y = val;
+            }
+        } else if (tween->targetProperty == UITween::Property::ColorAlpha) {
+            auto* ur = ecs.getComponent<UIRenderable>(e);
+            if (ur) ur->color.a = val;
+            auto* ut = ecs.getComponent<UIText>(e);
+            if (ut) ut->color.a = val;
         }
     }
 }
@@ -328,6 +402,27 @@ UIBuilder& UIBuilder::withMesh(MeshHandle handle) {
 
 UIBuilder& UIBuilder::withBuffer(BufferHandle handle) {
     ecs_.addComponent<BufferComponent>(current_) = {handle};
+    return *this;
+}
+
+UIBuilder& UIBuilder::withVerticalLayout(float spacing, float padding) {
+    ecs_.addComponent<UIVerticalLayout>(current_) = {spacing, padding};
+    return *this;
+}
+
+UIBuilder& UIBuilder::withTween(UITween::Property prop, float start, float end, float duration, UITween::Easing easing, bool isLooping, bool isPingPong) {
+    ecs_.addComponent<UITween>(current_) = {
+        .targetProperty = prop,
+        .startValue = start,
+        .endValue = end,
+        .duration = duration,
+        .currentTime = 0.0f,
+        .easing = easing,
+        .isPlaying = true,
+        .isLooping = isLooping,
+        .isPingPong = isPingPong,
+        .forwards = true
+    };
     return *this;
 }
 

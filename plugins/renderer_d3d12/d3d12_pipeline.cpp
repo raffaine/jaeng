@@ -83,16 +83,16 @@ CreateGlobalRootSignature(ID3D12Device* dev, /*out*/ D3D_ROOT_SIGNATURE_VERSION*
     params[0].Constants.RegisterSpace   = 0;
     params[0].Constants.Num32BitValues  = 32;
 
-    // root 1 -> Root CBV (b1, space0) - Frame
+    // root 1 -> Root CBV (b5, space0) - Frame
     params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
-    params[1].Descriptor.ShaderRegister = 1;
+    params[1].Descriptor.ShaderRegister = 5;
     params[1].Descriptor.RegisterSpace  = 0;
 
-    // root 2 -> Root CBV (b2, space0) - Object
+    // root 2 -> Root CBV (b6, space0) - Object
     params[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[2].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
-    params[2].Descriptor.ShaderRegister = 2;
+    params[2].Descriptor.ShaderRegister = 6;
     params[2].Descriptor.RegisterSpace  = 0;
 
     // root 3 -> SRV/CBV/UAV table (t0..., space0)

@@ -51,6 +51,27 @@ struct UIInteractable {
     std::function<void(bool)> onHover;
 };
 
+struct UIVerticalLayout {
+    float spacing = 0.0f;
+    float padding = 0.0f; // Simplified: uniform padding for now
+};
+
+struct UITween {
+    enum class Property { PositionX, PositionY, SizeX, SizeY, ColorAlpha };
+    enum class Easing { Linear, EaseInOut };
+
+    Property targetProperty = Property::PositionX;
+    float startValue = 0.0f;
+    float endValue = 0.0f;
+    float duration = 1.0f;
+    float currentTime = 0.0f;
+    Easing easing = Easing::Linear;
+    bool isPlaying = false;
+    bool isLooping = false;
+    bool isPingPong = false;
+    bool forwards = true;
+};
+
 class UILayoutSystem {
 public:
     static void update(EntityManager& ecs, float screenW, float screenH);
@@ -68,6 +89,11 @@ public:
 class UIRenderSystem {
 public:
     static void extract(EntityManager& ecs, IFontSystem& fontSys, std::vector<RenderCommand>& outCommands);
+};
+
+class UITweenSystem {
+public:
+    static void update(EntityManager& ecs, float dt);
 };
 
 /**
@@ -92,6 +118,9 @@ public:
     UIBuilder& withMaterial(MaterialHandle handle);
     UIBuilder& withMesh(MeshHandle handle);
     UIBuilder& withBuffer(BufferHandle handle);
+
+    UIBuilder& withVerticalLayout(float spacing, float padding = 0.0f);
+    UIBuilder& withTween(UITween::Property prop, float start, float end, float duration, UITween::Easing easing = UITween::Easing::Linear, bool isLooping = false, bool isPingPong = false);
 
     UIBuilder& onClick(std::function<void()> callback);
     UIBuilder& onHover(std::function<void(bool)> callback);
