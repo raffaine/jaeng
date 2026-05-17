@@ -10,8 +10,8 @@
 namespace jaeng::renderer::metal {
 
 constexpr uint32_t MAX_BUFFERS = 4096;
-constexpr uint32_t MAX_TEXTURES = 31;
-constexpr uint32_t MAX_SAMPLERS = 16;
+constexpr uint32_t MAX_TEXTURES = 4096;
+constexpr uint32_t MAX_SAMPLERS = 256;
 
 static MTL::VertexFormat to_metal_vertex_format(VertexAttributeFormat format) {
     switch (format) {
@@ -44,6 +44,12 @@ struct MetalContext {
     std::vector<UniqueHandle<MTL::DepthStencilState>> depthStates;
     std::vector<UniqueHandle<MTL::VertexDescriptor>> vertexLayouts;
     std::vector<bool> pipelineBlending;
+
+    // Bindless Descriptor Heaps (Tier 2 Argument Buffers)
+    UniqueHandle<MTL::Buffer> textureHeap;
+    UniqueHandle<MTL::Buffer> samplerHeap;
+    UniqueHandle<MTL::ArgumentEncoder> textureHeapEncoder;
+    UniqueHandle<MTL::ArgumentEncoder> samplerHeapEncoder;
 
     // Dynamic pool for per-draw constant updates
     UniqueHandle<MTL::Buffer> dynamicBuffer;
@@ -118,6 +124,31 @@ bool MetalRenderer::init(const RendererDesc* desc) {
 
     g_ctx->dynamicBuffer.reset(g_ctx->device->newBuffer(MetalContext::DYNAMIC_BUFFER_SIZE, MTL::ResourceStorageModeShared));
     
+    // Initialize Bindless Heaps (Tier 2 Argument Buffers)
+    MTL::ArgumentDescriptor* texArgDesc = MTL::ArgumentDescriptor::alloc()->init();
+    texArgDesc->setDataType(MTL::DataTypeTexture);
+    texArgDesc->setIndex(0);
+    texArgDesc->setArrayLength(MAX_TEXTURES);
+    texArgDesc->setAccess(MTL::ArgumentAccessReadOnly);
+    NS::Array* texArgs = NS::Array::array((const NS::Object**)&texArgDesc, 1);
+    g_ctx->textureHeapEncoder.reset(g_ctx->device->newArgumentEncoder(texArgs));
+    texArgDesc->release();
+
+    MTL::ArgumentDescriptor* sampArgDesc = MTL::ArgumentDescriptor::alloc()->init();
+    sampArgDesc->setDataType(MTL::DataTypeSampler);
+    sampArgDesc->setIndex(0);
+    sampArgDesc->setArrayLength(MAX_SAMPLERS);
+    sampArgDesc->setAccess(MTL::ArgumentAccessReadOnly);
+    NS::Array* sampArgs = NS::Array::array((const NS::Object**)&sampArgDesc, 1);
+    g_ctx->samplerHeapEncoder.reset(g_ctx->device->newArgumentEncoder(sampArgs));
+    sampArgDesc->release();
+
+    g_ctx->textureHeap.reset(g_ctx->device->newBuffer(g_ctx->textureHeapEncoder->encodedLength(), MTL::ResourceStorageModeShared));
+    g_ctx->samplerHeap.reset(g_ctx->device->newBuffer(g_ctx->samplerHeapEncoder->encodedLength(), MTL::ResourceStorageModeShared));
+    
+    g_ctx->textureHeapEncoder->setArgumentBuffer(g_ctx->textureHeap.get(), 0);
+    g_ctx->samplerHeapEncoder->setArgumentBuffer(g_ctx->samplerHeap.get(), 0);
+
     JAENG_LOG_INFO("[Metal] init END");
     return true;
 }
@@ -255,23 +286,55 @@ bool MetalRenderer::update_buffer(BufferHandle handle, uint64_t dst_offset, cons
 TextureHandle MetalRenderer::create_texture(const TextureDesc* desc, const void* initial_data) {
     std::lock_guard<std::recursive_mutex> lock(g_ctx->resourceMutex);
     MTL::TextureDescriptor* mtlDesc = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, desc->width, desc->height, false);
+#if defined(JAENG_IOS)
+    mtlDesc->setStorageMode(MTL::StorageModePrivate);
+#else
     mtlDesc->setStorageMode(MTL::StorageModeShared);
+#endif
     mtlDesc->setUsage(MTL::TextureUsageShaderRead);
 
     MTL::Texture* texture = g_ctx->device->newTexture(mtlDesc);
 
     if (initial_data && texture) {
+#if defined(JAENG_IOS)
+        uint32_t rowBytes = desc->width * 4;
+        uint32_t alignedRowBytes = (rowBytes + 255) & ~255;
+        uint32_t size = alignedRowBytes * desc->height;
+        
+        MTL::Buffer* stagingBuffer = g_ctx->device->newBuffer(size, MTL::ResourceStorageModeShared);
+        
+        uint8_t* dst = static_cast<uint8_t*>(stagingBuffer->contents());
+        const uint8_t* src = static_cast<const uint8_t*>(initial_data);
+        for (uint32_t y = 0; y < desc->height; ++y) {
+            std::memcpy(dst + y * alignedRowBytes, src + y * rowBytes, rowBytes);
+        }
+        
+        MTL::CommandBuffer* cmdBuf = g_ctx->commandQueue->commandBuffer();
+        MTL::BlitCommandEncoder* blit = cmdBuf->blitCommandEncoder();
+        
+        MTL::Size mtlSize = MTL::Size::Make(desc->width, desc->height, 1);
+        blit->copyFromBuffer(stagingBuffer, 0, alignedRowBytes, alignedRowBytes * desc->height, mtlSize, texture, 0, 0, MTL::Origin::Make(0, 0, 0));
+        
+        blit->endEncoding();
+        cmdBuf->commit();
+        cmdBuf->waitUntilCompleted();
+        
+        stagingBuffer->release();
+#else
         MTL::Region region = MTL::Region::Make2D(0, 0, desc->width, desc->height);
         texture->replaceRegion(region, 0, initial_data, desc->width * 4);
+#endif
     }
 
     for (uint32_t i = 0; i < MAX_TEXTURES; ++i) {
         if (!g_ctx->textures[i]) {
             g_ctx->textures[i].reset(texture);
+
+            g_ctx->textureHeapEncoder->setTexture(texture, i);
+
             return i + 1;
         }
-    }
-    if (texture) texture->release();
+    }    if (texture) texture->release();
     return 0;
 }
 
@@ -285,6 +348,7 @@ void MetalRenderer::destroy_texture(TextureHandle handle) {
 SamplerHandle MetalRenderer::create_sampler(const SamplerDesc* desc) {
     std::lock_guard<std::recursive_mutex> lock(g_ctx->resourceMutex);
     MTL::SamplerDescriptor* mtlDesc = MTL::SamplerDescriptor::alloc()->init();
+    mtlDesc->setSupportArgumentBuffers(true);
     mtlDesc->setMinFilter(desc->filter == SamplerFilter::Linear ? MTL::SamplerMinMagFilterLinear : MTL::SamplerMinMagFilterNearest);
     mtlDesc->setMagFilter(desc->filter == SamplerFilter::Linear ? MTL::SamplerMinMagFilterLinear : MTL::SamplerMinMagFilterNearest);
     
@@ -294,6 +358,9 @@ SamplerHandle MetalRenderer::create_sampler(const SamplerDesc* desc) {
     for (uint32_t i = 0; i < MAX_SAMPLERS; ++i) {
         if (!g_ctx->samplers[i]) {
             g_ctx->samplers[i].reset(sampler);
+
+            g_ctx->samplerHeapEncoder->setSamplerState(sampler, i);
+
             return i + 1;
         }
     }
@@ -427,6 +494,12 @@ void MetalRenderer::cmd_begin_pass(CommandListHandle handle, LoadOp load_op, con
     g_ctx->currentEncoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
     g_ctx->currentEncoder->setCullMode(MTL::CullModeBack);
 
+    // Bind the Bindless Heaps to the fragment shader.
+    // spirv-cross with argument buffers maps descriptor sets to buffer slots.
+    // Set 1 (textures) -> slot 1, Set 2 (samplers) -> slot 2
+    g_ctx->currentEncoder->setFragmentBuffer(g_ctx->textureHeap.get(), 0, 1);
+    g_ctx->currentEncoder->setFragmentBuffer(g_ctx->samplerHeap.get(), 0, 2);
+
     if (g_ctx->currentDrawable && g_ctx->currentDrawable->texture()) {
         MTL::Viewport vp = {0.0, 0.0, (double)g_ctx->currentDrawable->texture()->width(), (double)g_ctx->currentDrawable->texture()->height(), 0.0, 1.0};
         g_ctx->currentEncoder->setViewport(vp);
@@ -447,61 +520,23 @@ void MetalRenderer::cmd_bind_uniform(CommandListHandle handle, uint32_t slot, Bu
     std::lock_guard<std::recursive_mutex> lock(g_ctx->resourceMutex);
     if (buffer > 0 && buffer <= MAX_BUFFERS) {
         uint32_t dynOffset = g_ctx->lastDynamicOffsets[buffer];
-        uint32_t metalSlot = slot + 1;
+        uint32_t metalSlot = slot + 5; 
         if (dynOffset != 0xFFFFFFFF) {
             g_ctx->currentEncoder->setVertexBuffer(g_ctx->dynamicBuffer.get(), dynOffset + offset, metalSlot); 
             g_ctx->currentEncoder->setFragmentBuffer(g_ctx->dynamicBuffer.get(), dynOffset + offset, metalSlot);
         } else if (g_ctx->buffers[buffer - 1]) {
             auto* mtlBuf = g_ctx->buffers[buffer - 1].get();
-            g_ctx->currentEncoder->setVertexBuffer(mtlBuf, offset, metalSlot); 
+            g_ctx->currentEncoder->setVertexBuffer(mtlBuf, offset, metalSlot);
             g_ctx->currentEncoder->setFragmentBuffer(mtlBuf, offset, metalSlot);
         }
     }
 }
-
 void MetalRenderer::cmd_push_constants(CommandListHandle handle, uint32_t offset, uint32_t count, const void* data) {
     if (!g_ctx->currentEncoder) return;
     g_ctx->currentEncoder->setVertexBytes(data, count * 4, 0);
     g_ctx->currentEncoder->setFragmentBytes(data, count * 4, 0);
-
-    if (!g_ctx->hasBoundResourcesInPass) {
-        std::lock_guard<std::recursive_mutex> lock(g_ctx->resourceMutex);
-        // Metal validation requires all slots in an array to be bound if the shader declares an array,
-        // even if not all are used dynamically. Bind a valid fallback sampler and texture to empty slots.
-        MTL::Texture* fallbackTexture = nullptr;
-        for (uint32_t i = 0; i < MAX_TEXTURES; ++i) {
-            if (g_ctx->textures[i]) {
-                fallbackTexture = g_ctx->textures[i].get();
-                break;
-            }
-        }
-
-        for (uint32_t i = 0; i < MAX_TEXTURES; ++i) {
-            if (g_ctx->textures[i]) {
-                g_ctx->currentEncoder->setFragmentTexture(g_ctx->textures[i].get(), i);
-            } else if (fallbackTexture) {
-                g_ctx->currentEncoder->setFragmentTexture(fallbackTexture, i);
-            }
-        }
-
-        MTL::SamplerState* fallbackSampler = nullptr;
-        for (uint32_t i = 0; i < MAX_SAMPLERS; ++i) {
-            if (g_ctx->samplers[i]) {
-                fallbackSampler = g_ctx->samplers[i].get();
-                break;
-            }
-        }
-
-        for (uint32_t i = 0; i < MAX_SAMPLERS; ++i) {
-            if (g_ctx->samplers[i]) {
-                g_ctx->currentEncoder->setFragmentSamplerState(g_ctx->samplers[i].get(), i);
-            } else if (fallbackSampler) {
-                g_ctx->currentEncoder->setFragmentSamplerState(fallbackSampler, i);
-            }
-        }
-        g_ctx->hasBoundResourcesInPass = true;
-    }
 }
+
 
 void MetalRenderer::cmd_barrier(CommandListHandle handle, BufferHandle buffer, uint32_t src_access, uint32_t dst_access) {}
 
@@ -534,11 +569,35 @@ void MetalRenderer::cmd_set_index_buffer(CommandListHandle handle, BufferHandle 
 
 void MetalRenderer::cmd_draw(CommandListHandle handle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance) {
     if (!g_ctx->currentEncoder) return;
+
+    g_ctx->currentEncoder->useResource(g_ctx->textureHeap.get(), MTL::ResourceUsageRead, MTL::RenderStageFragment);
+    g_ctx->currentEncoder->useResource(g_ctx->samplerHeap.get(), MTL::ResourceUsageRead, MTL::RenderStageFragment);
+
+    std::vector<MTL::Resource*> active_textures;
+    for (auto& tex : g_ctx->textures) {
+        if (tex) active_textures.push_back(tex.get());
+    }
+    if (!active_textures.empty()) {
+        g_ctx->currentEncoder->useResources(active_textures.data(), active_textures.size(), MTL::ResourceUsageRead | MTL::ResourceUsageSample, MTL::RenderStageFragment);
+    }
+
     g_ctx->currentEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, first_vtx, vtx_count, instance_count, first_instance);
 }
 
 void MetalRenderer::cmd_draw_indexed(CommandListHandle handle, uint32_t idx_count, uint32_t inst_count, uint32_t first_idx, int32_t vtx_offset, uint32_t first_instance) {
     if (!g_ctx->currentEncoder) return;
+
+    g_ctx->currentEncoder->useResource(g_ctx->textureHeap.get(), MTL::ResourceUsageRead, MTL::RenderStageFragment);
+    g_ctx->currentEncoder->useResource(g_ctx->samplerHeap.get(), MTL::ResourceUsageRead, MTL::RenderStageFragment);
+
+    std::vector<MTL::Resource*> active_textures;
+    for (auto& tex : g_ctx->textures) {
+        if (tex) active_textures.push_back(tex.get());
+    }
+    if (!active_textures.empty()) {
+        g_ctx->currentEncoder->useResources(active_textures.data(), active_textures.size(), MTL::ResourceUsageRead | MTL::ResourceUsageSample, MTL::RenderStageFragment);
+    }
+
     if (g_ctx->currentIndexBuffer) {
         uint32_t idxSize = (g_ctx->currentIndexType == MTL::IndexTypeUInt32) ? 4 : 2;
         g_ctx->currentEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, idx_count, g_ctx->currentIndexType, 

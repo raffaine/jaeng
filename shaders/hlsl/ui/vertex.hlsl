@@ -1,11 +1,13 @@
 // vertex.hlsl
+[[vk::binding(0, 0)]]
 cbuffer PushConstants : register(b0, space0)
 {
     uint textureIndex;
     uint samplerIndex;
 };
 
-cbuffer CBFrame : register(b1, space0)
+[[vk::binding(5, 0)]]
+cbuffer CBFrame : register(b5, space0)
 {
 #if defined(JAENG_VULKAN)
     row_major float4x4 ViewProj;
@@ -13,7 +15,8 @@ cbuffer CBFrame : register(b1, space0)
     float4x4 ViewProj;
 #endif
 };
-cbuffer CBObject : register(b2, space0)
+[[vk::binding(6, 0)]]
+cbuffer CBObject : register(b6, space0)
 {
 #if defined(JAENG_VULKAN)
     row_major float4x4 World;

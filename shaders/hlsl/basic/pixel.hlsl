@@ -1,8 +1,8 @@
 
-#if defined(JAENG_VULKAN)
-// Vulkan Bindless path: Set 1 for Textures, Set 2 for Samplers
-Texture2D textures[] : register(t0, space1);
-SamplerState samplers[] : register(s0, space2);
+#if defined(JAENG_VULKAN) || defined(JAENG_APPLE)
+// Bindless path: Set 1 for Textures, Set 2 for Samplers
+[[vk::binding(0, 1)]] Texture2D textures[4096] : register(t0, space1);
+[[vk::binding(0, 2)]] SamplerState samplers[256] : register(s0, space2);
 #define GET_TEXTURE(idx) textures[idx]
 #define GET_SAMPLER(idx) samplers[idx]
 
@@ -19,11 +19,20 @@ SamplerState samplers[16] : register(s0, space0);
 #define GET_SAMPLER(idx) SamplerDescriptorHeap[idx]
 #endif
 
+#if defined(JAENG_VULKAN) || defined(JAENG_APPLE)
+[[vk::binding(0, 0)]]
+cbuffer PushConstants
+{
+    uint textureIndex;
+    uint samplerIndex;
+};
+#else
 cbuffer PushConstants : register(b0, space0)
 {
     uint textureIndex;
     uint samplerIndex;
 };
+#endif
 
 struct PSIn {
     float4 pos: SV_Position;

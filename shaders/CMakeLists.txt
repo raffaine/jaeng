@@ -50,12 +50,22 @@ foreach(PIPELINE ${PIPELINES})
         endif()
 
         if(APPLE)
-            # Use --msl-decoration-binding to preserve bN registers into buffer(N) slots.
+            set(MSL_PLATFORM_FLAG "")
+            if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+                set(MSL_PLATFORM_FLAG "--msl-ios")
+            endif()
+
+            # Unified Binding slots:
+            # Slot 0: PushConstants (b0, space0) - discrete
+            # Slot 1: TextureHeap (Set 1) - AB
+            # Slot 2: SamplerHeap (Set 2) - AB
+            # Slot 5: CBFrame (b5, space0) - discrete
+            # Slot 6: CBObject (b6, space0) - discrete
             add_custom_command(TARGET compile_shaders POST_BUILD
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main ${VERTEX_SHADER} -o ${VERTEX_SPV}
-                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main ${PIXEL_SHADER} -o ${PIXEL_SPV}
-                COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${VERTEX_SPV} --output ${VERTEX_MSL}
-                COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl --msl-version 20100 --msl-decoration-binding ${PIXEL_SPV} --output ${PIXEL_MSL}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=vertex -fentry-point=main -DJAENG_APPLE ${VERTEX_SHADER} -o ${VERTEX_SPV}
+                COMMAND ${GLSLC_EXECUTABLE} -x hlsl -fshader-stage=fragment -fentry-point=main -DJAENG_APPLE ${PIXEL_SHADER} -o ${PIXEL_SPV}
+                COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl ${MSL_PLATFORM_FLAG} --msl-version 30000 --msl-argument-buffers --msl-argument-buffer-tier 2 --msl-discrete-descriptor-set 0 --msl-decoration-binding ${VERTEX_SPV} --output ${VERTEX_MSL}
+                COMMAND ${SPIRV_CROSS_EXECUTABLE} --msl ${MSL_PLATFORM_FLAG} --msl-version 30000 --msl-argument-buffers --msl-argument-buffer-tier 2 --msl-discrete-descriptor-set 0 --msl-decoration-binding ${PIXEL_SPV} --output ${PIXEL_MSL}
                 COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/spv_reflect/spv_reflect.py ${SPIRV_CROSS_EXECUTABLE} ${VERTEX_SPV} ${PIXEL_SPV} ${PIPELINE} ${REFLECT_OUT}
                 COMMENT "Pipeline ${PIPELINE}: Compiling and Transpiling to MSL, generating reflection"
             )
