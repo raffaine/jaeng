@@ -265,7 +265,11 @@ static void vk_present(SwapchainHandle h) {
             vk::SwapchainKHR swaps[] = { it->second.swapchain };
             uint32_t indices[] = { imageIndex };
             vk::PresentInfoKHR presentInfo(1, waitSems, 1, swaps, indices);
-            (void)g_ctx->device.graphicsQueue.presentKHR(presentInfo);
+            
+            {
+                std::lock_guard<std::mutex> lock(g_ctx->graphicsQueueMutex);
+                (void)g_ctx->device.graphicsQueue.presentKHR(presentInfo);
+            }
             
         } catch (const vk::OutOfDateKHRError&) {
             JAENG_LOG_DEBUG("vk_present: Swapchain out of date, waiting for resize event.");

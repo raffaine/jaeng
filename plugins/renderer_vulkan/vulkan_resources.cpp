@@ -54,32 +54,35 @@ jaeng::result<VulkanTexture> create_vulkan_texture(VulkanDevice* device, VulkanD
         auto stagingRes = create_vulkan_buffer(device, &stagingDesc, initial_data);
         if (stagingRes.hasValue()) {
             auto staging = std::move(stagingRes).logError().value();
-            vk::CommandBufferAllocateInfo cbAlloc(g_ctx->commandPool, vk::CommandBufferLevel::ePrimary, 1);
-            vk::CommandBuffer cb = device->device.allocateCommandBuffers(cbAlloc)[0];
-            cb.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+            
+            {
+                std::lock_guard<std::mutex> lock(g_ctx->graphicsQueueMutex);
+                vk::CommandBuffer cb = g_ctx->oneShotCmd;
+                cb.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
-            vk::ImageMemoryBarrier barrier(
-                {}, vk::AccessFlagBits::eTransferWrite,
-                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
-                image, { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-            );
-            cb.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer, {}, nullptr, nullptr, barrier);
+                vk::ImageMemoryBarrier barrier(
+                    {}, vk::AccessFlagBits::eTransferWrite,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+                    image, { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+                );
+                cb.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer, {}, nullptr, nullptr, barrier);
 
-            vk::BufferImageCopy region(0, 0, 0, { vk::ImageAspectFlagBits::eColor, 0, 0, 1 }, { 0, 0, 0 }, { desc->width, desc->height, 1 });
-            cb.copyBufferToImage(staging.buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+                vk::BufferImageCopy region(0, 0, 0, { vk::ImageAspectFlagBits::eColor, 0, 0, 1 }, { 0, 0, 0 }, { desc->width, desc->height, 1 });
+                cb.copyBufferToImage(staging.buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
 
-            barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-            barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-            cb.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr, barrier);
+                barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+                barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+                barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+                cb.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr, barrier);
 
-            cb.end();
-            vk::SubmitInfo submit(0, nullptr, nullptr, 1, &cb);
-            device->graphicsQueue.submit(submit, nullptr);
-            device->graphicsQueue.waitIdle();
-            device->device.freeCommandBuffers(g_ctx->commandPool, cb);
+                cb.end();
+                vk::SubmitInfo submit(0, nullptr, nullptr, 1, &cb);
+                device->graphicsQueue.submit(submit, nullptr);
+                device->graphicsQueue.waitIdle();
+            }
+
             device->device.destroyBuffer(staging.buffer);
             device->device.freeMemory(staging.memory);
         }
