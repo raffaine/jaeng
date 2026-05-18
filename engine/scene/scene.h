@@ -15,6 +15,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 // Forward declarations
 class RenderGraph;
 

@@ -5,6 +5,7 @@ endif()
 
 add_library(renderer_metal ${RENDERER_TYPE}
     metal_renderer.cpp
+    metal_layer_bridge.mm
     metal_renderer.h
 )
 

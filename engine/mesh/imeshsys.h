@@ -9,6 +9,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 using MeshHandle = uint32_t;
 
 struct RAWFormatHeader {

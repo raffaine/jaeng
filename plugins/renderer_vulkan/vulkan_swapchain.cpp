@@ -41,6 +41,9 @@ static vk::SurfaceKHR create_platform_surface(vk::Instance instance, void* windo
 }
 
 jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc, vk::SwapchainKHR oldSwapchain) {
+    lastPresentMode = desc->present_mode;
+    lastFormat = desc->format;
+
     try {
         if (!surface) {
             surface = create_platform_surface(device->instance, window, display);
@@ -52,6 +55,7 @@ jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* 
 
         auto caps = device->physicalDevice.getSurfaceCapabilitiesKHR(surface);
         auto formats = device->physicalDevice.getSurfaceFormatsKHR(surface);
+        auto modes = device->physicalDevice.getSurfacePresentModesKHR(surface);
         
         vk::Format requestedFormat = vk::Format::eB8G8R8A8Unorm;
         if (desc->format == TextureFormat::RGBA8_UNORM) requestedFormat = vk::Format::eR8G8B8A8Unorm;
@@ -87,17 +91,25 @@ jaeng::result<> VulkanSwapchain::init(VulkanDevice* device, void* window, void* 
             minImageCount = caps.maxImageCount;
         }
 
+        vk::PresentModeKHR selectedMode = vk::PresentModeKHR::eFifo;
+        vk::PresentModeKHR targetMode = vk::PresentModeKHR::eFifo;
+        if (desc->present_mode == PresentMode::Mailbox) targetMode = vk::PresentModeKHR::eMailbox;
+        else if (desc->present_mode == PresentMode::Immediate) targetMode = vk::PresentModeKHR::eImmediate;
+
+        for (const auto& m : modes) {
+            if (m == targetMode) {
+                selectedMode = m;
+                break;
+            }
+        }
+
         vk::SwapchainCreateInfoKHR swapInfo(
             {}, surface, minImageCount, format, formats[0].colorSpace, extent, 1,
             vk::ImageUsageFlagBits::eColorAttachment,
             vk::SharingMode::eExclusive, {},
             caps.currentTransform, vk::CompositeAlphaFlagBitsKHR::eOpaque,
-            vk::PresentModeKHR::eFifo, VK_TRUE, oldSwapchain
+            selectedMode, VK_TRUE, oldSwapchain
         );
-
-        swapInfo.preTransform = caps.currentTransform;
-        swapInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        swapInfo.presentMode = vk::PresentModeKHR::eFifo;
 
         swapchain = device->device.createSwapchainKHR(swapInfo);
         images = device->device.getSwapchainImagesKHR(swapchain);
@@ -169,10 +181,11 @@ void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
     swapchain = nullptr;
     imageAcquired = false;
 
-    // Re-initialize with the new size
+    // Re-initialize with the new size and current mode
     SwapchainDesc desc;
     desc.size = size;
-    desc.format = (format == vk::Format::eR8G8B8A8Unorm) ? TextureFormat::RGBA8_UNORM : TextureFormat::BGRA8_UNORM;
+    desc.format = lastFormat;
+    desc.present_mode = lastPresentMode;
 
     // Note: window/display are ignored if 'surface' already exists, which it does.
     auto res = init(device, nullptr, nullptr, &desc, oldSwapchain);
@@ -184,6 +197,16 @@ void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
     if (oldSwapchain) {
         device->device.destroySwapchainKHR(oldSwapchain);
     }
+}
+
+void VulkanSwapchain::set_present_mode(VulkanDevice* device, PresentMode mode) {
+    if (mode == lastPresentMode) return;
+    
+    JAENG_LOG_INFO("Vulkan: Changing present mode to {}", static_cast<uint32_t>(mode));
+    
+    // Changing mode requires swapchain recreation.
+    // Reuse resize logic but keep current extent.
+    resize(device, { extent.width, extent.height });
 }
 
 vk::Result VulkanSwapchain::acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore) {

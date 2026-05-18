@@ -11,7 +11,7 @@
 #define RENDERER_API __attribute__((visibility("default")))
 #endif
 
-extern "C" {
+namespace jaeng::renderer {
 
 // --- Opaque handles ---
 typedef uint32_t RendererHandle;  // generic id
@@ -169,6 +169,8 @@ struct DepthAttachmentDesc {
     float clear_d;
 };
 
+extern "C" {
+
 // --- Renderer function table ---
 typedef struct RendererAPI {
     // frame lifecycle
@@ -182,6 +184,7 @@ typedef struct RendererAPI {
     // swapchain
     SwapchainHandle (*create_swapchain)(const SwapchainDesc*);
     void (*resize_swapchain)(SwapchainHandle, Extent2D);
+    void (*set_present_mode)(SwapchainHandle, PresentMode);
     void (*destroy_swapchain)(SwapchainHandle);
     TextureHandle (*get_current_backbuffer)(SwapchainHandle);
     TextureHandle (*get_depth_buffer)(SwapchainHandle);
@@ -234,3 +237,5 @@ typedef struct RendererAPI {
 typedef bool (*PFN_LoadRenderer)(RendererAPI* out_api);
 
 } // extern "C"
+
+} // namespace jaeng::renderer

@@ -22,7 +22,11 @@
 #include "process.h"
 #include "common/async/task_scheduler.h"
 
-namespace jaeng::platform {
+namespace jaeng {
+
+using namespace renderer;
+
+namespace platform {
 
 enum class KeyCode : uint32_t {
     Unknown = 0,
@@ -102,8 +106,10 @@ struct AppConfig {
     std::string title = "Jaeng Application";
     uint32_t width = 1280;
     uint32_t height = 720;
-    GfxBackend backend = GfxBackend::Vulkan;
+    renderer::GfxBackend backend = renderer::GfxBackend::Vulkan;
     InputMode inputMode = InputMode::Mouse;
+    renderer::PresentMode presentMode = renderer::PresentMode::Fifo;
+    bool vSync = true;
 };
 
 class IPlatform;
@@ -119,6 +125,8 @@ public:
     bool should_close() const { return shouldClose_; }
 
     void set_tick_rate(uint32_t hz);
+    void set_vsync(bool enabled);
+    void set_present_mode(renderer::PresentMode mode);
     void start_engine_threads();
     void stop_engine_threads();
     void run_one_frame();
@@ -241,4 +249,5 @@ namespace thread {
     }
 }
 
-} // namespace jaeng::platform
+} // namespace platform
+} // namespace jaeng

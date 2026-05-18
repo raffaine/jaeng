@@ -347,11 +347,11 @@ SandboxApp::SandboxApp(IPlatform& platform)
     : IApplication(platform, AppConfig{
         "jaeng Sandbox", 1280, 720,
 #if defined(JAENG_WIN32) && !defined(JAENG_USE_VULKAN)
-        GfxBackend::D3D12
+        jaeng::renderer::GfxBackend::D3D12
 #elif defined(JAENG_MACOS) || defined(JAENG_IOS)
-        GfxBackend::Metal
+        jaeng::renderer::GfxBackend::Metal
 #else
-        GfxBackend::Vulkan
+        jaeng::renderer::GfxBackend::Vulkan
 #endif
     })
 {
@@ -894,6 +894,42 @@ void SandboxApp::setupUI() {
                 .withPivot({ 0.0f, 0.5f })
                 .withZIndex(30)
                 .withText("No Selection", 32.0f, defaultFont_)
+            .end()
+        .end()
+    .end();
+
+    builder.begin("Presentation_Panel")
+        .withRect({ 200.0f, 180.0f }, { -10.0f, 10.0f })
+        .withAnchors({ 1.0f, 0.0f }, { 1.0f, 0.0f })
+        .withPivot({ 1.0f, 0.0f })
+        .withZIndex(100)
+        .withColor({ 0.1f, 0.1f, 0.1f, 0.7f })
+        .withVerticalLayout(10.0f, 10.0f)
+        .begin("Fifo_Button")
+            .withRect({ 180.0f, 40.0f })
+            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
+            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Fifo); })
+            .begin("Fifo_Text")
+                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Mode: V-Sync (Fifo)", 20.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Mailbox_Button")
+            .withRect({ 180.0f, 40.0f })
+            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
+            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Mailbox); })
+            .begin("Mailbox_Text")
+                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Mode: Mailbox", 20.0f, defaultFont_)
+            .end()
+        .end()
+        .begin("Immediate_Button")
+            .withRect({ 180.0f, 40.0f })
+            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
+            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Immediate); })
+            .begin("Immediate_Text")
+                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
+                .withText("Mode: Immediate", 20.0f, defaultFont_)
             .end()
         .end()
     .end();

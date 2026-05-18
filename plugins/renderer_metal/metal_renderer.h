@@ -4,6 +4,8 @@
 
 namespace jaeng::renderer::metal {
 
+using namespace jaeng::renderer;
+
 class MetalRenderer {
 public:
     static bool init(const RendererDesc* desc);
@@ -14,6 +16,7 @@ public:
 
     static SwapchainHandle create_swapchain(const SwapchainDesc* desc);
     static void resize_swapchain(SwapchainHandle handle, Extent2D size);
+    static void set_present_mode(SwapchainHandle handle, PresentMode mode);
     static void destroy_swapchain(SwapchainHandle handle);
     static TextureHandle get_current_backbuffer(SwapchainHandle handle);
     static TextureHandle get_depth_buffer(SwapchainHandle handle);
@@ -57,4 +60,4 @@ public:
 
 } // namespace jaeng::renderer::metal
 
-extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api);
+extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api);

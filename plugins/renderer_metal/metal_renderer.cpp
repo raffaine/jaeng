@@ -1,5 +1,6 @@
 #include "metal_renderer.h"
 #include "metal_utils.h"
+#include "metal_layer_bridge.h"
 #include "common/logging.h"
 #include <vector>
 #include <map>
@@ -8,6 +9,8 @@
 #include <glm/glm.hpp>
 
 namespace jaeng::renderer::metal {
+
+using namespace jaeng::renderer;
 
 constexpr uint32_t MAX_BUFFERS = 4096;
 constexpr uint32_t MAX_TEXTURES = 4096;
@@ -227,6 +230,16 @@ void MetalRenderer::resize_swapchain(SwapchainHandle handle, Extent2D size) {
         depthDesc->setUsage(MTL::TextureUsageRenderTarget);
         depthDesc->setStorageMode(MTL::StorageModePrivate);
         sw.depthTexture.reset(g_ctx->device->newTexture(depthDesc));
+    }
+}
+
+void MetalRenderer::set_present_mode(SwapchainHandle handle, PresentMode mode) {
+    std::lock_guard<std::recursive_mutex> lock(g_ctx->resourceMutex);
+    if (g_ctx->layer) {
+        bool sync = (mode == PresentMode::Fifo);
+        set_layer_sync_enabled(g_ctx->layer, sync);
+        set_layer_max_drawables(g_ctx->layer, sync ? 3 : 2);
+        JAENG_LOG_INFO("[Metal] Present mode changed: sync={}", sync);
     }
 }
 
@@ -626,7 +639,7 @@ void MetalRenderer::wait_idle() {}
 } // namespace jaeng::renderer::metal
 
 extern "C" {
-RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
+RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api) {
     using namespace jaeng::renderer::metal;
     out_api->init = MetalRenderer::init;
     out_api->shutdown = MetalRenderer::shutdown;
@@ -634,6 +647,7 @@ RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     out_api->end_frame = MetalRenderer::end_frame;
     out_api->create_swapchain = MetalRenderer::create_swapchain;
     out_api->resize_swapchain = MetalRenderer::resize_swapchain;
+    out_api->set_present_mode = MetalRenderer::set_present_mode;
     out_api->destroy_swapchain = MetalRenderer::destroy_swapchain;
     out_api->get_current_backbuffer = MetalRenderer::get_current_backbuffer;
     out_api->get_depth_buffer = MetalRenderer::get_depth_buffer;

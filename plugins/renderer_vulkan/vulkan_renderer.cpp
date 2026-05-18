@@ -232,6 +232,13 @@ static void vk_resize_swapchain(SwapchainHandle h, Extent2D size) {
     }
 }
 
+static void vk_set_present_mode(SwapchainHandle h, PresentMode mode) {
+    auto it = g_ctx->swapchains.find(h);
+    if (it != g_ctx->swapchains.end()) {
+        it->second.set_present_mode(&g_ctx->device, mode);
+    }
+}
+
 static void vk_destroy_swapchain(SwapchainHandle h) {
     auto it = g_ctx->swapchains.find(h);
     if (it != g_ctx->swapchains.end()) {
@@ -449,7 +456,7 @@ void vk_cmd_barrier(CommandListHandle, BufferHandle, uint32_t, uint32_t);
 void vk_end_commands(CommandListHandle);
 void vk_submit(CommandListHandle*, uint32_t);
 
-RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
+extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api) {
     *out_api = {};
     out_api->init = vk_init;
     out_api->shutdown = vk_shutdown;
@@ -457,6 +464,7 @@ RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
     out_api->end_frame = vk_end_frame;
     out_api->create_swapchain = vk_create_swapchain;
     out_api->resize_swapchain = vk_resize_swapchain;
+    out_api->set_present_mode = vk_set_present_mode;
     out_api->destroy_swapchain = vk_destroy_swapchain;
     out_api->get_current_backbuffer = vk_get_current_backbuffer;
     out_api->get_depth_buffer = vk_get_depth_buffer;

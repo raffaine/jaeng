@@ -36,7 +36,7 @@ namespace jaeng::platform {
 
         JAENG_LOG_INFO("[Engine] init: Creating swapchain...");
         DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
-        SwapchainDesc swapDesc{{config_.width, config_.height}, TextureFormat::BGRA8_UNORM, depthDesc, PresentMode::Fifo};
+        SwapchainDesc swapDesc{{config_.width, config_.height}, TextureFormat::BGRA8_UNORM, depthDesc, config_.presentMode};
         swap_ = renderer_->create_swapchain(&swapDesc);
         if (swap_ == 0) return false;
 
@@ -94,6 +94,18 @@ namespace jaeng::platform {
     void IApplication::set_tick_rate(uint32_t hz) {
         if (hz > 0) {
             fixedDt_ = 1.0f / static_cast<float>(hz);
+        }
+    }
+
+    void IApplication::set_vsync(bool enabled) {
+        config_.vSync = enabled;
+        set_present_mode(enabled ? PresentMode::Fifo : PresentMode::Immediate);
+    }
+
+    void IApplication::set_present_mode(PresentMode mode) {
+        config_.presentMode = mode;
+        if (swap_ > 0 && renderer_.gfx) {
+            renderer_.queue_present_mode(swap_, mode);
         }
     }
 

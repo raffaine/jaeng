@@ -11,6 +11,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 class MaterialSystem : public IMaterialSystem {
 public:
     static constexpr size_t MAX_MATERIALS = 1024;

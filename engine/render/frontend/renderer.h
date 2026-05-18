@@ -17,10 +17,12 @@
 #endif
 
 #ifdef JAENG_IOS
-extern "C" bool LoadRenderer(RendererAPI* out_api);
+extern "C" bool LoadRenderer(jaeng::renderer::RendererAPI* out_api);
 #endif
 
 namespace jaeng {
+
+using namespace renderer;
 
 #ifdef JAENG_LINUX
 static void* g_null_window_handle = nullptr;
@@ -128,6 +130,7 @@ public:
         // Swapchain
         gfx->create_swapchain = [](const SwapchainDesc*) { return (SwapchainHandle)1; };
         gfx->resize_swapchain = [](SwapchainHandle, Extent2D) {};
+        gfx->set_present_mode = [](SwapchainHandle, PresentMode) {};
         gfx->destroy_swapchain = [](SwapchainHandle) {};
         gfx->get_current_backbuffer = [](SwapchainHandle) { return (TextureHandle)1; };
         gfx->get_depth_buffer = [](SwapchainHandle) { return (TextureHandle)2; };
@@ -192,6 +195,12 @@ public:
         pending_resize_.store(true, std::memory_order_release);
     }
 
+    void queue_present_mode(SwapchainHandle h, PresentMode mode) {
+        resize_handle_ = h;
+        new_present_mode_.store(static_cast<uint32_t>(mode), std::memory_order_relaxed);
+        pending_mode_change_.store(true, std::memory_order_release);
+    }
+
     void process_pending_resizes() {
         if (pending_resize_.exchange(false, std::memory_order_acquire)) {
             uint32_t w = new_width_.load(std::memory_order_relaxed);
@@ -201,6 +210,13 @@ public:
                 gfx->resize_swapchain(resize_handle_, { w, h });
             }
         }
+
+        if (pending_mode_change_.exchange(false, std::memory_order_acquire)) {
+            PresentMode mode = static_cast<PresentMode>(new_present_mode_.load(std::memory_order_relaxed));
+            if (gfx && gfx->set_present_mode && resize_handle_ > 0) {
+                gfx->set_present_mode(resize_handle_, mode);
+            }
+        }
     }
 
     std::shared_ptr<RendererAPI> gfx{};
@@ -208,10 +224,14 @@ public:
 private:
     RendererPlugin plugin;
 
-    // Safely handle Resizes as they bridge threads (Main and Render)
+    // Safely handle Resizes and Mode changes as they bridge threads (Main and Render)
     std::atomic<bool> pending_resize_{ false };
     std::atomic<uint32_t> new_width_{ 0 };
     std::atomic<uint32_t> new_height_{ 0 };
+
+    std::atomic<bool> pending_mode_change_{ false };
+    std::atomic<uint32_t> new_present_mode_{ 0 };
+
     SwapchainHandle resize_handle_{ 0 };
 };
 

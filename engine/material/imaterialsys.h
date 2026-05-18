@@ -12,6 +12,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 typedef uint32_t MaterialHandle; // Opaque identifier
 
 struct MaterialBindings {

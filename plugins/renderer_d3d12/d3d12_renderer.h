@@ -9,6 +9,8 @@
 #include "common/result.h"
 #include "render/public/renderer_api.h"
 
+using namespace jaeng::renderer;
+
 // Forward declarations for internal classes
 class D3D12Device;              
 class D3D12Swapchain;           
@@ -39,6 +41,7 @@ public:
 
     jaeng::result<SwapchainHandle> create_swapchain(const SwapchainDesc*);
     jaeng::result<> resize_swapchain(SwapchainHandle, Extent2D);
+    void set_present_mode(SwapchainHandle, PresentMode);
     void destroy_swapchain(SwapchainHandle);
     TextureHandle get_current_backbuffer(SwapchainHandle);
 
@@ -93,6 +96,7 @@ private:
     Microsoft::WRL::ComPtr<IDXGIFactory6> factory_;
     std::unique_ptr<D3D12Device> device_;
     std::unique_ptr<D3D12Swapchain> swapchain_;
+    PresentMode presentMode_ = PresentMode::Fifo;
     bool tearing_ = false;
 
     std::unique_ptr<DescriptorAllocatorCPU> cpuDesc_;

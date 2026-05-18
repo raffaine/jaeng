@@ -12,6 +12,8 @@
 #include <memory>
 #include <string>
 
+using namespace jaeng::renderer;
+
 class SandboxApp : public jaeng::platform::IApplication {
 public:
     SandboxApp(jaeng::platform::IPlatform& platform);

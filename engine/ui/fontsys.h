@@ -9,6 +9,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 typedef uint32_t FontHandle;
 
 struct GlyphData {

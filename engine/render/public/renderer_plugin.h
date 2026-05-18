@@ -12,6 +12,8 @@
 
 namespace jaeng {
 
+using namespace renderer;
+
 #if defined(_WIN32)
 struct RendererPlugin {
     HMODULE lib = nullptr;

@@ -15,6 +15,8 @@
 
 using Microsoft::WRL::ComPtr;
 
+using namespace jaeng::renderer;
+
 static std::unique_ptr<RendererD3D12> g_renderer;
 
 // Helpers
@@ -303,6 +305,11 @@ jaeng::result<> RendererD3D12::resize_swapchain(SwapchainHandle, Extent2D newSiz
     }
 
     return {};
+}
+
+void RendererD3D12::set_present_mode(SwapchainHandle, PresentMode mode) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    presentMode_ = mode;
 }
 
 void RendererD3D12::destroy_swapchain(SwapchainHandle)
@@ -932,9 +939,24 @@ void RendererD3D12::present(SwapchainHandle)
 {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     state_ = RendererState::Presenting;
-    // Present (respect tearing flag)
-    UINT syncInterval = (tearing_)? 0 : 1;
-    swapchain_->swap()->Present(syncInterval, (tearing_)? DXGI_PRESENT_ALLOW_TEARING : 0);
+
+    UINT syncInterval = 0;
+    UINT presentFlags = 0;
+
+    switch (presentMode_) {
+        case PresentMode::Fifo:
+            syncInterval = 1;
+            break;
+        case PresentMode::Mailbox:
+            syncInterval = 0;
+            break;
+        case PresentMode::Immediate:
+            syncInterval = 0;
+            if (tearing_) presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
+            break;
+    }
+
+    swapchain_->swap()->Present(syncInterval, presentFlags);
     state_ = RendererState::Rendering;
 }
 
@@ -946,7 +968,7 @@ void RendererD3D12::wait_idle()
 
 // ... (implement methods by delegating to subsystems; examples further below)
 
-extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
+extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api) {
     if (!out_api) return false;
     g_renderer = std::make_unique<RendererD3D12>();
 
@@ -961,6 +983,7 @@ extern "C" RENDERER_API bool LoadRenderer(RendererAPI* out_api) {
 
     api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d).orValue(0); };
     api.resize_swapchain = [](SwapchainHandle s, Extent2D e) { if(!g_renderer->resize_swapchain(s,e).logError()); };
+    api.set_present_mode = [](SwapchainHandle s, PresentMode m) { g_renderer->set_present_mode(s, m); };
     api.destroy_swapchain= [](SwapchainHandle s) { g_renderer->destroy_swapchain(s); };
     api.get_current_backbuffer = [](SwapchainHandle s) { return g_renderer->get_current_backbuffer(s); };
     api.get_depth_buffer = [](SwapchainHandle s) { return (TextureHandle)1; }; // Special handle for swapchain depth

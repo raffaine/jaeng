@@ -13,6 +13,8 @@ struct VulkanSwapchain {
     vk::SwapchainKHR swapchain;
     vk::Format format;
     vk::Extent2D extent;
+    PresentMode lastPresentMode = PresentMode::Fifo;
+    TextureFormat lastFormat = TextureFormat::BGRA8_UNORM;
     
     std::vector<vk::Image> images;
     std::vector<vk::ImageView> imageViews;
@@ -28,6 +30,7 @@ struct VulkanSwapchain {
     void shutdown(VulkanDevice* device);
     
     void resize(VulkanDevice* device, Extent2D size);
+    void set_present_mode(VulkanDevice* device, PresentMode mode);
     vk::Result acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore);
 };
 
