@@ -7,6 +7,8 @@
 
 #include "render/public/renderer_api.h"
 
+using namespace jaeng::renderer;
+
 struct BufferRec {
     Microsoft::WRL::ComPtr<ID3D12Resource> res;
     D3D12_VERTEX_BUFFER_VIEW vbv{};

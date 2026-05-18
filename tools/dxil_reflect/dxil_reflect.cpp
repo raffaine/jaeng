@@ -15,6 +15,7 @@
 
 #include "render/public/renderer_api.h"
 
+using namespace jaeng::renderer;
 using Microsoft::WRL::ComPtr;
 
 struct VSParam {

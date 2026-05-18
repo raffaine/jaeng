@@ -6,6 +6,8 @@
 
 #include "render/public/renderer_api.h"
 
+using namespace jaeng::renderer;
+
 struct ShaderBlob { std::vector<uint8_t> bytes; };
 
 struct PipelineRec {
