@@ -31,7 +31,7 @@ public:
     result<std::unique_ptr<IWindow>> create_window(const WindowDesc& desc) override;
     IInput& get_input() override { return input_; }
     bool poll_events() override;
-    void set_event_callback(EventCallback cb) override { eventCallback_ = cb; }
+    void set_event_callback(EventCallback cb) override;
     
     void show_message_box(const std::string& title, const std::string& content, MessageBoxType type) override;
     void* get_native_display_handle() const override { return nullptr; }
@@ -49,6 +49,7 @@ private:
     AppleProcessManager processManager_;
     std::shared_ptr<IFileManager> fileManager_;
     EventCallback eventCallback_;
+    void* windowDelegate_ = nullptr;
     
     static MacOSPlatform* instance_;
     friend class MacOSWindow;

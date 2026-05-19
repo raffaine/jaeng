@@ -16,6 +16,20 @@
 @interface MacOSAppDelegate : NSObject <NSApplicationDelegate>
 @end
 
+@interface MacOSWindowDelegate : NSObject <NSWindowDelegate>
+@property (nonatomic, assign) jaeng::platform::EventCallback callback;
+@end
+
+@implementation MacOSWindowDelegate
+- (void)windowWillClose:(NSNotification *)notification {
+    if (_callback) {
+        jaeng::platform::Event ev{};
+        ev.type = jaeng::platform::Event::Type::WindowClose;
+        _callback(ev);
+    }
+}
+@end
+
 @implementation MacOSAppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [NSApp stop:nil];
@@ -67,6 +81,10 @@ MacOSPlatform::MacOSPlatform() {
 }
 
 MacOSPlatform::~MacOSPlatform() {
+    if (windowDelegate_) {
+        MacOSWindowDelegate* delegate = (__bridge_transfer MacOSWindowDelegate*)windowDelegate_;
+        delegate = nil;
+    }
     instance_ = nullptr;
 }
 
@@ -91,6 +109,16 @@ result<std::unique_ptr<IWindow>> MacOSPlatform::create_window(const WindowDesc& 
     
     [window setContentView:view];
     [window makeKeyAndOrderFront:nil];
+
+    if (windowDelegate_) {
+        MacOSWindowDelegate* oldDelegate = (__bridge_transfer MacOSWindowDelegate*)windowDelegate_;
+        oldDelegate = nil;
+    }
+
+    MacOSWindowDelegate* delegate = [[MacOSWindowDelegate alloc] init];
+    delegate.callback = eventCallback_;
+    [window setDelegate:delegate];
+    windowDelegate_ = (__bridge_retained void*)delegate;
     
     return jaeng::result<std::unique_ptr<IWindow>>(std::make_unique<MacOSWindow>(window, view, desc.width, desc.height));
 }
@@ -191,6 +219,14 @@ bool MacOSPlatform::poll_events() {
         }
     }
     return true;
+}
+
+void MacOSPlatform::set_event_callback(EventCallback cb) {
+    eventCallback_ = cb;
+    if (windowDelegate_) {
+        MacOSWindowDelegate* delegate = (__bridge MacOSWindowDelegate*)windowDelegate_;
+        delegate.callback = cb;
+    }
 }
 
 void MacOSPlatform::show_message_box(const std::string& title, const std::string& content, MessageBoxType type) {
