@@ -231,15 +231,18 @@ namespace jaeng::platform {
 
         JAENG_LOG_INFO("[Engine] Render loop started");
         while (isRunning_) {
-            // Wait for the simulation thread to produce a new frame packet
-            std::unique_lock<std::mutex> lock(stateMutex_);
-            renderCv_.wait(lock, [this]() { return frameReady_.load() || !isRunning_; });
+            // Wait for the simulation thread to produce a new frame packet ONLY IF we are in V-Sync mode.
+            // In Mailbox or Immediate modes, we want to spin as fast as possible to minimize latency.
+            if (config_.presentMode == PresentMode::Fifo) {
+                std::unique_lock<std::mutex> lock(stateMutex_);
+                renderCv_.wait(lock, [this]() { return frameReady_.load() || !isRunning_; });
+                frameReady_ = false;
+            } else {
+                // Still need to reset the flag if it was set, though less critical in uncapped mode
+                frameReady_.store(false, std::memory_order_relaxed);
+            }
 
             if (!isRunning_) break;
-
-            // Reset the flag immediately so Sim can start working on the next frame
-            frameReady_ = false;
-            lock.unlock();
 
 #ifdef JAENG_APPLE
             auto* pool = NS::AutoreleasePool::alloc()->init();
@@ -247,7 +250,8 @@ namespace jaeng::platform {
 
             // Check if we are in foreground before rendering (essential for iOS stability)
             if (platform_.is_foreground()) {
-                // Check the triple buffer for new data
+                // Check the triple buffer for new data. 
+                // In decoupled mode, we render even if no new state is pushed (using previous state).
                 bool hasNewState = stateBuffer_.update_consumer();
 
                 // Engine strictly owns the resize, compile, and present steps!

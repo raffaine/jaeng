@@ -113,14 +113,13 @@ jaeng::result<> RendererD3D12::init(const RendererDesc* desc)
 #endif
 
     JAENG_CHECK_HRESULT(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&factory_)));
-    { // Tearing Support (Off for now as it causes crashes after some time running)
+    { // Tearing Support
         BOOL allowTearing = FALSE;    
         ComPtr<IDXGIFactory5> factory5;
         if (SUCCEEDED(factory_.As(&factory5))) {
-            if (FAILED(factory5->CheckFeatureSupport( DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) allowTearing = FALSE;
+            if (FAILED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) allowTearing = FALSE;
             tearing_ = (allowTearing == TRUE);
         }
-        tearing_ = false;
     }
 
     device_ = std::make_unique<D3D12Device>();
