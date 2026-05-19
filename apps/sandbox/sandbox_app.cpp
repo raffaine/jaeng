@@ -121,6 +121,11 @@ void SandboxApp::runFutureTest() {
 }
 
 void SandboxApp::startServer() {
+#if defined(JAENG_IOS)
+    JAENG_LOG_INFO("[iOS] Process spawning is restricted. Attempting to connect to host-resident TestServer at 127.0.0.1:12347");
+    return;
+#endif
+
     ProcessDesc desc;
     
     // Discovery path: always check next to executable
