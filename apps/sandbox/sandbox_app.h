@@ -57,6 +57,7 @@ private:
         glm::vec4 originalColor = glm::vec4(1.0f);
     } selectionState_;
 
+    bool isReady_ = false;
     bool isLooking_ = false;
 
     void updateCamera(float dt);
@@ -70,7 +71,7 @@ private:
     std::vector<jaeng::EntityID> testEntities_;
     float simTime_ = 0.0f;
     jaeng::EntityID uiTextEntity_ = static_cast<jaeng::EntityID>(-1);
-    jaeng::FontHandle defaultFont_ = 0;
+    jaeng::FontHandle defaultFont_ = static_cast<jaeng::FontHandle>(-1);
     jaeng::MaterialHandle uiMaterial_ = 0;
 
     // Animation Test

@@ -180,7 +180,6 @@ bool MetalRenderer::begin_frame() {
         return false;
     }
 
-    g_ctx->dynamicBufferOffset = 0;
     g_ctx->lastDynamicOffsets.assign(MAX_BUFFERS + 1, 0xFFFFFFFF);
 
     return true;
@@ -284,12 +283,13 @@ bool MetalRenderer::update_buffer(BufferHandle handle, uint64_t dst_offset, cons
 
         if (g_ctx->bufferUsages[handle] & BufferUsage_Uniform) {
             uint32_t alignedSize = (uint32_t)((size + 255) & ~255);
-            if (g_ctx->dynamicBufferOffset + alignedSize <= MetalContext::DYNAMIC_BUFFER_SIZE) {
-                uint8_t* ptr = static_cast<uint8_t*>(g_ctx->dynamicBuffer->contents());
-                std::memcpy(ptr + g_ctx->dynamicBufferOffset, data, size);
-                g_ctx->lastDynamicOffsets[handle] = g_ctx->dynamicBufferOffset;
-                g_ctx->dynamicBufferOffset += alignedSize;
+            if (g_ctx->dynamicBufferOffset + alignedSize > MetalContext::DYNAMIC_BUFFER_SIZE) {
+                g_ctx->dynamicBufferOffset = 0;
             }
+            uint8_t* ptr = static_cast<uint8_t*>(g_ctx->dynamicBuffer->contents());
+            std::memcpy(ptr + g_ctx->dynamicBufferOffset, data, size);
+            g_ctx->lastDynamicOffsets[handle] = g_ctx->dynamicBufferOffset;
+            g_ctx->dynamicBufferOffset += alignedSize;
         }
         return true;
     }

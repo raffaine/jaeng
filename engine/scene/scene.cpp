@@ -96,10 +96,12 @@ void Scene::buildDrawList(const math::AABB& volume)
             dp.constant = matBg->constantBuffers[2];
         }
 
-        DrawBatch db { .pipeline = *pso, .material = proxy.material, .constant = matBg->constantBuffers[0] };
-        // In case shader expects frame constant buffer
-        if (matBg->constantBuffers.size() >= 2) {
-            db.cbFrame = matBg->constantBuffers[1];
+        DrawBatch db { .pipeline = *pso, .material = proxy.material };
+        if (matBg->constantBuffers.size() > 0) {
+            db.cbFrame = matBg->constantBuffers[0];
+        }
+        if (matBg->constantBuffers.size() > 1) {
+            db.constant = matBg->constantBuffers[1];
         }
         db.packets.push_back(std::move(dp));
 
@@ -167,9 +169,12 @@ void Scene::buildDrawList(const math::AABB& volume)
             dp.constant = matBg->constantBuffers[2];
         }
 
-        DrawBatch db { .pipeline = *pso, .material = proxy.material, .constant = matBg->constantBuffers[0] };
-        if (matBg->constantBuffers.size() >= 2) {
-            db.cbFrame = matBg->constantBuffers[1];
+        DrawBatch db { .pipeline = *pso, .material = proxy.material };
+        if (matBg->constantBuffers.size() > 0) {
+            db.cbFrame = matBg->constantBuffers[0];
+        }
+        if (matBg->constantBuffers.size() > 1) {
+            db.constant = matBg->constantBuffers[1];
         }
         db.packets.push_back(std::move(dp));
 

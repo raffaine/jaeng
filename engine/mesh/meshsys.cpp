@@ -130,7 +130,7 @@ result<const Mesh*> MeshSystem::getMesh(MeshHandle handle) const
 
 result<MeshHandle> MeshSystem::allocateSlot()
 {
-    for (size_t i = 0; i < MeshSystem::MAX_MESH_ENTRIES; ++i) {
+    for (size_t i = 1; i < MeshSystem::MAX_MESH_ENTRIES; ++i) {
         if (!slotUsage.test(i)) {
             slotUsage.set(i);
             return (MeshHandle)i;

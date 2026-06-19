@@ -2,6 +2,7 @@
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
 #include "ui/fontsys.h"
+#include "common/default_assets.h"
 #include "common/async/awaiters.h"
 #include <chrono>
 #include <thread>
@@ -45,6 +46,10 @@ namespace jaeng::platform {
         fileMan.initialize().orElse([this](auto) {
             platform_.show_message_box("Warning", "Failed to initialize FileManager.", MessageBoxType::Warning);
         });
+
+        // Register engine-level default fallback assets
+        RegisterDefaultAssets(fileMan);
+
         entityMan_ = std::make_shared<EntityManager>();
         fontSys_ = std::make_shared<FontSystem>(fileMan, renderer_.gfx);
         matSys_  = std::make_shared<MaterialSystem>(fileMan, renderer_.gfx);

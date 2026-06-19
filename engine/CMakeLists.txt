@@ -7,6 +7,8 @@ set(JAENG_SOURCES
   common/result.h
   common/app_state.h
   common/app_state.cpp
+  common/default_assets.h
+  common/default_assets.cpp
   common/async/task_scheduler.h
   common/async/task_scheduler.cpp
   common/async/task.h

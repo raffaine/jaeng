@@ -10,7 +10,7 @@ namespace jaeng {
 
 // Local helper for bitset
 static uint32_t firstAvailable(const std::bitset<MaterialSystem::MAX_MATERIALS>& bits) {
-    for (uint32_t i = 0; i < MaterialSystem::MAX_MATERIALS; ++i) {
+    for (uint32_t i = 1; i < MaterialSystem::MAX_MATERIALS; ++i) {
         if (!bits.test(i)) return i;
     }
     return static_cast<uint32_t>(-1);

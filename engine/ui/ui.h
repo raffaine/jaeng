@@ -56,6 +56,11 @@ struct UIVerticalLayout {
     float padding = 0.0f; // Simplified: uniform padding for now
 };
 
+struct UIHorizontalLayout {
+    float spacing = 0.0f;
+    float padding = 0.0f;
+};
+
 struct UITween {
     enum class Property { PositionX, PositionY, SizeX, SizeY, ColorAlpha };
     enum class Easing { Linear, EaseInOut };
@@ -120,12 +125,25 @@ public:
     UIBuilder& withBuffer(BufferHandle handle);
 
     UIBuilder& withVerticalLayout(float spacing, float padding = 0.0f);
+    UIBuilder& withHorizontalLayout(float spacing, float padding = 0.0f);
     UIBuilder& withTween(UITween::Property prop, float start, float end, float duration, UITween::Easing easing = UITween::Easing::Linear, bool isLooping = false, bool isPingPong = false);
+
+    template<typename T>
+    UIBuilder& widget(const T& w) {
+        w.build(*this);
+        // Assuming the widget's build() calls b.begin() and b.end(),
+        // current_ is restored to the parent.
+        // If we want to chain methods like .withTween *after* .widget(),
+        // we can't do it because the entity is already popped.
+        // The user must use the widget's struct properties (like we added in widgets.h).
+        return *this;
+    }
 
     UIBuilder& onClick(std::function<void()> callback);
     UIBuilder& onHover(std::function<void(bool)> callback);
 
     EntityID getCurrent() const { return current_; }
+    EntityManager& get_ecs() { return ecs_; }
 
 private:
     EntityManager& ecs_;

@@ -5,6 +5,7 @@
 #include <typeindex>
 #include <memory>
 #include <algorithm>
+#include <mutex>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -159,9 +160,11 @@ private:
     EntityID nextID = 1;
     std::vector<EntityID> entities;
     std::unordered_map<std::type_index, std::unique_ptr<IComponentPool>> pools;
+    std::mutex poolsMutex;
 
     template<typename T>
     ComponentPool<T>& getPool() {
+        std::lock_guard<std::mutex> lock(poolsMutex);
         auto it = pools.find(typeid(T));
         if (it == pools.end()) {
             it = pools.emplace(typeid(T), std::make_unique<ComponentPool<T>>()).first;

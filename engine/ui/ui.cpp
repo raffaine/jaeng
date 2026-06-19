@@ -72,14 +72,30 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
             }
 
             if (vLayout) {
+                float currentY = vLayout->padding; // Start at top, going down
                 for (EntityID c : childrenToPush) {
                     auto* childRt = ecs.getComponent<RectTransform>(c);
                     if (childRt) {
-                        childRt->anchorMin.y = 1.0f;
-                        childRt->anchorMax.y = 1.0f;
-                        childRt->pivot.y = 1.0f;
+                        childRt->anchorMin.y = 0.0f;
+                        childRt->anchorMax.y = 0.0f;
+                        childRt->pivot.y = 0.0f;
                         childRt->position.y = currentY;
-                        currentY -= (childRt->size.y + vLayout->spacing);
+                        currentY += (childRt->size.y + vLayout->spacing);
+                    }
+                }
+            }
+
+            auto* hLayout = ecs.getComponent<UIHorizontalLayout>(curr.entity);
+            if (hLayout) {
+                float currentX = hLayout->padding; // Start at left, going right
+                for (EntityID c : childrenToPush) {
+                    auto* childRt = ecs.getComponent<RectTransform>(c);
+                    if (childRt) {
+                        childRt->anchorMin.x = 0.0f;
+                        childRt->anchorMax.x = 0.0f;
+                        childRt->pivot.x = 0.0f;
+                        childRt->position.x = currentX;
+                        currentX += (childRt->size.x + hLayout->spacing);
                     }
                 }
             }
@@ -406,7 +422,16 @@ UIBuilder& UIBuilder::withBuffer(BufferHandle handle) {
 }
 
 UIBuilder& UIBuilder::withVerticalLayout(float spacing, float padding) {
-    ecs_.addComponent<UIVerticalLayout>(current_) = {spacing, padding};
+    auto& l = ecs_.addComponent<UIVerticalLayout>(current_);
+    l.spacing = spacing;
+    l.padding = padding;
+    return *this;
+}
+
+UIBuilder& UIBuilder::withHorizontalLayout(float spacing, float padding) {
+    auto& l = ecs_.addComponent<UIHorizontalLayout>(current_);
+    l.spacing = spacing;
+    l.padding = padding;
     return *this;
 }
 

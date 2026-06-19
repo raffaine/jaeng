@@ -58,12 +58,34 @@
 #include "entity/transform_sys.h"
 #include "animation/animation.h"
 #include "ui/ui.h"
+#include "ui/widgets.h"
 #include "common/math/ray.h"
 #include "scene/icamera.h"
 #include "scene/render_sys.h"
 
 using namespace jaeng;
 using namespace jaeng::platform;
+using namespace jaeng::ui;
+
+// Custom specialization demonstration: A HoloButton with specialized hover behavior and pulse tween
+struct HoloButton {
+    std::string text;
+    std::function<void()> onClick;
+    uint32_t font;
+
+    void build(UIBuilder& b) const {
+        b.widget(UIButton{
+            .text = text,
+            .color = {0.2f, 0.4f, 0.8f, 0.5f},
+            .hoverColor = {0.3f, 0.6f, 1.0f, 0.8f},
+            .onClick = onClick,
+            .fontHandle = font,
+            .onBuild = [](UIBuilder& b2) {
+                b2.withTween(UITween::Property::ColorAlpha, 0.3f, 0.7f, 1.0f, UITween::Easing::EaseInOut, true, true);
+            }
+        });
+    }
+};
 
 jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
     auto get_tid = []() {
@@ -86,8 +108,8 @@ jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
     }
 
     // Test Async Asset Pipeline
-    JAENG_LOG_INFO("Testing Async Asset Pipeline (loading /mem/material-test.json)...");
-    auto assetResult = co_await fileManager().loadAsync("/mem/material-test.json");
+    JAENG_LOG_INFO("Testing Async Asset Pipeline (loading /engine/ui/material.json)...");
+    auto assetResult = co_await fileManager().loadAsync("/engine/ui/material.json");
     if (assetResult.hasValue()) {
         auto val = std::move(assetResult).logError().value();
         JAENG_LOG_INFO("Async load success! Loaded {} bytes.", val.size());
@@ -196,7 +218,7 @@ void SandboxApp::updateServerData() {
     }
 #endif
 
-    // Connect to 127.0.0.1:12346
+    // Connect to 127.0.0.1:12347
     SOCKET_TYPE sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == INVALID_SOCKET_VAL) {
         JAENG_LOG_ERROR("Failed to create socket");
@@ -225,7 +247,6 @@ void SandboxApp::updateServerData() {
     if (res < 0) {
 #if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
         if (errno != EINPROGRESS) {
-            JAENG_LOG_ERROR("Connect failed immediately: {} (Port 12346)", errno);
             CLOSE_SOCKET(sock);
             serverTime_ = "Server Offline (Connect Error)";
             return;
@@ -255,9 +276,12 @@ void SandboxApp::updateServerData() {
         // Check if actually connected
         int error = 0;
         socklen_t len = sizeof(error);
-        getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0) {
+             CLOSE_SOCKET(sock);
+             serverTime_ = "Server Offline (Socket Error)";
+             return;
+        }
         if (error != 0) {
-             JAENG_LOG_ERROR("Socket error after select: {} (Port 12346)", error);
              CLOSE_SOCKET(sock);
              serverTime_ = "Server Offline (Connect Failed)";
              return;
@@ -270,33 +294,25 @@ void SandboxApp::updateServerData() {
     FD_SET(sock, &readfds);
     struct timeval tv_read;
     tv_read.tv_sec = 0;
-    tv_read.tv_usec = 100000; // 100ms timeout
+    tv_read.tv_usec = 200000; // 200ms timeout
 
     int activity = select((int)sock + 1, &readfds, NULL, NULL, &tv_read);
 
     if (activity > 0 && FD_ISSET(sock, &readfds)) {
-        char buffer[1024] = {0};
+        char buffer[1024];
+        std::memset(buffer, 0, 1024);
 #if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
-        int valread = read(sock, buffer, 1024);
+        int valread = read(sock, buffer, 1023);
 #else
-        int valread = recv(sock, buffer, 1024, 0);
+        int valread = recv(sock, buffer, 1023, 0);
 #endif
         if (valread > 0) {
             serverTime_ = std::string(buffer, valread);
-        } else if (valread == 0) {
-            serverTime_ = "Server Offline (EOF)";
         } else {
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
-            JAENG_LOG_ERROR("Server read error: {}", errno);
-#else
-            JAENG_LOG_ERROR("Server read error: {}", WSAGetLastError());
-#endif
-            serverTime_ = "Server Offline (Read Error)";
+            serverTime_ = "Server Offline (No Data)";
         }
-    } else if (activity == 0) {
-        serverTime_ = "Server Offline (Read Timeout)";
     } else {
-        serverTime_ = "Server Offline (Read Select Error)";
+        serverTime_ = "Server Offline (Timeout)";
     }
 
     CLOSE_SOCKET(sock);
@@ -313,40 +329,40 @@ void SandboxApp::updateServerData() {
 #define REFLECT_FILE "basic.json"
 
 // Compile-time string concatenation to build the JSON dynamically
-static const char* materialFileData = R"({
-  "name": "CheckerboardMaterial",
-  "shader": {
-    "vertex": ")" JAENG_SHADER_DIR "/compiled/basic_vs" SHADER_EXT R"(",
-    "pixel": ")" JAENG_SHADER_DIR "/compiled/basic_ps" SHADER_EXT R"(",
-    "reflection": ")" JAENG_SHADER_DIR "/include/" REFLECT_FILE R"("
-  },
-  "textures": [
-    {
-      "path": "/mem/checker.raw",
-      "width": 256,
-      "height": 256,
-      "sampler": {
-        "filter": "linear",
-        "addressModeU": "wrap",
-        "addressModeV": "wrap"
-      }
-    }
-  ],
-  "parameters": {
-    "color": [1.0, 1.0, 1.0, 1.0],
-    "roughness": 0.5,
-    "metallic": 0.0
-  },
-  "constantBuffers": [
-    { "name": "CBFrame", "size": 64, "binding": 1 },
-    { "name": "CBObject", "size": 96, "binding": 2 }
-  ],
-  "pipelineStates": {
-    "blend": { "enabled": false, "srcFactor": "one", "dstFactor": "zero" },
-    "rasterizer": { "cullMode": "back", "fillMode": "solid" },
-    "depthStencil": { "depthTest": true, "depthWrite": true }
-  }
-})";
+static const char* materialFileData = "{\n"
+  "  \"name\": \"CheckerboardMaterial\",\n"
+  "  \"shader\": {\n"
+  "    \"vertex\": \"shaders/compiled/basic_vs" SHADER_EXT "\",\n"
+  "    \"pixel\": \"shaders/compiled/basic_ps" SHADER_EXT "\",\n"
+  "    \"reflection\": \"shaders/include/" REFLECT_FILE "\"\n"
+  "  },\n"
+  "  \"textures\": [\n"
+  "    {\n"
+  "      \"path\": \"/engine/ui/checker.raw\",\n"
+  "      \"width\": 256,\n"
+  "      \"height\": 256,\n"
+  "      \"sampler\": {\n"
+  "        \"filter\": \"linear\",\n"
+  "        \"addressModeU\": \"wrap\",\n"
+  "        \"addressModeV\": \"wrap\"\n"
+  "      }\n"
+  "    }\n"
+  "  ],\n"
+  "  \"parameters\": {\n"
+  "    \"color\": [1.0, 1.0, 1.0, 1.0],\n"
+  "    \"roughness\": 0.5,\n"
+  "    \"metallic\": 0.0\n"
+  "  },\n"
+  "  \"constantBuffers\": [\n"
+  "    { \"name\": \"CBFrame\", \"size\": 64, \"binding\": 1 },\n"
+  "    { \"name\": \"CBObject\", \"size\": 96, \"binding\": 2 }\n"
+  "  ],\n"
+  "  \"pipelineStates\": {\n"
+  "    \"blend\": { \"enabled\": false, \"srcFactor\": \"one\", \"dstFactor\": \"zero\" },\n"
+  "    \"rasterizer\": { \"cullMode\": \"back\", \"fillMode\": \"solid\" },\n"
+  "    \"depthStencil\": { \"depthTest\": true, \"depthWrite\": true }\n"
+  "  }\n"
+  "}";
 
 SandboxApp::SandboxApp(IPlatform& platform)
     : IApplication(platform, AppConfig{
@@ -362,6 +378,7 @@ SandboxApp::SandboxApp(IPlatform& platform)
 {
     stateMachine_ = std::make_unique<jaeng::AppStateMachine>(*this);
 }
+
 bool SandboxApp::app_init() {
     setupAsync();
 
@@ -403,6 +420,7 @@ void SandboxApp::app_shutdown() {
 }
 
 void SandboxApp::tick(float dt) {
+    if (!isReady_) return;
     if (stateMachine_) stateMachine_->tick(dt);
     
     simTime_ += dt;
@@ -574,6 +592,7 @@ math::Ray SandboxApp::getRayFromMouse() const {
 
 void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     outQueue.clear();
+    if (!isReady_) return;
 
     // 1) Camera State
     if (auto* scene = sceneManager().getScene("Test")) {
@@ -680,77 +699,25 @@ void SandboxApp::app_on_event(const Event& ev) {
     }
 }
 
-static const char* uiMaterialFileData = R"({
-  "name": "UIMaterial",
-  "shader": {
-    "vertex": ")" JAENG_SHADER_DIR "/compiled/ui_vs" SHADER_EXT R"(",
-    "pixel": ")" JAENG_SHADER_DIR "/compiled/ui_ps" SHADER_EXT R"(",
-    "reflection": ")" JAENG_SHADER_DIR "/include/ui.json" R"("
-  },
-  "textures": [
-    {
-      "path": "/mem/white.raw",
-      "width": 1,
-      "height": 1,
-      "format": "rgba8",
-      "sampler": {
-        "filter": "nearest",
-        "addressModeU": "clamp",
-        "addressModeV": "clamp"
-      }
-    }
-  ],
-  "parameters": {
-    "color": [1.0, 1.0, 1.0, 1.0],
-    "roughness": 0.5,
-    "metallic": 0.0
-  },
-  "constantBuffers": [
-    { "name": "CBFrame", "size": 64, "binding": 1 },
-    { "name": "CBObject", "size": 96, "binding": 2 }
-  ],
-  "pipelineStates": {
-    "blend": { "enabled": true, "srcFactor": "src_alpha", "dstFactor": "one_minus_src_alpha" },
-    "rasterizer": { "cullMode": "none", "fillMode": "solid" },
-    "depthStencil": { "depthTest": false, "depthWrite": false }
-  }
-})";
-
 jaeng::async::FireAndForget SandboxApp::setupAsync() {
     co_await setupResourcesAsync();
     setupUI();
     co_await setupEntitiesAsync();
     setupAnimation();
+    isReady_ = true;
 }
 
 jaeng::async::Task<void> SandboxApp::setupResourcesAsync() {
-    uint32_t whitePixel = 0xFFFFFFFF;
-    fileManager().registerMemoryFile("/mem/white.raw", &whitePixel, sizeof(uint32_t));
-
-    const uint32_t W = 256, H = 256, CS = 32;
-    std::vector<uint32_t> pixels(W * H);
-    for (uint32_t y = 0; y < H; ++y) {
-        for (uint32_t x = 0; x < W; ++x) {
-            bool on = ((x / CS) ^ (y / CS)) & 1;
-            uint8_t c = on ? 255 : 30;
-            pixels[y * W + x] = (0xFFu << 24) | (c << 16) | (c << 8) | c;
-        }
-    }
-    fileManager().registerMemoryFile("/mem/checker.raw", pixels.data(), pixels.size() * sizeof(uint32_t));
-    fileManager().registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
-    fileManager().registerMemoryFile("/mem/ui-material.json", uiMaterialFileData, strlen(uiMaterialFileData));
-
     auto meshRawData = createCubeMeshBinary();
     fileManager().registerMemoryFile("/mem/mesh-test.raw", meshRawData.data(), meshRawData.size());
-
-    auto quadRawData = createQuadMeshBinary();
-    fileManager().registerMemoryFile("/mem/quad-test.raw", quadRawData.data(), quadRawData.size());
+    fileManager().registerMemoryFile("/mem/material-test.json", materialFileData, strlen(materialFileData));
 
     if (auto fontHandle = fontSystem().loadFont(JAENG_ASSET_DIR "/Roboto-Regular.ttf", 32.0f).logError()) {
         defaultFont_ = fontHandle.value();
     }
     
-    result<MaterialHandle> matHandle = co_await materialSystem().createMaterialAsync("/mem/ui-material.json");
+    // Use engine default UI material
+    result<MaterialHandle> matHandle = co_await materialSystem().createMaterialAsync("/engine/ui/material.json");
     if (auto matRes = std::move(matHandle).logError()) {
         uiMaterial_ = matRes.value();
     }
@@ -797,181 +764,108 @@ jaeng::async::Task<void> SandboxApp::setupEntitiesAsync() {
 }
 
 void SandboxApp::setupUI() {
-    auto quadMesh = meshSystem().loadMesh("/mem/quad-test.raw").orValue(0);
+    auto quadMesh = meshSystem().loadMesh("/engine/ui/quad.raw").orValue(0);
 
     UIBuilder builder(entityManager(), quadMesh, uiMaterial_, &renderer());
-    builder.begin("Server_Panel")
-        .withRect({300.0f, 100.0f}, {10.0f, 10.0f})
-        .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
-        .withPivot({0.0f, 0.0f})
-        .withZIndex(100)
-        .withColor({0.1f, 0.1f, 0.1f, 0.7f})
-        .begin("Restart_Button")
-            .withRect({140.0f, 40.0f}, {10.0f, 50.0f})
-            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
-            .withPivot({0.0f, 0.0f})
-            .withZIndex(110)
-            .withColor({0.6f, 0.2f, 0.2f, 1.0f})
-            .onClick([this](){ restartServer(); })
-            .onHover([this, e = builder.getCurrent()](bool hovered){
-                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
-                    ur->color = hovered ? glm::vec4(0.8f, 0.3f, 0.3f, 1.0f) : glm::vec4(0.6f, 0.2f, 0.2f, 1.0f);
+    
+    // Server Control Panel
+    builder.widget(UIPanel{
+        .name = "Server_Panel",
+        .size = {460, 110},
+        .pos = {10, 10},
+        .color = {0.1f, 0.1f, 0.1f, 0.7f},
+        .layout = UIPanel::Layout::Vertical,
+        .layoutSpacing = 5.0f, .layoutPadding = 10.0f,
+        .content = [&](UIBuilder& b) {
+            b.widget(UILabel{ .text = "Server Time: Offline", .fontHandle = defaultFont_, .outEntity = &serverTextEntity_ });
+            
+            // Buttons Row
+            b.widget(UIPanel{
+                .name = "Button_Row",
+                .size = {440, 45},
+                .color = {0,0,0,0}, // Transparent container
+                .layout = UIPanel::Layout::Horizontal,
+                .layoutSpacing = 10.0f,
+                .content = [&](UIBuilder& b2) {
+                    b2.widget(UIButton{ .text = "Restart Server", .size = {140, 40}, .onClick = [this](){ restartServer(); }, .fontHandle = defaultFont_ });
+                    b2.widget(UIButton{ .text = "Run Async Test", .size = {140, 40}, .onClick = [this](){ runAsyncTaskTest(); }, .fontHandle = defaultFont_ });
+                    b2.widget(UIButton{ .text = "Run Future Test", .size = {140, 40}, .onClick = [this](){ runFutureTest(); }, .fontHandle = defaultFont_ });
                 }
-            })
-            .begin("Restart_Text")
-                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
-                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
-                .withPivot({0.0f, 0.5f})
-                .withZIndex(120)
-                .withText("Restart Server", 24.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Async_Test_Button")
-            .withRect({140.0f, 40.0f}, {160.0f, 50.0f})
-            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
-            .withPivot({0.0f, 0.0f})
-            .withZIndex(110)
-            .withColor({0.2f, 0.6f, 0.2f, 1.0f})
-            .onClick([this](){ runAsyncTaskTest(); })
-            .onHover([this, e = builder.getCurrent()](bool hovered){
-                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
-                    ur->color = hovered ? glm::vec4(0.3f, 0.8f, 0.3f, 1.0f) : glm::vec4(0.2f, 0.6f, 0.2f, 1.0f);
-                }
-            })
-            .begin("Async_Test_Text")
-                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
-                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
-                .withPivot({0.0f, 0.5f})
-                .withZIndex(120)
-                .withText("Run Async Test", 24.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Future_Test_Button")
-            .withRect({140.0f, 40.0f}, {310.0f, 50.0f})
-            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
-            .withPivot({0.0f, 0.0f})
-            .withZIndex(110)
-            .withColor({0.2f, 0.2f, 0.6f, 1.0f})
-            .onClick([this](){ runFutureTest(); })
-            .onHover([this, e = builder.getCurrent()](bool hovered){
-                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
-                    ur->color = hovered ? glm::vec4(0.3f, 0.3f, 0.8f, 1.0f) : glm::vec4(0.2f, 0.2f, 0.6f, 1.0f);
-                }
-            })
-            .begin("Future_Test_Text")
-                .withRect({140.0f, 40.0f}, {5.0f, 0.0f})
-                .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
-                .withPivot({0.0f, 0.5f})
-                .withZIndex(120)
-                .withText("Run Future Test", 24.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Server_Time_Text", &serverTextEntity_)
-            .withRect({280.0f, 40.0f}, {10.0f, 10.0f})
-            .withAnchors({0.0f, 0.0f}, {0.0f, 0.0f})
-            .withPivot({0.0f, 0.0f})
-            .withZIndex(110)
-            .withText("Server Time: Offline", 24.0f, defaultFont_)
-        .end()
-    .end();
+            });
+        }
+    });
 
-    builder.begin("HUD_Panel")
-        .withRect({ 200.0f, 150.0f }, { -10.0f, -10.0f })
-        .withAnchors({ 1.0f, 1.0f }, { 1.0f, 1.0f })
-        .withPivot({ 1.0f, 1.0f })
-        .withZIndex(10)
-        .withColor({ 0.2f, 0.2f, 0.2f, 0.8f })
-        .begin("Selection_Button")
-            .withRect({ 150.0f, 50.0f }, { 0.0f, 0.0f })
-            .withAnchors({ 0.5f, 0.5f }, { 0.5f, 0.5f })
-            .withPivot({ 0.5f, 0.5f })
-            .withZIndex(20)
-            .withColor({ 0.4f, 0.4f, 0.8f, 1.0f })
-            .onClick([this]() { selectionState_.selectedEntity = static_cast<EntityID>(-1); })
-            .onHover([this, e = builder.getCurrent()](bool hovered) {
-                if (auto* ur = entityManager().getComponent<UIRenderable>(e)) {
-                    ur->color = hovered ? glm::vec4(0.6f, 0.6f, 1.0f, 1.0f) : glm::vec4(0.4f, 0.4f, 0.8f, 1.0f);
-                }
-            })
-            .begin("Selection_Text", &uiTextEntity_)
-                .withRect({ 150.0f, 50.0f }, { 10.0f, 0.0f })
-                .withAnchors({ 0.0f, 0.5f }, { 0.0f, 0.5f })
-                .withPivot({ 0.0f, 0.5f })
-                .withZIndex(30)
-                .withText("No Selection", 32.0f, defaultFont_)
-            .end()
-        .end()
-    .end();
+    // Selection HUD
+    builder.widget(UIPanel{
+        .name = "HUD_Panel",
+        .size = {200, 150},
+        .pos = {-10, -10},
+        .anchorMin = {1, 1}, .anchorMax = {1, 1}, .pivot = {1, 1},
+        .color = {0.2f, 0.2f, 0.2f, 0.8f},
+        .zIndex = 10,
+        .content = [&](UIBuilder& b) {
+            b.begin("Selection_Button") // Direct builder use for nested complex behavior
+                .withRect({150, 50})
+                .withAnchors({0.5f, 0.5f}, {0.5f, 0.5f})
+                .withPivot({0.5f, 0.5f})
+                .withColor({0.4f, 0.4f, 0.8f, 1.0f})
+                .onClick([this](){ selectionState_.selectedEntity = static_cast<EntityID>(-1); });
+            
+            EntityID selectionBtnEntity = b.getCurrent();
+            EntityManager* ecs = &b.get_ecs();
+            b.onHover([ecs, this, selectionBtnEntity](bool hovered) {
+                    if (selectionBtnEntity == static_cast<EntityID>(-1)) return;
+                    if (auto* ur = ecs->getComponent<UIRenderable>(selectionBtnEntity)) {
+                        ur->color = hovered ? glm::vec4(0.6f, 0.6f, 1.0f, 1.0f) : glm::vec4(0.4f, 0.4f, 0.8f, 1.0f);
+                    }
+                })
+                .begin("Selection_Text", &uiTextEntity_)
+                    .withRect({150, 50}, {10, 0})
+                    .withAnchors({0.0f, 0.5f}, {0.0f, 0.5f})
+                    .withPivot({0.0f, 0.5f})
+                    .withZIndex(30)
+                    .withText("No Selection", 32.0f, defaultFont_)
+                .end()
+            .end();
+        }
+    });
 
-    builder.begin("Presentation_Panel")
-        .withRect({ 200.0f, 180.0f }, { -10.0f, 10.0f })
-        .withAnchors({ 1.0f, 0.0f }, { 1.0f, 0.0f })
-        .withPivot({ 1.0f, 0.0f })
-        .withZIndex(100)
-        .withColor({ 0.1f, 0.1f, 0.1f, 0.7f })
-        .withVerticalLayout(10.0f, 10.0f)
-        .begin("Fifo_Button")
-            .withRect({ 180.0f, 40.0f })
-            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
-            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Fifo); })
-            .begin("Fifo_Text")
-                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Mode: V-Sync (Fifo)", 20.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Mailbox_Button")
-            .withRect({ 180.0f, 40.0f })
-            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
-            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Mailbox); })
-            .begin("Mailbox_Text")
-                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Mode: Mailbox", 20.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Immediate_Button")
-            .withRect({ 180.0f, 40.0f })
-            .withColor({ 0.3f, 0.3f, 0.3f, 1.0f })
-            .onClick([this](){ set_present_mode(jaeng::renderer::PresentMode::Immediate); })
-            .begin("Immediate_Text")
-                .withRect({ 180.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Mode: Immediate", 20.0f, defaultFont_)
-            .end()
-        .end()
-    .end();
+    // Custom Demonstration: Holo Presentation Mode Panel
+    builder.widget(UIPanel{
+        .name = "Presentation_Panel",
+        .size = {200, 200},
+        .pos = {-10, 10},
+        .anchorMin = {1, 0}, .anchorMax = {1, 0}, .pivot = {1, 0},
+        .color = {0.1f, 0.1f, 0.1f, 0.7f},
+        .zIndex = 100,
+        .layout = UIPanel::Layout::Vertical,
+        .layoutSpacing = 10.0f, .layoutPadding = 10.0f,
+        .content = [&](UIBuilder& b) {
+            b.widget(HoloButton{ "Mode: V-Sync", [this](){ set_present_mode(jaeng::renderer::PresentMode::Fifo); }, defaultFont_ });
+            b.widget(HoloButton{ "Mode: Mailbox", [this](){ set_present_mode(jaeng::renderer::PresentMode::Mailbox); }, defaultFont_ });
+            b.widget(HoloButton{ "Mode: Immediate", [this](){ set_present_mode(jaeng::renderer::PresentMode::Immediate); }, defaultFont_ });
+        }
+    });
 
-    builder.begin("List_Test_Panel")
-        .withRect({ 250.0f, 300.0f }, { 10.0f, 150.0f })
-        .withAnchors({ 0.0f, 0.5f }, { 0.0f, 0.5f })
-        .withPivot({ 0.0f, 0.5f })
-        .withZIndex(10)
-        .withColor({ 0.1f, 0.15f, 0.2f, 0.0f }) // Start invisible
-        .withTween(UITween::Property::ColorAlpha, 0.0f, 0.9f, 2.0f, UITween::Easing::EaseInOut, true, true) // Ping-pong fade
-        .withVerticalLayout(10.0f, 10.0f) // Spacing 10, padding 10
-        .begin("Item_1")
-            .withRect({ 230.0f, 40.0f })
-            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
-            .begin("Text_1")
-                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Lobby 1: King Table", 20.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Item_2")
-            .withRect({ 230.0f, 40.0f })
-            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
-            .begin("Text_2")
-                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Lobby 2: Empty", 20.0f, defaultFont_)
-            .end()
-        .end()
-        .begin("Item_3")
-            .withRect({ 230.0f, 40.0f })
-            .withColor({ 0.3f, 0.4f, 0.5f, 1.0f })
-            .begin("Text_3")
-                .withRect({ 230.0f, 40.0f }, { 5.0f, 0.0f })
-                .withText("Lobby 3: Full", 20.0f, defaultFont_)
-            .end()
-        .end()
-    .end();
+    // Dynamic List with Tween
+    builder.widget(UIPanel{
+        .name = "List_Test_Panel",
+        .size = {250, 300},
+        .pos = {10, 150},
+        .anchorMin = {0, 0.5f}, .anchorMax = {0, 0.5f}, .pivot = {0, 0.5f},
+        .color = {0.1f, 0.15f, 0.2f, 0.0f},
+        .zIndex = 10,
+        .layout = UIPanel::Layout::Vertical,
+        .layoutSpacing = 10.0f, .layoutPadding = 10.0f,
+        .onBuild = [](UIBuilder& b) {
+            b.withTween(UITween::Property::ColorAlpha, 0.0f, 0.9f, 2.0f, UITween::Easing::EaseInOut, true, true);
+        },
+        .content = [&](UIBuilder& b) {
+            b.widget(UIButton{ .text = "Lobby 1: King Table", .size = {230, 40}, .fontHandle = defaultFont_ });
+            b.widget(UIButton{ .text = "Lobby 2: Empty", .size = {230, 40}, .fontHandle = defaultFont_ });
+            b.widget(UIButton{ .text = "Lobby 3: Full", .size = {230, 40}, .fontHandle = defaultFont_ });
+        }
+    });
 }
 
 void SandboxApp::setupAnimation() {
