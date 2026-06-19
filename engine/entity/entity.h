@@ -118,8 +118,8 @@ public:
     EntityManager() = default;
     EntityManager(const EntityManager&) = delete;
     EntityManager& operator=(const EntityManager&) = delete;
-    EntityManager(EntityManager&&) noexcept = default;
-    EntityManager& operator=(EntityManager&&) noexcept = default;
+    EntityManager(EntityManager&&) noexcept = delete;
+    EntityManager& operator=(EntityManager&&) noexcept = delete;
 
     EntityID createEntity() {
         EntityID id = nextID++;
