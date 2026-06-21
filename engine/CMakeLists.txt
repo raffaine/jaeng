@@ -44,7 +44,10 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 
 add_library(jaeng STATIC ${JAENG_SOURCES})
+add_library(jaeng::engine ALIAS jaeng)
+
 target_compile_definitions(jaeng PUBLIC ${JAENG_PLATFORM_DEF})
+target_compile_features(jaeng PUBLIC cxx_std_23)
 
 if(WIN32)
   jaeng_configure_platform_win32(jaeng)

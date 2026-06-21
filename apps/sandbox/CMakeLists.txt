@@ -29,12 +29,12 @@ if(APPLE)
   )
 else()
   target_compile_definitions(sandbox PRIVATE 
-    "JAENG_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/shaders\""
+    "JAENG_SHADER_DIR=\"${JAENG_ROOT}/shaders\""
     "JAENG_ASSET_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
   )
 endif()
 
-target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shaders/include)
+target_include_directories(sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${JAENG_ROOT}/shaders/include)
 target_link_libraries(sandbox PRIVATE jaeng)
 
 if(APPLE)
@@ -44,7 +44,7 @@ if(APPLE)
   add_custom_command(TARGET sandbox POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderer_metal> $<TARGET_FILE_DIR:sandbox>/
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:TestServer> $<TARGET_FILE_DIR:sandbox>/
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:sandbox>/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${JAENG_ROOT}/shaders $<TARGET_FILE_DIR:sandbox>/shaders
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:sandbox>/assets
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Roboto-Regular.ttf $<TARGET_FILE_DIR:sandbox>/assets/Roboto-Regular.ttf
     COMMENT "Copying dependencies and shaders into sandbox bundle"
@@ -55,7 +55,7 @@ add_dependencies(sandbox TestServer compile_shaders)
 
 if(WIN32)
   # Visual Studio Project Settings
-  set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT sandbox)
+  set_property(DIRECTORY ${JAENG_ROOT} PROPERTY VS_STARTUP_PROJECT sandbox)
   set_target_properties(sandbox PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$(TargetDir)")
   if(JAENG_FORCE_VULKAN)
     add_dependencies(sandbox compile_shaders renderer_vulkan)
@@ -70,7 +70,7 @@ if(WIN32)
 
     find_path(PIX_INCLUDE_DIRS "pix3.h")
     target_include_directories(sandbox PRIVATE 
-      ${CMAKE_SOURCE_DIR}/shaders/include
+      ${JAENG_ROOT}/shaders/include
       ${PIX_INCLUDE_DIRS}
     )
 

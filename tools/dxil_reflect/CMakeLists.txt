@@ -4,7 +4,7 @@ project(dxil_reflect LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(ENGINE_ROOT ${CMAKE_SOURCE_DIR}/engine)
+set(ENGINE_ROOT ${JAENG_ROOT}/engine)
 
 add_executable(dxil_reflect dxil_reflect.cpp)
 target_compile_definitions(dxil_reflect PRIVATE ${JAENG_PLATFORM_DEF})
@@ -16,6 +16,5 @@ target_link_libraries(dxil_reflect PRIVATE dxcompiler.lib d3dcompiler.lib)
 
 # Set output directory for the tool
 set_target_properties(dxil_reflect PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tools
+    RUNTIME_OUTPUT_DIRECTORY ${JAENG_BIN_DIR}/tools
 )
-
