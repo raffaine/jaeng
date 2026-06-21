@@ -14,6 +14,10 @@
 #include <os/log.h>
 #endif
 
+#ifdef JAENG_ANDROID
+#include <android/log.h>
+#endif
+
 namespace jaeng {
 
 enum class LogLevel {
@@ -64,6 +68,16 @@ void log(LogLevel level, std::string_view fmt, Args&&... args) {
 #elif defined(JAENG_APPLE)
     os_log_t log_obj = os_log_create("com.sintropia.jaeng", "engine");
     os_log_with_type(log_obj, OS_LOG_TYPE_DEFAULT, "%{public}s", final_msg.c_str());
+#elif defined(JAENG_ANDROID)
+    int prio = ANDROID_LOG_INFO;
+    switch (level) {
+        case LogLevel::Debug:   prio = ANDROID_LOG_DEBUG; break;
+        case LogLevel::Info:    prio = ANDROID_LOG_INFO; break;
+        case LogLevel::Warning: prio = ANDROID_LOG_WARN; break;
+        case LogLevel::Error:   prio = ANDROID_LOG_ERROR; break;
+        default: break;
+    }
+    __android_log_print(prio, "JAENG", "%s", final_msg.c_str());
 #else
     if (use_stderr) {
         std::cerr << final_msg << std::flush;

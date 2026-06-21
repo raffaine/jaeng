@@ -70,7 +70,13 @@ private:
     // Simulation State
     std::vector<jaeng::EntityID> testEntities_;
     float simTime_ = 0.0f;
+    
+    // UI Entities
     jaeng::EntityID uiTextEntity_ = static_cast<jaeng::EntityID>(-1);
+    jaeng::EntityID serverTextEntity_ = static_cast<jaeng::EntityID>(-1);
+    jaeng::EntityID asyncStatusTextEntity_ = static_cast<jaeng::EntityID>(-1);
+    
+    // Default Material
     jaeng::FontHandle defaultFont_ = static_cast<jaeng::FontHandle>(-1);
     jaeng::MaterialHandle uiMaterial_ = 0;
 
@@ -81,7 +87,6 @@ private:
     std::unique_ptr<jaeng::platform::IProcess> serverProcess_;
     std::string serverTime_ = "Connecting...";
     float serverPollTimer_ = 0.0f;
-    jaeng::EntityID serverTextEntity_ = static_cast<jaeng::EntityID>(-1);
 
     std::unique_ptr<jaeng::AppStateMachine> stateMachine_;
 };

@@ -214,7 +214,7 @@ MousePos Win32Input::get_mouse_pos() const {
     return mousePos_;
 }
 
-std::unique_ptr<IPlatform> create_platform() {
+std::unique_ptr<IPlatform> create_platform(void*) {
     return std::make_unique<Win32Platform>();
 }
 

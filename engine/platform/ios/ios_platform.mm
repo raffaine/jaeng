@@ -357,7 +357,7 @@ int IOSPlatform::run(std::unique_ptr<IApplication> app) {
     return UIApplicationMain(0, nullptr, nil, NSStringFromClass([IOSAppDelegate class]));
 }
 
-std::unique_ptr<IPlatform> create_platform() { return std::make_unique<IOSPlatform>(); }
+std::unique_ptr<IPlatform> create_platform(void*) { return std::make_unique<IOSPlatform>(); }
 
 } // namespace jaeng::platform
 

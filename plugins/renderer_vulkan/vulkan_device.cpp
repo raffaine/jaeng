@@ -45,6 +45,11 @@ jaeng::result<> VulkanDevice::init(bool enableValidation) {
     if (has_extension(VK_KHR_WIN32_SURFACE_EXTENSION_NAME)) {
         extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
     }
+#elif defined(JAENG_ANDROID)
+    if (has_extension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME)) {
+        extensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
+        JAENG_LOG_DEBUG("Using Android Surface extension.");
+    }
 #elif defined(JAENG_LINUX)
     if (has_extension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME)) {
         extensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);

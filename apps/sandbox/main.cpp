@@ -13,6 +13,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#elif defined(JAENG_ANDROID)
+#include <android_native_app_glue.h>
 #endif
 
 using namespace jaeng::platform;
@@ -33,6 +35,13 @@ int APIENTRY WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     auto app = std::make_unique<SandboxApp>(*platform);
     return platform->run(std::move(app));
+}
+#elif defined(JAENG_ANDROID)
+void android_main(struct android_app* state) {
+    app_dummy(); // Prevents stripping of ANativeActivity_onCreate
+    auto platform = create_platform(state);
+    auto app = std::make_unique<SandboxApp>(*platform);
+    platform->run(std::move(app));
 }
 #else
 int main(int argc, char* argv[]) {

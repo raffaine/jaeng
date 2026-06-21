@@ -225,7 +225,7 @@ public:
 };
 
 // Factory function
-std::unique_ptr<IPlatform> create_platform();
+std::unique_ptr<IPlatform> create_platform(void* context = nullptr);
 
 // Platform-aware threading utilities
 namespace thread {

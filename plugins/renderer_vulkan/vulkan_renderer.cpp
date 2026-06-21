@@ -3,12 +3,17 @@
 #include <mutex>
 #include <filesystem>
 
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_ANDROID)
 
 #include <dlfcn.h>
-#include <wayland-client.h>
 
-#elif defined(JAENG_WIN32)
+#endif
+
+#ifdef JAENG_LINUX
+#include <wayland-client.h>
+#endif
+
+#if defined(JAENG_WIN32)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -27,7 +32,7 @@ namespace jaeng::renderer {
     struct VulkanLoader {
         void* handle = nullptr;
         VulkanLoader() {
-#ifdef JAENG_LINUX
+#if defined(JAENG_LINUX) || defined(JAENG_ANDROID)
             handle = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_GLOBAL);
             if (!handle) handle = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
             if (handle) {
@@ -170,14 +175,14 @@ static void vk_shutdown() {
     } catch (...) {
         JAENG_LOG_ERROR("vk_shutdown: caught exception during cleanup");
     }
-    
+
     // NOTE: We leak g_ctx here to avoid a persistent segfault on exit.
     g_ctx = nullptr;
 }
 
 static bool vk_begin_frame() {
     if (!g_ctx || g_ctx->swapchains.empty()) return false;
-    
+
     try {
         (void)g_ctx->device.device.waitForFences(g_ctx->inFlightFence, true, UINT64_MAX);
 
@@ -218,17 +223,30 @@ static SwapchainHandle vk_create_swapchain(const SwapchainDesc* desc) {
         JAENG_LOG_ERROR("Swapchain initialization failed");
         return 0;
     }
-    
+
     SwapchainHandle h = g_ctx->nextSwapchainHandle++;
     g_ctx->swapchains[h] = std::move(s);
     g_ctx->swapchainFormat = g_ctx->swapchains[h].format;
     return h;
 }
 
-static void vk_resize_swapchain(SwapchainHandle h, Extent2D size) {
-    auto it = g_ctx->swapchains.find(h);
-    if (it != g_ctx->swapchains.end()) {
-        it->second.resize(&g_ctx->device, size);
+static void vk_resize_swapchain(SwapchainHandle handle, Extent2D size) {
+    if (g_ctx && g_ctx->swapchains.count(handle)) {
+        g_ctx->swapchains[handle].resize(&g_ctx->device, size, g_ctx->platformWindow, g_ctx->platformDisplay);
+    }
+}
+
+static void vk_set_platform_drawable(void* drawable) {
+    if (g_ctx) {
+        g_ctx->platformWindow = drawable;
+#ifdef JAENG_ANDROID
+        for (auto& pair : g_ctx->swapchains) {
+            if (pair.second.surface) {
+                g_ctx->device.instance.destroySurfaceKHR(pair.second.surface);
+                pair.second.surface = nullptr;
+            }
+        }
+#endif
     }
 }
 
@@ -272,12 +290,12 @@ static void vk_present(SwapchainHandle h) {
             vk::SwapchainKHR swaps[] = { it->second.swapchain };
             uint32_t indices[] = { imageIndex };
             vk::PresentInfoKHR presentInfo(1, waitSems, 1, swaps, indices);
-            
+
             {
                 std::lock_guard<std::mutex> lock(g_ctx->graphicsQueueMutex);
                 (void)g_ctx->device.graphicsQueue.presentKHR(presentInfo);
             }
-            
+
         } catch (const vk::OutOfDateKHRError&) {
             JAENG_LOG_DEBUG("vk_present: Swapchain out of date, waiting for resize event.");
         } catch (const std::exception& e) {
@@ -396,7 +414,7 @@ static VertexLayoutHandle vk_create_vertex_layout(const VertexLayoutDesc* desc) 
     std::lock_guard<std::mutex> lock(g_ctx->resourceMutex);
     VertexLayoutHandle h = g_ctx->nextVertexLayoutHandle++;
     auto& vl = g_ctx->vertexLayouts[h];
-    
+
     vl.bindings.push_back({ 0, desc->stride, vk::VertexInputRate::eVertex });
     for (uint32_t i = 0; i < desc->attribute_count; ++i) {
         vk::Format format = vk::Format::eUndefined;
@@ -464,6 +482,7 @@ extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api)
     out_api->end_frame = vk_end_frame;
     out_api->create_swapchain = vk_create_swapchain;
     out_api->resize_swapchain = vk_resize_swapchain;
+    out_api->set_platform_drawable = vk_set_platform_drawable;
     out_api->set_present_mode = vk_set_present_mode;
     out_api->destroy_swapchain = vk_destroy_swapchain;
     out_api->get_current_backbuffer = vk_get_current_backbuffer;

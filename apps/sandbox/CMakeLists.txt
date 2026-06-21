@@ -16,6 +16,8 @@ elseif(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME "jaeng Sandbox"
     RESOURCE "Roboto-Regular.ttf"
   )
+elseif(ANDROID)
+  add_library(sandbox SHARED ${SANDBOX_SOURCES})
 else()
   add_executable(sandbox ${SANDBOX_SOURCES})
 endif()

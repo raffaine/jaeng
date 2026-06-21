@@ -9,7 +9,7 @@
         "nlohmann-json",
         "json-schema-validator",
         "vulkan-headers",
-        "vulkan-loader",
+        { "name": "vulkan-loader", "platform": "!android" },
         "stb",
         "spirv-cross"
     ]

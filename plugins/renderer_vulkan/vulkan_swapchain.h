@@ -29,7 +29,7 @@ struct VulkanSwapchain {
     jaeng::result<> init(VulkanDevice* device, void* window, void* display, const SwapchainDesc* desc, vk::SwapchainKHR oldSwapchain = nullptr);
     void shutdown(VulkanDevice* device);
     
-    void resize(VulkanDevice* device, Extent2D size);
+    void resize(VulkanDevice* device, Extent2D size, void* window = nullptr, void* display = nullptr);
     void set_present_mode(VulkanDevice* device, PresentMode mode);
     vk::Result acquireNextImage(VulkanDevice* device, vk::Semaphore signalSemaphore);
 };

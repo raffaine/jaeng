@@ -3,6 +3,8 @@
 
 #ifdef JAENG_WIN32
 #include <windows.h>
+#elif defined(JAENG_ANDROID)
+#include <android/native_window.h>
 #elif defined(JAENG_LINUX)
 #include <wayland-client.h>
 #endif
@@ -13,6 +15,9 @@ static vk::SurfaceKHR create_platform_surface(vk::Instance instance, void* windo
 #ifdef JAENG_WIN32
     vk::Win32SurfaceCreateInfoKHR info({}, GetModuleHandle(nullptr), (HWND)window);
     return instance.createWin32SurfaceKHR(info);
+#elif defined(JAENG_ANDROID)
+    vk::AndroidSurfaceCreateInfoKHR info({}, static_cast<ANativeWindow*>(window));
+    return instance.createAndroidSurfaceKHR(info);
 #elif defined(JAENG_LINUX)
     auto availableExtensions = vk::enumerateInstanceExtensionProperties();
     bool hasWayland = false;
@@ -163,7 +168,7 @@ void VulkanSwapchain::shutdown(VulkanDevice* device) {
     if (surface) device->instance.destroySurfaceKHR(surface);
 }
 
-void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
+void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size, void* window, void* display) {
     // Wait for GPU to finish current operations
     device->device.waitIdle();
 
@@ -188,7 +193,7 @@ void VulkanSwapchain::resize(VulkanDevice* device, Extent2D size) {
     desc.present_mode = lastPresentMode;
 
     // Note: window/display are ignored if 'surface' already exists, which it does.
-    auto res = init(device, nullptr, nullptr, &desc, oldSwapchain);
+    auto res = init(device, window, display, &desc, oldSwapchain);
     if (res.hasError()) {
         JAENG_LOG_ERROR("Failed to recreate swapchain during resize.");
     }

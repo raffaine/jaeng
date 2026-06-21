@@ -5,3 +5,59 @@
 /out/
 /shaders/include/
 /shaders/compiled/
+
+# -------------------------------------------------------------------------
+# Gradle & Build Directories
+# -------------------------------------------------------------------------
+.gradle/
+build/
+*/build/
+gradle-app.setting
+
+# Ignore Gradle GUI config
+gradle-app.setting
+
+# -------------------------------------------------------------------------
+# Android NDK & CMake (Native C++)
+# -------------------------------------------------------------------------
+# The .cxx folder holds massive amounts of Ninja and CMake intermediate files
+.cxx/
+*/.cxx/
+
+# Standard CMake caches and generated configs
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.ninja
+
+# -------------------------------------------------------------------------
+# Local Configuration (Never commit these)
+# -------------------------------------------------------------------------
+local.properties
+*.keystore
+!debug.keystore
+
+# -------------------------------------------------------------------------
+# Android Studio / IntelliJ IDEA
+# -------------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+
+# -------------------------------------------------------------------------
+# macOS / OS Specific
+# -------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride

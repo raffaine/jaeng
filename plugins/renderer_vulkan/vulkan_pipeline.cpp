@@ -71,7 +71,7 @@ jaeng::result<VulkanPipeline> create_vulkan_pipeline(VulkanDevice* device, Vulka
     }
     vk::PipelineColorBlendStateCreateInfo colorBlending({}, false, vk::LogicOp::eCopy, 1, &colorBlendAttachment);
     
-    vk::PipelineDepthStencilStateCreateInfo depthStencil({}, true, true, vk::CompareOp::eLessOrEqual, false, false);
+    vk::PipelineDepthStencilStateCreateInfo depthStencil({}, desc->depth_stencil.enableDepth, desc->depth_stencil.enableDepth, vk::CompareOp::eLessOrEqual, false, false);
 
     vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);
     std::vector<vk::DynamicState> dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };

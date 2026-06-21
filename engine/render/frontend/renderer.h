@@ -81,6 +81,14 @@ public:
 #ifdef JAENG_MACOS
             name = "librenderer_vulkan.dylib";
 #endif
+#ifdef __ANDROID__
+            if (plugin.load(name.c_str())) {
+                gfx = plugin.api;
+                JAENG_LOG_INFO("Loaded Vulkan renderer plugin.");
+            } else {
+                JAENG_LOG_WARN("Failed to load Vulkan renderer.");
+            }
+#else
             std::string fullPath = (std::filesystem::path(exeDir) / name).string();
 
             if (plugin.load(fullPath.c_str()) || plugin.load(name.c_str())) {
@@ -90,6 +98,7 @@ public:
                 JAENG_LOG_WARN("Failed to load Vulkan renderer, falling back to Metal if available.");
                 tryMetal = true;
             }
+#endif
         }
         
         if (tryMetal) {

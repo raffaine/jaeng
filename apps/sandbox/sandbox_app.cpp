@@ -26,7 +26,7 @@
 #include <mach-o/dyld.h>
 #endif
 
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS) || defined(JAENG_ANDROID)
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -96,6 +96,12 @@ jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
 
     JAENG_LOG_INFO("Async Task Started on thread {}", get_tid());
     
+    if (asyncStatusTextEntity_ != static_cast<EntityID>(-1)) {
+        if (auto* txt = entityManager().getComponent<UIText>(asyncStatusTextEntity_)) {
+            txt->text = "Async Test Running...";
+        }
+    }
+    
     // Simulate some work on a worker thread
     co_await jaeng::async::SwitchToWorker();
     JAENG_LOG_INFO("Async Task now on worker thread {}", get_tid());
@@ -122,11 +128,22 @@ jaeng::async::FireAndForget SandboxApp::runAsyncTaskTest() {
     co_await jaeng::async::SwitchToMainThread();
     JAENG_LOG_INFO("Async Task back on main thread {}", get_tid());
     
+    if (asyncStatusTextEntity_ != static_cast<EntityID>(-1)) {
+        if (auto* txt = entityManager().getComponent<UIText>(asyncStatusTextEntity_)) {
+            txt->text = "Async Test Completed!";
+        }
+    }
     platform().show_message_box("Async Test", "Background FireAndForget task completed successfully!", MessageBoxType::Info);
 }
 
 void SandboxApp::runFutureTest() {
     JAENG_LOG_INFO("Future Test Started");
+    
+    if (asyncStatusTextEntity_ != static_cast<EntityID>(-1)) {
+        if (auto* txt = entityManager().getComponent<UIText>(asyncStatusTextEntity_)) {
+            txt->text = "Future Test Running...";
+        }
+    }
     
     taskScheduler().enqueue_async([]() {
         JAENG_LOG_INFO("Future Test: Step 1 (Background)");
@@ -138,7 +155,12 @@ void SandboxApp::runFutureTest() {
         return result * 2;
     }).thenSync([this](int finalResult) {
         JAENG_LOG_INFO("Future Test: Final Step on main thread, result: {}", finalResult);
-        platform().show_message_box("Future Test", "Future chain completed with result: " + std::to_string(finalResult), MessageBoxType::Info);
+        if (asyncStatusTextEntity_ != static_cast<EntityID>(-1)) {
+            if (auto* txt = entityManager().getComponent<UIText>(asyncStatusTextEntity_)) {
+                txt->text = std::format("Future Test Completed: {}", finalResult);
+            }
+        }
+        platform().show_message_box("Future Test", std::format("Future completely successfully. Result: {}", finalResult), MessageBoxType::Info);
     });
 }
 
@@ -175,7 +197,7 @@ void SandboxApp::startServer() {
     
     auto binDir = std::filesystem::path(exeDir);
 
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_ANDROID)
     desc.command = (binDir / "TestServer").string();
 #else
     desc.command = (binDir / "TestServer.exe").string();
@@ -226,7 +248,7 @@ void SandboxApp::updateServerData() {
     }
 
     // Set non-blocking
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS) || defined(JAENG_ANDROID)
     int flags = fcntl(sock, F_GETFL, 0);
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 #else
@@ -237,7 +259,7 @@ void SandboxApp::updateServerData() {
     struct sockaddr_in serv_addr;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(12347);
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS) || defined(JAENG_ANDROID)
     serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 #else
     inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
@@ -245,7 +267,7 @@ void SandboxApp::updateServerData() {
 
     int res = connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (res < 0) {
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS) || defined(JAENG_ANDROID)
         if (errno != EINPROGRESS) {
             CLOSE_SOCKET(sock);
             serverTime_ = "Server Offline (Connect Error)";
@@ -301,7 +323,7 @@ void SandboxApp::updateServerData() {
     if (activity > 0 && FD_ISSET(sock, &readfds)) {
         char buffer[1024];
         std::memset(buffer, 0, 1024);
-#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS)
+#if defined(JAENG_LINUX) || defined(JAENG_MACOS) || defined(JAENG_IOS) || defined(JAENG_ANDROID)
         int valread = read(sock, buffer, 1023);
 #else
         int valread = recv(sock, buffer, 1023, 0);
@@ -771,13 +793,14 @@ void SandboxApp::setupUI() {
     // Server Control Panel
     builder.widget(UIPanel{
         .name = "Server_Panel",
-        .size = {460, 110},
+        .size = {460, 140},
         .pos = {10, 10},
         .color = {0.1f, 0.1f, 0.1f, 0.7f},
         .layout = UIPanel::Layout::Vertical,
         .layoutSpacing = 5.0f, .layoutPadding = 10.0f,
         .content = [&](UIBuilder& b) {
             b.widget(UILabel{ .text = "Server Time: Offline", .fontHandle = defaultFont_, .outEntity = &serverTextEntity_ });
+            b.widget(UILabel{ .text = "Async Test Status: Idle", .fontHandle = defaultFont_, .outEntity = &asyncStatusTextEntity_ });
             
             // Buttons Row
             b.widget(UIPanel{
@@ -799,7 +822,7 @@ void SandboxApp::setupUI() {
     builder.widget(UIPanel{
         .name = "HUD_Panel",
         .size = {200, 150},
-        .pos = {-10, -10},
+        .pos = {-10, -120},
         .anchorMin = {1, 1}, .anchorMax = {1, 1}, .pivot = {1, 1},
         .color = {0.2f, 0.2f, 0.2f, 0.8f},
         .zIndex = 10,

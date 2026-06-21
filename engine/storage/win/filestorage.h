@@ -25,6 +25,7 @@ public:
     void set_base_path(const std::string& path) override { basePath_ = path; }
     void set_path_resolver(std::function<std::string(const std::string&)> resolver) { resolver_ = resolver; }
     void set_exists_func(std::function<bool(const std::string&)> exists_func) { exists_func_ = exists_func; }
+    void set_load_func(std::function<std::vector<uint8_t>(const std::string&)> load_func) { load_func_ = load_func; }
 
     result<std::vector<uint8_t>> load(const std::string& path) override;
     async::Future<result<std::vector<uint8_t>>> loadAsync(const std::string& path) override;
@@ -39,6 +40,7 @@ private:
     std::string basePath_;
     std::function<std::string(const std::string&)> resolver_;
     std::function<bool(const std::string&)> exists_func_;
+    std::function<std::vector<uint8_t>(const std::string&)> load_func_;
     std::unordered_map<std::string, std::vector<uint8_t>> memoryFiles;
     mutable std::mutex storageMutex_;
     std::shared_ptr<EventBus> eventBus;

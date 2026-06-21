@@ -190,6 +190,11 @@ std::vector<uint8_t> FileManager::loadFromDisk(const std::string& path) {
 
     JAENG_LOG_INFO("[FileManager] Opening: {}", finalPath);
     
+    if (load_func_) {
+        auto data = load_func_(finalPath);
+        if (!data.empty()) return data;
+    }
+    
     std::ifstream file(finalPath, std::ios::binary);
     if (!file.is_open()) {
         JAENG_LOG_ERROR("[FileManager] Failed to open for read: {}", finalPath);

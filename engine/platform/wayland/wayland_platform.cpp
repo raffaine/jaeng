@@ -151,7 +151,7 @@ int WaylandPlatform::run(std::unique_ptr<IApplication> app) {
     return 0;
 }
 
-std::unique_ptr<IPlatform> create_platform() {
+std::unique_ptr<IPlatform> create_platform(void*) {
     return std::make_unique<WaylandPlatform>();
 }
 
