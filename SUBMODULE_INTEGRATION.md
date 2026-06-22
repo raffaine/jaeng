@@ -12,7 +12,7 @@ In your game's root directory, add the JAENG repository as a Git submodule:
 mkdir my_game
 cd my_game
 git init
-git submodule add https://github.com/sintropia/jaeng.git external/jaeng
+git submodule add https://github.com/raffaine/jaeng.git external/jaeng
 ```
 
 ## 2. Dependencies

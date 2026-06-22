@@ -71,6 +71,8 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
                 child = childRel ? childRel->nextSibling : static_cast<EntityID>(-1);
             }
 
+            std::reverse(childrenToPush.begin(), childrenToPush.end());
+
             if (vLayout) {
                 float currentY = vLayout->padding; // Start at top, going down
                 for (EntityID c : childrenToPush) {
@@ -78,7 +80,7 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
                     if (childRt) {
                         childRt->anchorMin.y = 0.0f;
                         childRt->anchorMax.y = 0.0f;
-                        childRt->pivot.y = 0.0f;
+                        childRt->pivot.y = 0.0f; // Pivot at the top of the child
                         childRt->position.y = currentY;
                         currentY += (childRt->size.y + vLayout->spacing);
                     }
@@ -322,12 +324,19 @@ UIBuilder::UIBuilder(EntityManager& ecs, MeshHandle defaultMesh, MaterialHandle 
 
 UIBuilder& UIBuilder::begin(const std::string& name, EntityID* outEntity) {
     EntityID e = ecs_.createEntity();
-    if (!stack_.empty()) {
-        ecs_.attachEntity(e, stack_.back());
+    EntityID parent = stack_.empty() ? static_cast<EntityID>(-1) : stack_.back();
+    if (parent != static_cast<EntityID>(-1)) {
+        ecs_.attachEntity(e, parent);
     }
     current_ = e;
     stack_.push_back(e);
-    ecs_.addComponent<RectTransform>(current_);
+    auto& rt = ecs_.addComponent<RectTransform>(current_);
+    if (parent != static_cast<EntityID>(-1)) {
+        auto* parentRt = ecs_.getComponent<RectTransform>(parent);
+        if (parentRt) {
+            rt.zIndex = parentRt->zIndex + 2;
+        }
+    }
 
     // Automatically add rendering components if defaults are provided
     if (defaultMesh_) ecs_.addComponent<MeshComponent>(current_) = {defaultMesh_};
