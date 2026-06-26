@@ -13,6 +13,8 @@ struct UIPanel {
     glm::vec2 anchorMax = {0,0};
     glm::vec2 pivot = {0,0};
     glm::vec4 color = {1,1,1,1};
+    uint32_t textureHandle = 0;
+    glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f};
     int32_t zIndex = 0;
     enum class Layout { None, Vertical, Horizontal } layout = Layout::None;
     float layoutSpacing = 0.0f;
@@ -26,6 +28,8 @@ struct UIPanel {
          .withAnchors(anchorMin, anchorMax)
          .withPivot(pivot)
          .withColor(color);
+        if (textureHandle != 0) b.withTexture(textureHandle);
+        if (uvRect != glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)) b.withUVRect(uvRect);
         if (zIndex != 0) b.withZIndex(zIndex);
         if (layout == Layout::Vertical) b.withVerticalLayout(layoutSpacing, layoutPadding);
         if (layout == Layout::Horizontal) b.withHorizontalLayout(layoutSpacing, layoutPadding);
@@ -46,6 +50,8 @@ struct UIButton {
     glm::vec2 pivot = {0,0};
     glm::vec4 color = {0.4f, 0.4f, 0.8f, 1.0f};
     glm::vec4 hoverColor = {0.6f, 0.6f, 1.0f, 1.0f};
+    uint32_t textureHandle = 0;
+    glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f};
     int32_t zIndex = 0;
     std::function<void()> onClick;
     uint32_t fontHandle = static_cast<uint32_t>(-1);
@@ -57,6 +63,8 @@ struct UIButton {
          .withAnchors(anchorMin, anchorMax)
          .withPivot(pivot)
          .withColor(color);
+        if (textureHandle != 0) b.withTexture(textureHandle);
+        if (uvRect != glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)) b.withUVRect(uvRect);
          
         EntityID e = b.getCurrent(); // Capture the correct entity ID here
         EntityManager* ecs = &b.get_ecs();

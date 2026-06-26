@@ -35,6 +35,7 @@ struct RectTransform {
 struct UIRenderable {
     glm::vec4 color{1.0f};
     uint32_t textureHandle = 0; // 0 means untextured
+    glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // UV offset {u_min, v_min, u_width, v_height}
 };
 
 struct UIText {
@@ -118,6 +119,7 @@ public:
 
     UIBuilder& withColor(glm::vec4 color);
     UIBuilder& withTexture(uint32_t textureHandle);
+    UIBuilder& withUVRect(glm::vec4 uvRect);
     UIBuilder& withText(const std::string& text, float fontSize, uint32_t fontHandle, glm::vec4 color = {1,1,1,1});
     
     UIBuilder& withMaterial(MaterialHandle handle);

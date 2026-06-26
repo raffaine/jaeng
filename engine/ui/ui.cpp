@@ -257,7 +257,7 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                 quadMesh,
                 uiMat,
                 cb,
-                {0.0f, 0.0f, 1.0f, 1.0f},
+                ur->uvRect,
                 ur->textureHandle
             };
             outCommands.push_back(cmd);
@@ -403,6 +403,13 @@ UIBuilder& UIBuilder::withTexture(uint32_t textureHandle) {
     auto* ur = ecs_.getComponent<UIRenderable>(current_);
     if (!ur) ur = &ecs_.addComponent<UIRenderable>(current_);
     ur->textureHandle = textureHandle;
+    return *this;
+}
+
+UIBuilder& UIBuilder::withUVRect(glm::vec4 uvRect) {
+    auto* ur = ecs_.getComponent<UIRenderable>(current_);
+    if (!ur) ur = &ecs_.addComponent<UIRenderable>(current_);
+    ur->uvRect = uvRect;
     return *this;
 }
 
