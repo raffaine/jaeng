@@ -60,11 +60,27 @@ for inp in inputs:
     else:
         stride += 16
 
+cbuffers = []
+for ubo in vs_refl.get("ubos", []):
+    cbuf = {
+        "name": ubo.get("name", ""),
+        "size": ubo.get("block_size", 0),
+        "variables": []
+    }
+    for mem in ubo.get("members", []):
+        cbuf["variables"].append({
+            "name": mem.get("name", ""),
+            "offset": mem.get("offset", 0),
+            "size": mem.get("size", 0)
+        })
+    cbuffers.append(cbuf)
+
 out_data = {
     "name": pipeline_name,
     "stride": stride,
     "attributes": attributes,
-    "bindings": []
+    "bindings": [],
+    "cbuffers": cbuffers
 }
 
 os.makedirs(os.path.dirname(out_base), exist_ok=True)

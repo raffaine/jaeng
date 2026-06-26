@@ -29,6 +29,8 @@ find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 find_package(Stb REQUIRED)
+find_path(CGLTF_INCLUDE_DIRS "cgltf.h" REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 
 if(UNIX AND NOT APPLE AND NOT ANDROID)
   find_package(PkgConfig REQUIRED)

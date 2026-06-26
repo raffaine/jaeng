@@ -278,6 +278,24 @@ result<MaterialHandle> MaterialSystem::_createMaterialMetadata(IFileManager& fm,
     JAENG_TRY_ASSIGN(auto fdata, fm.load(path));
     auto matJson = json::parse(fdata.begin(), fdata.end());
     auto mat = fromJsonInternal(matJson);
+    
+    // Load reflection to get uniform offsets
+    if (!mat.reflectPath.empty()) {
+        auto reflRes = _loadReflection(fm, mat.reflectPath);
+        if (!reflRes.hasError()) {
+            auto rd = std::move(reflRes).logError().value();
+            mat.constantBuffers.clear(); // Override JSON with real reflection data
+            for (const auto& cb : rd.cbuffers) {
+                CBData cbd;
+                cbd.name = cb.name;
+                cbd.size = cb.size;
+                cbd.binding = 0; // We'd get this from bindings if we needed it strictly matched, but let's just push it
+                cbd.variables = cb.variables;
+                mat.constantBuffers.push_back(cbd);
+            }
+        }
+    }
+
     auto h = MaterialHandle(firstAvailable(slotUsage));
     {
         std::lock_guard<std::mutex> lock(storageMutex);
@@ -311,6 +329,23 @@ result<MaterialSystem::ReflectionData> MaterialSystem::_loadReflection(IFileMana
         rd.attributes.push_back(ad);
         rd.semantics.push_back(sem);
     }
+    if (j.contains("cbuffers")) {
+        for (auto& cb : j["cbuffers"]) {
+            ReflectionData::CBufferReflect cbr;
+            cbr.name = cb["name"].get<std::string>();
+            cbr.size = cb["size"].get<uint32_t>();
+            if (cb.contains("variables")) {
+                for (auto& v : cb["variables"]) {
+                    cbr.variables.push_back({
+                        v["name"].get<std::string>(),
+                        v["offset"].get<uint32_t>(),
+                        v["size"].get<uint32_t>()
+                    });
+                }
+            }
+            rd.cbuffers.push_back(cbr);
+        }
+    }
     return rd;
 }
 
@@ -340,9 +375,58 @@ result<> MaterialSystem::_createMaterialResources(IFileManager& fm, Storage& mat
     }
     for (auto& cb : material.mat.constantBuffers) {
         BufferDesc bd{ cb.size, BufferUsage_Uniform };
-        material.bg.constantBuffers.push_back(gfx->create_buffer(&bd, nullptr));
+        
+        std::vector<uint8_t> shadow(cb.size, 0);
+        for (auto& var : cb.variables) {
+            auto itS = material.mat.scalarParams.find(var.name);
+            if (itS != material.mat.scalarParams.end() && var.size >= sizeof(float)) {
+                std::memcpy(shadow.data() + var.offset, &itS->second, sizeof(float));
+            }
+            auto itV = material.mat.vectorParams.find(var.name);
+            if (itV != material.mat.vectorParams.end() && var.size >= sizeof(glm::vec4)) {
+                std::memcpy(shadow.data() + var.offset, &itV->second, sizeof(glm::vec4));
+            }
+        }
+        
+        material.cbShadows.push_back(shadow);
+        material.bg.constantBuffers.push_back(gfx->create_buffer(&bd, shadow.data()));
     }
     return result<>{};
+}
+
+void MaterialSystem::setTextureSlot(MaterialHandle handle, uint32_t slotIndex, TextureHandle texture) {
+    std::lock_guard<std::mutex> lock(storageMutex);
+    auto it = storage.find(handle);
+    if (it != storage.end() && it->second) {
+        auto& bg = it->second->bg;
+        if (slotIndex < bg.textures.size() && slotIndex < bg.textureIndices.size()) {
+            bg.textures[slotIndex] = texture;
+            if (auto gfx = renderer.lock()) {
+                bg.textureIndices[slotIndex] = gfx->get_texture_index(texture);
+            }
+        }
+    }
+}
+
+void MaterialSystem::setFloatParam(MaterialHandle handle, const std::string& name, float value) {
+    std::lock_guard<std::mutex> lock(storageMutex);
+    auto it = storage.find(handle);
+    if (it != storage.end() && it->second) {
+        auto& mat = it->second->mat;
+        mat.scalarParams[name] = value;
+        
+        for (size_t i = 0; i < mat.constantBuffers.size(); ++i) {
+            for (const auto& var : mat.constantBuffers[i].variables) {
+                if (var.name == name && var.size >= sizeof(float)) {
+                    std::memcpy(it->second->cbShadows[i].data() + var.offset, &value, sizeof(float));
+                    if (auto gfx = renderer.lock()) {
+                        gfx->update_buffer(it->second->bg.constantBuffers[i], 0, it->second->cbShadows[i].data(), it->second->cbShadows[i].size());
+                    }
+                    return;
+                }
+            }
+        }
+    }
 }
 
 } // namespace jaeng

@@ -23,6 +23,8 @@ set(JAENG_SOURCES
   material/materialsys.cpp
   mesh/imeshsys.h
   mesh/meshsys.cpp
+  texture/itexturesys.h
+  texture/texturesys.cpp
   animation/animation.cpp
   entity/entity.h
   scene/scene.cpp
@@ -59,6 +61,7 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID)
   jaeng_configure_platform_wayland(jaeng)
 endif()
 
-target_include_directories(jaeng PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${Stb_INCLUDE_DIR})
+target_include_directories(jaeng PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${Stb_INCLUDE_DIR} ${CGLTF_INCLUDE_DIRS})
 target_link_libraries(jaeng PUBLIC renderer_api glm::glm)
 target_link_libraries(jaeng PUBLIC nlohmann_json::nlohmann_json nlohmann_json_schema_validator::validator)
+target_link_libraries(jaeng PUBLIC tinyobjloader::tinyobjloader)

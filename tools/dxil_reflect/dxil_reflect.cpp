@@ -32,11 +32,24 @@ struct ReflectData {
         uint32_t stageMask;           
         std::string name;
     };
+    
+    struct CBVar {
+        std::string name;
+        uint32_t offset;
+        uint32_t size;
+    };
+    
+    struct CBuffer {
+        std::string name;
+        uint32_t size;
+        std::vector<CBVar> variables;
+    };
 
     std::string name;
     std::vector<VSParam> vsParams;
     uint32_t stride;
     std::vector<BoundResource> bindings;
+    std::vector<CBuffer> cbuffers;
 };
 
 const char* get_typename(BindGroupEntryType t) {
@@ -93,6 +106,20 @@ void outputJson(const ReflectData& reflect, const char* outPath) {
             << ", \"stageMask\": " << b.stageMask << " }";
         out << ((++i == sz)? "\n" : ",\n");
     }
+    out << "  ],\n";
+    out << "  \"cbuffers\": [\n";
+    size_t c_i = 0;
+    for (const auto& cb : reflect.cbuffers) {
+        out << "    { \"name\": \"" << cb.name << "\", \"size\": " << cb.size << ", \"variables\": [\n";
+        for (size_t v_i = 0; v_i < cb.variables.size(); v_i++) {
+            const auto& var = cb.variables[v_i];
+            out << "      { \"name\": \"" << var.name << "\", \"offset\": " << var.offset << ", \"size\": " << var.size << " }";
+            if (v_i < cb.variables.size() - 1) out << ",";
+            out << "\n";
+        }
+        out << "    ] }";
+        out << ((++c_i == reflect.cbuffers.size())? "\n" : ",\n");
+    }
     out << "  ]\n}\n\n";
 }
 
@@ -148,32 +175,61 @@ ReflectData fromReflection(ID3D12ShaderReflection* vsr, ID3D12ShaderReflection* 
     auto add_binding = [&](BindGroupEntryType ty, uint32_t space, uint32_t slot, uint32_t count, uint32_t stage, std::string name) {
         if (space == 0 && (ty == BindGroupEntryType::Texture || ty == BindGroupEntryType::Sampler)) return;
         auto it = entries.find(name);
-        if (it == entries.end()) {
-            entries[name] = ReflectData::BoundResource{ty, slot, space, count, stage, std::move(name)};
-        } else {
-            it->second.stageMask |= stage;
-            it->second.arrayCount = std::max(it->second.arrayCount, count);
+    auto process_reflection = [&](ID3D12ShaderReflection* reflector, uint32_t stage_bit) {
+        if (!reflector) return;
+        D3D12_SHADER_DESC shaderDesc;
+        reflector->GetDesc(&shaderDesc);
+
+        for (UINT i = 0; i < shaderDesc.BoundResources; i++) {
+            D3D12_SHADER_INPUT_BIND_DESC b;
+            reflector->GetResourceBindingDesc(i, &b);
+            BindGroupEntryType ty = map_type(b.Type);
+            if (b.Space == 0 && (ty == BindGroupEntryType::Texture || ty == BindGroupEntryType::Sampler)) continue;
+            
+            auto it = entries.find(b.Name);
+            if (it == entries.end()) {
+                entries[b.Name] = ReflectData::BoundResource{ty, b.BindPoint, b.Space, b.BindCount, stage_bit, b.Name};
+            } else {
+                it->second.stageMask |= stage_bit;
+                it->second.arrayCount = std::max(it->second.arrayCount, b.BindCount);
+            }
+        }
+
+        for (UINT i = 0; i < shaderDesc.ConstantBuffers; i++) {
+            ID3D12ShaderReflectionConstantBuffer* cb = reflector->GetConstantBufferByIndex(i);
+            D3D12_SHADER_BUFFER_DESC cbDesc;
+            cb->GetDesc(&cbDesc);
+            
+            bool found = false;
+            for (auto& existing : r.cbuffers) {
+                if (existing.name == cbDesc.Name) { found = true; break; }
+            }
+            if (found) continue;
+            
+            ReflectData::CBuffer outCb;
+            outCb.name = cbDesc.Name;
+            outCb.size = cbDesc.Size;
+            for (UINT v = 0; v < cbDesc.Variables; v++) {
+                ID3D12ShaderReflectionVariable* var = cb->GetVariableByIndex(v);
+                D3D12_SHADER_VARIABLE_DESC varDesc;
+                var->GetDesc(&varDesc);
+                ReflectData::CBVar outVar;
+                outVar.name = varDesc.Name;
+                outVar.offset = varDesc.StartOffset;
+                outVar.size = varDesc.Size;
+                outCb.variables.push_back(outVar);
+            }
+            r.cbuffers.push_back(outCb);
         }
     };
 
-    D3D12_SHADER_DESC vsDesc, psDesc;
-    vsr->GetDesc(&vsDesc);
-    for (UINT i = 0; i < vsDesc.BoundResources; i++) {
-        D3D12_SHADER_INPUT_BIND_DESC b;
-        vsr->GetResourceBindingDesc(i, &b);
-        add_binding(map_type(b.Type), b.Space, b.BindPoint, b.BindCount, stage_bit_vertex(), b.Name);
-    }
-    if (psr) {
-        psr->GetDesc(&psDesc);
-        for (UINT i = 0; i < psDesc.BoundResources; i++) {
-            D3D12_SHADER_INPUT_BIND_DESC b;
-            psr->GetResourceBindingDesc(i, &b);
-            add_binding(map_type(b.Type), b.Space, b.BindPoint, b.BindCount, stage_bit_fragment(), b.Name);
-        }
-    }
+    process_reflection(vsr, stage_bit_vertex());
+    process_reflection(psr, stage_bit_fragment());
 
     for (auto& pair : entries) r.bindings.push_back(std::move(pair.second));
 
+    D3D12_SHADER_DESC vsDesc;
+    vsr->GetDesc(&vsDesc);
     r.stride = 0;
     for (UINT i = 0; i < vsDesc.InputParameters; i++) {
         D3D12_SIGNATURE_PARAMETER_DESC p;

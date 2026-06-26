@@ -1,6 +1,7 @@
 #include "platform/public/platform_api.h"
 #include "material/materialsys.h"
 #include "mesh/meshsys.h"
+#include "texture/texturesys.h"
 #include "ui/fontsys.h"
 #include "common/default_assets.h"
 #include "common/async/awaiters.h"
@@ -54,6 +55,7 @@ namespace jaeng::platform {
         fontSys_ = std::make_shared<FontSystem>(fileMan, renderer_.gfx);
         matSys_  = std::make_shared<MaterialSystem>(fileMan, renderer_.gfx);
         meshSys_ = std::make_shared<MeshSystem>(fileMan, renderer_.gfx);
+        texSys_  = std::make_shared<TextureSystem>(std::shared_ptr<IFileManager>(&fileMan, [](IFileManager*){}), renderer_.gfx);
         sceneMan_ = std::make_unique<SceneManager>(meshSys_, matSys_, renderer_.gfx);
 
         // Register event callback after all subsystems are initialized to avoid crashes on early events
@@ -88,6 +90,7 @@ namespace jaeng::platform {
         app_shutdown(); // Delegate to user app
         
         sceneMan_.reset();
+        texSys_.reset();
         meshSys_.reset();
         matSys_.reset();
         fontSys_.reset();

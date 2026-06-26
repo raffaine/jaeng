@@ -32,13 +32,21 @@ struct Mesh {
     size_t indexCount;
 };
 
+struct MeshImportDesc {
+    bool calculateNormals = false;
+    bool generateTangents = true;
+    float uniformScale = 1.0f;
+};
+
 class IMeshSystem {
 public:
+    virtual ~IMeshSystem() = default;
+
     // Load mesh from file (e.g., .obj or custom format)
-    virtual result<MeshHandle> loadMesh(const std::string& path) = 0;
+    virtual result<MeshHandle> loadMesh(const std::string& path, const MeshImportDesc& desc = {}) = 0;
 
     // Load mesh asynchronously
-    virtual async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path) = 0;
+    virtual async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path, const MeshImportDesc& desc = {}) = 0;
 
     // Remove mesh
     virtual result<void> removeMesh(MeshHandle handle) = 0;

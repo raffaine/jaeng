@@ -21,11 +21,9 @@ public:
                std::shared_ptr<RendererAPI> renderer)
         : renderer_(renderer), fileManager_(&fileManager) {}
 
-    // Load mesh from file (e.g., .obj or custom format)
-    result<MeshHandle> loadMesh(const std::string& path) override;
-
-    // Load mesh asynchronously
-    async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path) override;
+    // IMeshSystem interface
+    result<MeshHandle> loadMesh(const std::string& path, const MeshImportDesc& desc = {}) override;
+    async::Task<result<MeshHandle>> loadMeshAsync(const std::string& path, const MeshImportDesc& desc = {}) override;
 
     // Remove mesh
     result<void> removeMesh(MeshHandle handle) override;

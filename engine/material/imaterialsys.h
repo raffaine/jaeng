@@ -30,10 +30,17 @@ struct MaterialBindings {
     std::vector<uint32_t> samplerIndices;
 };
 
+struct CBVarData {
+    std::string name;
+    uint32_t offset;
+    uint32_t size;
+};
+
 struct CBData {
     std::string name;
     uint32_t size;
     uint32_t binding;
+    std::vector<CBVarData> variables;
 };
 
 struct TextureData {
@@ -98,6 +105,11 @@ public:
     // Destroy material
     virtual void destroyMaterial(MaterialHandle handle) = 0;
 
+    // Runtime Material Mutations
+    virtual void setTextureSlot(MaterialHandle material, uint32_t slotIndex, TextureHandle texture) = 0;
+    virtual void setFloatParam(MaterialHandle material, const std::string& name, float value) = 0;
+    virtual void setVectorParam(MaterialHandle material, const std::string& name, const glm::vec4& value) = 0;
+
     // Query GPU bindings for rendering
     virtual result<const MaterialBindings*> getBindData(MaterialHandle handle) const = 0;
 
@@ -108,8 +120,6 @@ public:
     virtual result<> reloadMaterial(MaterialHandle handle) = 0;
 
     // Update material parameters
-    virtual void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) = 0;
-
     // Event subscription for material changes
     virtual void subscribe(MaterialEventListener* listener) = 0;
 };

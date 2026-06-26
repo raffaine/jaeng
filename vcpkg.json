@@ -11,6 +11,8 @@
         "vulkan-headers",
         { "name": "vulkan-loader", "platform": "!android" },
         "stb",
-        "spirv-cross"
+        "spirv-cross",
+        "cgltf",
+        "tinyobjloader"
     ]
 }

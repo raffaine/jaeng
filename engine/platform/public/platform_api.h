@@ -13,6 +13,7 @@
 #include "entity/entity.h"
 #include "material/imaterialsys.h"
 #include "mesh/imeshsys.h"
+#include "texture/itexturesys.h"
 #include "render/frontend/renderer.h"
 #include "render/graph/render_graph.h"
 #include "scene/ipartition.h"
@@ -160,6 +161,7 @@ protected:
     EntityManager& entityManager() { return *entityMan_; }
     IMaterialSystem& materialSystem() { return *matSys_; }
     IMeshSystem& meshSystem() { return *meshSys_; }
+    ITextureSystem& textureSystem() { return *texSys_; }
     IFontSystem& fontSystem() { return *fontSys_; }
     SceneManager& sceneManager() { return *sceneMan_; }
     RendererAPI& renderer() { return *renderer_.gfx; }
@@ -196,6 +198,7 @@ private:
     std::shared_ptr<EntityManager> entityMan_;
     std::shared_ptr<IMaterialSystem> matSys_;
     std::shared_ptr<IMeshSystem> meshSys_;
+    std::shared_ptr<ITextureSystem> texSys_;
     std::shared_ptr<IFontSystem> fontSys_;
     std::unique_ptr<SceneManager> sceneMan_;
 };

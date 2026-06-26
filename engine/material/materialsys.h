@@ -44,6 +44,11 @@ public:
     void destroyMaterial(MaterialHandle handle) override;
 
     // Query GPU bindings for rendering
+    // Runtime Material Mutations
+    void setTextureSlot(MaterialHandle material, uint32_t slotIndex, TextureHandle texture) override;
+    void setFloatParam(MaterialHandle material, const std::string& name, float value) override;
+    void setVectorParam(MaterialHandle material, const std::string& name, const glm::vec4& value) override;
+
     result<const MaterialBindings*> getBindData(MaterialHandle handle) const override;
     
     // Query Metadata about the material
@@ -51,9 +56,6 @@ public:
 
     // Hot-reload material
     result<> reloadMaterial(MaterialHandle handle) override;
-
-    // Update material parameters
-    void setVectorParam(MaterialHandle handle, const std::string& name, const glm::vec4& value) override;
 
     // Event subscription for material changes
     void subscribe(MaterialEventListener* listener) override {}
@@ -67,6 +69,7 @@ private:
     struct Storage {
         MaterialMetadata mat;
         MaterialBindings bg;
+        std::vector<std::vector<uint8_t>> cbShadows; // Shadow copy of constant buffers for parameter mutation
     };
 
     std::unordered_map<MaterialHandle, std::shared_ptr<Storage>> storage;
@@ -75,9 +78,17 @@ private:
     
     // Common Logic
     struct ReflectionData {
+        struct CBufferReflect {
+            std::string name;
+            uint32_t size;
+            std::vector<CBVarData> variables;
+        };
+
+        std::string name;
         uint32_t stride;
         std::vector<VertexAttributeDesc> attributes;
         std::vector<std::string> semantics;
+        std::vector<CBufferReflect> cbuffers;
     };
     result<ReflectionData> _loadReflection(IFileManager& fm, const std::string& path);
     result<MaterialHandle> _createMaterialMetadata(IFileManager& fm, const std::string& path);
