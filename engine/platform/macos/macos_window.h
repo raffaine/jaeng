@@ -19,8 +19,8 @@ public:
 
     void destroy() override;
     void* get_native_handle() const override;
-    uint32_t get_width() const override { return width_; }
-    uint32_t get_height() const override { return height_; }
+    uint32_t get_width() const override;
+    uint32_t get_height() const override;
     bool is_open() const override { return window_ != nullptr; }
 
 private:

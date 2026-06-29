@@ -28,6 +28,20 @@
         _callback(ev);
     }
 }
+
+- (void)windowDidResize:(NSNotification *)notification {
+    if (_callback) {
+        NSWindow* window = [notification object];
+        NSView* view = [window contentView];
+        NSRect bounds = [view bounds];
+        
+        jaeng::platform::Event ev{};
+        ev.type = jaeng::platform::Event::Type::WindowResize;
+        ev.resize.width = (uint32_t)bounds.size.width;
+        ev.resize.height = (uint32_t)bounds.size.height;
+        _callback(ev);
+    }
+}
 @end
 
 @implementation MacOSAppDelegate
