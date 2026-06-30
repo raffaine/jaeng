@@ -222,6 +222,13 @@ void vk_cmd_set_index_buffer(CommandListHandle, BufferHandle h, bool index32, ui
     g_ctx->commandBuffer.bindIndexBuffer(it->second.buffer, offset, index32 ? vk::IndexType::eUint32 : vk::IndexType::eUint16);
 }
 
+void vk_cmd_set_scissor(CommandListHandle, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    vk::Rect2D scissor{};
+    scissor.offset = vk::Offset2D{(int32_t)x, (int32_t)y};
+    scissor.extent = vk::Extent2D{width, height};
+    g_ctx->commandBuffer.setScissor(0, 1, &scissor);
+}
+
 void vk_cmd_bind_uniform(CommandListHandle, uint32_t slot, BufferHandle h, uint64_t offset) {
     if (!g_ctx) return;
     auto it = g_ctx->buffers.find(h);

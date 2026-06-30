@@ -22,10 +22,11 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
     struct Node {
         EntityID entity;
         RectTransform::WorldRect parentRect;
+        glm::vec4 parentClipRect;
     };
     std::vector<Node> workStack;
     for (auto e : stack) {
-        workStack.push_back({e, {0.0f, 0.0f, screenW, screenH}});
+        workStack.push_back({e, {0.0f, 0.0f, screenW, screenH}, {0.0f, 0.0f, -1.0f, -1.0f}});
     }
 
     while (!workStack.empty()) {
@@ -56,6 +57,25 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
         rt->worldRect.y = anchorCenterY + rt->position.y - pivotOffsetY;
         rt->worldRect.w = finalW;
         rt->worldRect.h = finalH;
+
+        glm::vec4 myClip = curr.parentClipRect;
+        auto* scrollComp = ecs.getComponent<UIScrollComponent>(curr.entity);
+        if (scrollComp) {
+            glm::vec4 rect = {rt->worldRect.x, rt->worldRect.y, rt->worldRect.w, rt->worldRect.h};
+            if (myClip.w < 0) {
+                myClip = rect;
+            } else {
+                float x1 = std::max(myClip.x, rect.x);
+                float y1 = std::max(myClip.y, rect.y);
+                float x2 = std::min(myClip.x + myClip.z, rect.x + rect.z);
+                float y2 = std::min(myClip.y + myClip.w, rect.y + rect.w);
+                myClip.x = x1;
+                myClip.y = y1;
+                myClip.z = std::max(0.0f, x2 - x1);
+                myClip.w = std::max(0.0f, y2 - y1);
+            }
+        }
+        rt->clipRect = myClip;
 
         // Push children
         auto* rel = ecs.getComponent<Relationship>(curr.entity);
@@ -102,29 +122,52 @@ void UILayoutSystem::update(EntityManager& ecs, float screenW, float screenH) {
                 }
             }
 
+            if (scrollComp) {
+                float maxX = 0.0f;
+                float maxY = 0.0f;
+                for (EntityID c : childrenToPush) {
+                    auto* childRt = ecs.getComponent<RectTransform>(c);
+                    if (childRt) {
+                        maxX = std::max(maxX, childRt->position.x + childRt->size.x);
+                        maxY = std::max(maxY, childRt->position.y + childRt->size.y);
+                    }
+                }
+                scrollComp->contentSize.x = std::max(0.0f, maxX);
+                scrollComp->contentSize.y = std::max(0.0f, maxY);
+            }
+
+            RectTransform::WorldRect childParentRect = rt->worldRect;
+            if (scrollComp) {
+                childParentRect.x -= scrollComp->scrollOffset.x;
+                childParentRect.y -= scrollComp->scrollOffset.y;
+            }
+
             for (auto it = childrenToPush.rbegin(); it != childrenToPush.rend(); ++it) {
-                workStack.push_back({*it, rt->worldRect});
+                workStack.push_back({*it, childParentRect, myClip});
             }
         }
     }
 }
 
-void UIInteractionSystem::update(EntityManager& ecs, float mouseX, float mouseY, bool isLeftMouseDown, bool& outInputConsumed) {
+void UIInteractionSystem::update(EntityManager& ecs, float mouseX, float mouseY, bool isLeftMouseDown, float scrollDeltaX, float scrollDeltaY, bool& outInputConsumed) {
     outInputConsumed = false;
 
     struct UIElement {
         EntityID id;
         RectTransform* rt;
         UIInteractable* interactable;
+        UIScrollComponent* scrollComp;
     };
     std::vector<UIElement> elements;
     
-    const auto& entities = ecs.getAllEntities<UIInteractable>();
+    // Find all entities with RectTransform
+    const auto& entities = ecs.getAllEntities<RectTransform>();
     for (auto e : entities) {
         auto* rt = ecs.getComponent<RectTransform>(e);
         auto* interactable = ecs.getComponent<UIInteractable>(e);
-        if (rt && interactable) {
-            elements.push_back({e, rt, interactable});
+        auto* scrollComp = ecs.getComponent<UIScrollComponent>(e);
+        if (rt && (interactable || scrollComp)) {
+            elements.push_back({e, rt, interactable, scrollComp});
         }
     }
 
@@ -133,15 +176,20 @@ void UIInteractionSystem::update(EntityManager& ecs, float mouseX, float mouseY,
         return a.rt->zIndex > b.rt->zIndex;
     });
 
-    for (auto& el : elements) {
-        bool wasHovered = el.interactable->isHovered;
-        bool wasPressed = el.interactable->isPressed;
+    bool pointerConsumed = outInputConsumed;
+    bool scrollConsumed = (scrollDeltaX == 0.0f && scrollDeltaY == 0.0f);
 
-        el.interactable->isHovered = false;
+    for (auto& el : elements) {
+        bool wasHovered = el.interactable ? el.interactable->isHovered : false;
+        bool wasPressed = el.interactable ? el.interactable->isPressed : false;
+
+        if (el.interactable) el.interactable->isHovered = false;
         
-        if (outInputConsumed) {
-            el.interactable->isPressed = false;
-            if (wasHovered && el.interactable->onHover) el.interactable->onHover(false);
+        if (pointerConsumed && scrollConsumed) {
+            if (el.interactable) {
+                el.interactable->isPressed = false;
+                if (wasHovered && el.interactable->onHover) el.interactable->onHover(false);
+            }
             continue;
         }
 
@@ -151,28 +199,57 @@ void UIInteractionSystem::update(EntityManager& ecs, float mouseX, float mouseY,
         float w = el.rt->worldRect.w;
         float h = el.rt->worldRect.h;
 
-        if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) {
-            el.interactable->isHovered = true;
-            outInputConsumed = true; // Consume input
-
-            if (isLeftMouseDown) {
-                el.interactable->isPressed = true;
-            } else {
-                el.interactable->isPressed = false;
-                // Click happens on MouseUp while hovered
-                if (wasPressed && el.interactable->onClick) {
-                    el.interactable->onClick();
-                }
-            }
-        } else {
-            el.interactable->isPressed = false;
+        // Apply clip rect if it exists
+        if (el.rt->clipRect.w >= 0.0f) {
+            x = std::max(x, el.rt->clipRect.x);
+            y = std::max(y, el.rt->clipRect.y);
+            float right = std::min(el.rt->worldRect.x + w, el.rt->clipRect.x + el.rt->clipRect.z);
+            float bottom = std::min(el.rt->worldRect.y + h, el.rt->clipRect.y + el.rt->clipRect.w);
+            w = std::max(0.0f, right - x);
+            h = std::max(0.0f, bottom - y);
         }
 
-        // Hover callbacks
-        if (!wasHovered && el.interactable->isHovered) {
-            if (el.interactable->onHover) el.interactable->onHover(true);
-        } else if (wasHovered && !el.interactable->isHovered) {
-            if (el.interactable->onHover) el.interactable->onHover(false);
+        if (w <= 0.0f || h <= 0.0f) {
+            if (el.interactable) {
+                el.interactable->isPressed = false;
+                if (wasHovered && el.interactable->onHover) el.interactable->onHover(false);
+            }
+            continue;
+        }
+
+        if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) {
+            if (!scrollConsumed && el.scrollComp) {
+                if (el.scrollComp->showScrollbarHorizontal) el.scrollComp->scrollOffset.x -= scrollDeltaX;
+                if (el.scrollComp->showScrollbarVertical) el.scrollComp->scrollOffset.y -= scrollDeltaY;
+                float maxScrollX = std::max(0.0f, el.scrollComp->contentSize.x - el.rt->worldRect.w);
+                float maxScrollY = std::max(0.0f, el.scrollComp->contentSize.y - el.rt->worldRect.h);
+                el.scrollComp->scrollOffset.x = std::clamp(el.scrollComp->scrollOffset.x, 0.0f, maxScrollX);
+                el.scrollComp->scrollOffset.y = std::clamp(el.scrollComp->scrollOffset.y, 0.0f, maxScrollY);
+                scrollConsumed = true;
+                outInputConsumed = true;
+            }
+
+            if (!pointerConsumed && el.interactable) {
+                el.interactable->isHovered = true;
+                pointerConsumed = true;
+                outInputConsumed = true;
+                if (!wasHovered && el.interactable->onHover) el.interactable->onHover(true);
+
+                if (isLeftMouseDown) {
+                    el.interactable->isPressed = true;
+                } else if (wasPressed && !isLeftMouseDown) {
+                    el.interactable->isPressed = false;
+                    if (el.interactable->onClick) el.interactable->onClick();
+                }
+            } else if (pointerConsumed && el.interactable) {
+                el.interactable->isPressed = false;
+                if (wasHovered && el.interactable->onHover) el.interactable->onHover(false);
+            }
+        } else {
+            if (el.interactable) {
+                el.interactable->isPressed = false;
+                if (wasHovered && el.interactable->onHover) el.interactable->onHover(false);
+            }
         }
     }
 }
@@ -260,6 +337,7 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                 ur->uvRect,
                 ur->textureHandle
             };
+            cmd.uiProxy.clipRect = rt->clipRect;
             outCommands.push_back(cmd);
         }
 
@@ -309,6 +387,8 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                             {u0, v0, u1 - u0, v1 - v0},
                             fontData->texture
                         };
+                        cmd.uiProxy.clipRect = rt->clipRect;
+
                         outCommands.push_back(cmd);
 
                         x += glyph.xadvance * fontScale;
@@ -441,6 +521,54 @@ UIBuilder& UIBuilder::withVerticalLayout(float spacing, float padding) {
     auto& l = ecs_.addComponent<UIVerticalLayout>(current_);
     l.spacing = spacing;
     l.padding = padding;
+    return *this;
+}
+
+
+
+UIBuilder& UIBuilder::beginScrollContainer(const std::string& name, bool vertical, bool horizontal) {
+    auto e = ecs_.createEntity();
+    current_ = e;
+    
+    // Add RectTransform
+    auto& rt = ecs_.addComponent<RectTransform>(e);
+
+    auto& scroll = ecs_.addComponent<UIScrollComponent>(e);
+    scroll.showScrollbarVertical = vertical;
+    scroll.showScrollbarHorizontal = horizontal;
+
+    if (!stack_.empty()) {
+        EntityID parent = stack_.back();
+        auto& rel = ecs_.addComponent<Relationship>(e);
+        rel.parent = parent;
+
+        auto* parentRel = ecs_.getComponent<Relationship>(parent);
+        if (!parentRel) {
+            parentRel = &ecs_.addComponent<Relationship>(parent);
+        }
+
+        if (parentRel->firstChild == static_cast<EntityID>(-1)) {
+            parentRel->firstChild = e;
+        } else {
+            EntityID curr = parentRel->firstChild;
+            while (true) {
+                auto* currRel = ecs_.getComponent<Relationship>(curr);
+                if (currRel->nextSibling == static_cast<EntityID>(-1)) {
+                    currRel->nextSibling = e;
+                    break;
+                }
+                curr = currRel->nextSibling;
+            }
+        }
+    }
+    stack_.push_back(e);
+    return *this;
+}
+
+UIBuilder& UIBuilder::endScrollContainer() {
+    if (!stack_.empty()) {
+        stack_.pop_back();
+    }
     return *this;
 }
 

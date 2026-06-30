@@ -458,7 +458,8 @@ void SandboxApp::tick(float dt) {
 
     // 2) Process UI Interaction
     bool inputConsumed = false;
-    UIInteractionSystem::update(entityManager(), static_cast<float>(inputState_.mousePos.x), static_cast<float>(inputState_.mousePos.y), isLeftDown, inputConsumed);
+    UIInteractionSystem::update(entityManager(), static_cast<float>(inputState_.mousePos.x), static_cast<float>(inputState_.mousePos.y), isLeftDown, 0.0f, inputState_.mouseScroll, inputConsumed);
+    inputState_.mouseScroll = 0.0f;
 
     if (!inputConsumed) {
         updateCamera(dt);
@@ -880,13 +881,18 @@ void SandboxApp::setupUI() {
         .zIndex = 10,
         .layout = UIPanel::Layout::Vertical,
         .layoutSpacing = 10.0f, .layoutPadding = 10.0f,
-        .onBuild = [](UIBuilder& b) {
+        .onBuild = [&](UIBuilder& b) {
             b.withTween(UITween::Property::ColorAlpha, 0.0f, 0.9f, 2.0f, UITween::Easing::EaseInOut, true, true);
-        },
-        .content = [&](UIBuilder& b) {
-            b.widget(UIButton{ .text = "Lobby 1: King Table", .size = {230, 40}, .fontHandle = defaultFont_ });
-            b.widget(UIButton{ .text = "Lobby 2: Empty", .size = {230, 40}, .fontHandle = defaultFont_ });
-            b.widget(UIButton{ .text = "Lobby 3: Full", .size = {230, 40}, .fontHandle = defaultFont_ });
+            b.widget(UIScrollContainer{
+                .name = "LobbyScroll",
+                .size = {230, 280},
+                .content = [&](UIBuilder& sb) {
+                    sb.withVerticalLayout(5.0f);
+                    for (int i = 0; i < 20; ++i) {
+                        sb.widget(UIButton{ .text = "Lobby " + std::to_string(i + 1) + ": Test Room", .size = {230, 40}, .fontHandle = defaultFont_ });
+                    }
+                }
+            });
         }
     });
 }

@@ -882,6 +882,16 @@ void RendererD3D12::cmd_set_index_buffer(CommandListHandle, BufferHandle h, bool
     cl->IASetIndexBuffer(&ibv);
 }
 
+void RendererD3D12::cmd_set_scissor(CommandListHandle, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    D3D12_RECT rect;
+    rect.left = static_cast<LONG>(x);
+    rect.top = static_cast<LONG>(y);
+    rect.right = static_cast<LONG>(x + width);
+    rect.bottom = static_cast<LONG>(y + height);
+    curFrame().cmd()->RSSetScissorRects(1, &rect);
+}
+
 void RendererD3D12::cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t inst_count,
                              uint32_t first_vtx, uint32_t first_inst)
 {
@@ -977,7 +987,7 @@ extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api)
     api.init       = [](const RendererDesc* d) { return g_renderer->init(d).logError().has_value(); };
     api.shutdown = []{ g_renderer->shutdown(); };
     api.begin_frame = []{ return g_renderer->begin_frame(); };
-    api.end_frame = []{ g_renderer->end_frame(); };
+    api.end_frame = []{ return g_renderer->end_frame(); };
 
 
     api.create_swapchain = [](const SwapchainDesc* d) { return g_renderer->create_swapchain(d).orValue(0); };
@@ -1019,7 +1029,7 @@ extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api)
     api.cmd_set_pipeline = [](CommandListHandle c, PipelineHandle p) { g_renderer->cmd_set_pipeline(c,p); };
     api.cmd_set_vertex_buffer = [](CommandListHandle c, uint32_t s, BufferHandle b, uint64_t o) { g_renderer->cmd_set_vertex_buffer(c,s,b,o); };
     api.cmd_set_index_buffer = [](CommandListHandle c, BufferHandle b, bool i32, uint64_t o) { g_renderer->cmd_set_index_buffer(c,b,i32,o); };
-
+    api.cmd_set_scissor = [](CommandListHandle c, uint32_t x, uint32_t y, uint32_t w, uint32_t h) { g_renderer->cmd_set_scissor(c, x, y, w, h); };
     api.cmd_draw = [](CommandListHandle c, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t first) {
         g_renderer->cmd_draw(c, vc, ic, fv, first);
     };

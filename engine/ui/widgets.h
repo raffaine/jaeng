@@ -123,4 +123,29 @@ struct UILabel {
     }
 };
 
+struct UIScrollContainer {
+    std::string name = "ScrollContainer";
+    glm::vec2 size;
+    glm::vec2 pos = {0, 0};
+    glm::vec2 anchorMin = {0, 0};
+    glm::vec2 anchorMax = {0, 0};
+    glm::vec2 pivot = {0, 0};
+    bool showScrollbarVertical = true;
+    bool showScrollbarHorizontal = false;
+    
+    // The inner content builder
+    std::function<void(UIBuilder&)> content;
+
+    void build(UIBuilder& b) const {
+        b.beginScrollContainer(name, showScrollbarVertical, showScrollbarHorizontal)
+         .withRect(size, pos)
+         .withAnchors(anchorMin, anchorMax)
+         .withPivot(pivot);
+         
+        if (content) content(b);
+        
+        b.endScrollContainer();
+    }
+};
+
 } // namespace jaeng::ui

@@ -468,6 +468,7 @@ void vk_cmd_draw_indexed(CommandListHandle, uint32_t, uint32_t, uint32_t, int32_
 void vk_cmd_set_pipeline(CommandListHandle, PipelineHandle);
 void vk_cmd_set_vertex_buffer(CommandListHandle, uint32_t, BufferHandle, uint64_t);
 void vk_cmd_set_index_buffer(CommandListHandle, BufferHandle, bool, uint64_t);
+void vk_cmd_set_scissor(CommandListHandle, uint32_t, uint32_t, uint32_t, uint32_t);
 void vk_cmd_bind_uniform(CommandListHandle, uint32_t, BufferHandle, uint64_t);
 void vk_cmd_push_constants(CommandListHandle, uint32_t, uint32_t, const void*);
 void vk_cmd_barrier(CommandListHandle, BufferHandle, uint32_t, uint32_t);
@@ -510,6 +511,7 @@ extern "C" RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api)
     out_api->cmd_set_pipeline = vk_cmd_set_pipeline;
     out_api->cmd_set_vertex_buffer = vk_cmd_set_vertex_buffer;
     out_api->cmd_set_index_buffer = vk_cmd_set_index_buffer;
+    out_api->cmd_set_scissor = vk_cmd_set_scissor;
     out_api->cmd_bind_uniform = vk_cmd_bind_uniform;
     out_api->cmd_push_constants = vk_cmd_push_constants;
     out_api->cmd_barrier = vk_cmd_barrier;

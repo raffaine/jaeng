@@ -48,6 +48,7 @@ public:
     static void cmd_set_pipeline(CommandListHandle handle, PipelineHandle pipeline);
     static void cmd_set_vertex_buffer(CommandListHandle handle, uint32_t slot, BufferHandle buffer, uint64_t offset);
     static void cmd_set_index_buffer(CommandListHandle handle, BufferHandle buffer, bool index32, uint64_t offset);
+    static void cmd_set_scissor(CommandListHandle handle, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     static void cmd_draw(CommandListHandle handle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance);
     static void cmd_draw_indexed(CommandListHandle handle, uint32_t idx_count, uint32_t inst_count, uint32_t first_idx, int32_t vtx_offset, uint32_t first_instance);
     static void end_commands(CommandListHandle handle);

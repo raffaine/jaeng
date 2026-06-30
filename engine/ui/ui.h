@@ -30,6 +30,15 @@ struct RectTransform {
         float x, y; // Top-left corner
         float w, h;
     } worldRect;
+
+    glm::vec4 clipRect{0.0f, 0.0f, -1.0f, -1.0f};
+};
+
+struct UIScrollComponent {
+    glm::vec2 scrollOffset{0.0f};
+    glm::vec2 contentSize{0.0f};
+    bool showScrollbarVertical = false;
+    bool showScrollbarHorizontal = false;
 };
 
 struct UIRenderable {
@@ -85,7 +94,7 @@ public:
 
 class UIInteractionSystem {
 public:
-    static void update(EntityManager& ecs, float mouseX, float mouseY, bool isLeftMouseDown, bool& outInputConsumed);
+    static void update(EntityManager& ecs, float mouseX, float mouseY, bool isLeftMouseDown, float scrollDeltaX, float scrollDeltaY, bool& outInputConsumed);
 };
 
 /**
@@ -129,6 +138,12 @@ public:
     UIBuilder& withVerticalLayout(float spacing, float padding = 0.0f);
     UIBuilder& withHorizontalLayout(float spacing, float padding = 0.0f);
     UIBuilder& withTween(UITween::Property prop, float start, float end, float duration, UITween::Easing easing = UITween::Easing::Linear, bool isLooping = false, bool isPingPong = false);
+
+    UIBuilder& beginHorizontalLayout(const std::string& name, float spacing = 0.0f, float padding = 0.0f);
+    UIBuilder& endHorizontalLayout();
+
+    UIBuilder& beginScrollContainer(const std::string& name, bool vertical = true, bool horizontal = false);
+    UIBuilder& endScrollContainer();
 
     template<typename T>
     UIBuilder& widget(const T& w) {

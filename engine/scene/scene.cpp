@@ -162,7 +162,8 @@ void Scene::buildDrawList(const math::AABB& volume)
             .indexBuffer  = mesh->indexBuffer,
             .indexCount   = static_cast<uint32_t>(mesh->indexCount),
             .constant     = proxy.constant,
-            .textureOverride = proxy.textureOverride
+            .textureOverride = proxy.textureOverride,
+            .clipRect     = proxy.clipRect
         };
 
         if (matBg->constantBuffers.size() >= 3 && dp.constant == 0) {
@@ -307,6 +308,14 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
 
                     // which is currently handled globally per material by the app.
 
+                    if (dp.clipRect.z > 0.0f && dp.clipRect.w > 0.0f) {
+                        ctx.gfx->cmd_set_scissor(ctx.cmd, (uint32_t)dp.clipRect.x, (uint32_t)dp.clipRect.y, (uint32_t)dp.clipRect.z, (uint32_t)dp.clipRect.w);
+                    } else {
+                        // Restore full viewport if there is no scissor
+                        // Note: A robust implementation would cache the viewport size and pass it here,
+                        // or we just use a very large rect and let the backend clamp.
+                        ctx.gfx->cmd_set_scissor(ctx.cmd, 0, 0, 16384, 16384);
+                    }
                     ctx.gfx->cmd_draw_indexed(ctx.cmd, dp.indexCount, 1, 0, 0, 0);
                 }
             }

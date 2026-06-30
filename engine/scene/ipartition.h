@@ -34,6 +34,7 @@ struct UIRenderProxy {
     BufferHandle constant{ 0 };
     glm::vec4 uvRect{ 0.0f, 0.0f, 1.0f, 1.0f }; // [x, y, w, h] or [u0, v0, du, dv]
     TextureHandle textureOverride{ 0 };
+    glm::vec4 clipRect{ 0.0f, 0.0f, -1.0f, -1.0f }; // [x, y, w, h]. w < 0 means no clipping
 };
 
 enum class RenderCommandType { Update, Destroy, UpdateCamera, UpdateUI, DestroyUI, ClearUI };

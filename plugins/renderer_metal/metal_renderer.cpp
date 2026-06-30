@@ -580,6 +580,12 @@ void MetalRenderer::cmd_set_index_buffer(CommandListHandle handle, BufferHandle 
     }
 }
 
+void MetalRenderer::cmd_set_scissor(CommandListHandle handle, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (!g_ctx->currentEncoder) return;
+    MTL::ScissorRect rect = {(NS::UInteger)x, (NS::UInteger)y, (NS::UInteger)width, (NS::UInteger)height};
+    g_ctx->currentEncoder->setScissorRect(rect);
+}
+
 void MetalRenderer::cmd_draw(CommandListHandle handle, uint32_t vtx_count, uint32_t instance_count, uint32_t first_vtx, uint32_t first_instance) {
     if (!g_ctx->currentEncoder) return;
 
@@ -674,6 +680,7 @@ RENDERER_API bool LoadRenderer(jaeng::renderer::RendererAPI* out_api) {
     out_api->cmd_set_pipeline = MetalRenderer::cmd_set_pipeline;
     out_api->cmd_set_vertex_buffer = MetalRenderer::cmd_set_vertex_buffer;
     out_api->cmd_set_index_buffer = MetalRenderer::cmd_set_index_buffer;
+    out_api->cmd_set_scissor = MetalRenderer::cmd_set_scissor;
     out_api->cmd_draw = MetalRenderer::cmd_draw;
     out_api->cmd_draw_indexed = MetalRenderer::cmd_draw_indexed;
     out_api->end_commands = MetalRenderer::end_commands;

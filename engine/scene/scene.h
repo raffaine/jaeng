@@ -74,6 +74,7 @@ private:
         uint32_t indexCount;
         BufferHandle constant;
         TextureHandle textureOverride;
+        glm::vec4 clipRect{0.0f, 0.0f, -1.0f, -1.0f}; // Scissor rect
     };
 
     // Shared Instance Resources for Drawing

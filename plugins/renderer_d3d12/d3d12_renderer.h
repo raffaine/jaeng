@@ -77,6 +77,7 @@ public:
 
     void cmd_set_vertex_buffer(CommandListHandle, uint32_t slot, BufferHandle, uint64_t offset);
     void cmd_set_index_buffer(CommandListHandle, BufferHandle, bool index32, uint64_t offset);
+    void cmd_set_scissor(CommandListHandle, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 
     void cmd_draw(CommandListHandle, uint32_t vtx_count, uint32_t inst_count,
                   uint32_t first_vtx, uint32_t first_inst);
