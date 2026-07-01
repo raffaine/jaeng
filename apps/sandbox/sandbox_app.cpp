@@ -664,7 +664,14 @@ void SandboxApp::render(const std::vector<RenderCommand>& inQueue, bool hasNewSt
     }
     
     scene->buildDrawList({});
-    scene->renderScene(graph, backbuffer, depthbuffer, getConfig().width, getConfig().height);
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    if (window().get_width() > 0 && window().get_height() > 0) {
+        scaleX = static_cast<float>(window().get_physical_width()) / static_cast<float>(window().get_width());
+        scaleY = static_cast<float>(window().get_physical_height()) / static_cast<float>(window().get_height());
+    }
+
+    scene->renderScene(graph, backbuffer, depthbuffer, getConfig().width, getConfig().height, scaleX, scaleY);
 }
 
 void SandboxApp::app_on_event(const Event& ev) {

@@ -209,7 +209,7 @@ void Scene::processCommands(const std::vector<RenderCommand>& queue) {
     partitioner->build();
 }
 
-void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer, uint32_t width, uint32_t height)
+void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer, uint32_t width, uint32_t height, float scaleX, float scaleY)
 {
     // 1) Clear pass
     rg.add_pass("Clear", { {
@@ -267,7 +267,7 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
     // 3) UI Pass
     rg.add_pass("UI_Pass", 
         { { .tex = backbuffer } }, { .tex = 0 },
-        [&, width, height](const RGPassContext& ctx) {
+        [&, width, height, scaleX, scaleY](const RGPassContext& ctx) {
             auto matSysRef = matSys.lock();
             if (!matSysRef) return;
 
@@ -309,7 +309,24 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     // which is currently handled globally per material by the app.
 
                     if (dp.clipRect.z > 0.0f && dp.clipRect.w > 0.0f) {
-                        ctx.gfx->cmd_set_scissor(ctx.cmd, (uint32_t)dp.clipRect.x, (uint32_t)dp.clipRect.y, (uint32_t)dp.clipRect.z, (uint32_t)dp.clipRect.w);
+                        uint32_t sx = static_cast<uint32_t>(std::max(0.0f, dp.clipRect.x) * scaleX);
+                        uint32_t sy = static_cast<uint32_t>(std::max(0.0f, dp.clipRect.y) * scaleY);
+                        uint32_t sw = static_cast<uint32_t>(std::max(0.0f, dp.clipRect.z) * scaleX);
+                        uint32_t sh = static_cast<uint32_t>(std::max(0.0f, dp.clipRect.w) * scaleY);
+                        
+                        uint32_t physical_width = static_cast<uint32_t>(width * scaleX);
+                        uint32_t physical_height = static_cast<uint32_t>(height * scaleY);
+                        
+                        if (sx > physical_width) sx = physical_width;
+                        if (sy > physical_height) sy = physical_height;
+                        if (sx + sw > physical_width) sw = physical_width - sx;
+                        if (sy + sh > physical_height) sh = physical_height - sy;
+
+                        printf("SCISSOR result: %d, %d, %d, %d (physical bounds: %d, %d, clip: %f, %f, %f, %f, scale: %f, %f)\n", 
+                            sx, sy, sw, sh, physical_width, physical_height,
+                            dp.clipRect.x, dp.clipRect.y, dp.clipRect.z, dp.clipRect.w, scaleX, scaleY);
+                        
+                        ctx.gfx->cmd_set_scissor(ctx.cmd, sx, sy, sw, sh);
                     } else {
                         // Restore full viewport if there is no scissor
                         // Note: A robust implementation would cache the viewport size and pass it here,

@@ -32,14 +32,13 @@ namespace jaeng::platform {
         config_.width = window_->get_width();
         config_.height = window_->get_height();
         JAENG_LOG_INFO("[Engine] init: Window created {}x{}", config_.width, config_.height);
-
         JAENG_LOG_INFO("[Engine] init: Initializing renderer...");
         if (!renderer_.initialize(config_.backend, window_->get_native_handle(), platform_.get_native_display_handle(), 3, device_handle)) return false;
 
         JAENG_LOG_INFO("[Engine] init: Creating swapchain...");
         DepthStencilDesc depthDesc{.depth_enable = true, .depth_format = TextureFormat::D32F};
-        SwapchainDesc swapDesc{{config_.width, config_.height}, TextureFormat::BGRA8_UNORM, depthDesc, config_.presentMode};
-        swap_ = renderer_->create_swapchain(&swapDesc);
+        SwapchainDesc swapDesc{{window_->get_physical_width(), window_->get_physical_height()}, TextureFormat::BGRA8_UNORM, depthDesc, config_.presentMode};
+        swap_ = renderer_.gfx->create_swapchain(&swapDesc);
         if (swap_ == 0) return false;
 
         JAENG_LOG_INFO("[Engine] init: Initializing subsystems...");
@@ -78,7 +77,7 @@ namespace jaeng::platform {
             config_.width = ev.resize.width;
             config_.height = ev.resize.height;
             if (swap_ > 0 && renderer_.gfx) {
-                renderer_.queue_resize(swap_, ev.resize.width, ev.resize.height);
+                renderer_.queue_resize(swap_, window_->get_physical_width(), window_->get_physical_height());
             }
         } else if (ev.type == Event::Type::WindowClose) {
             shouldClose_ = true;

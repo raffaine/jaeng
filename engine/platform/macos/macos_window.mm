@@ -40,4 +40,22 @@ uint32_t MacOSWindow::get_height() const {
     return height_;
 }
 
+uint32_t MacOSWindow::get_physical_width() const {
+    if (view_) {
+        NSRect bounds = [view_ bounds];
+        NSRect backing = [view_ convertRectToBacking:bounds];
+        return static_cast<uint32_t>(backing.size.width);
+    }
+    return width_;
+}
+
+uint32_t MacOSWindow::get_physical_height() const {
+    if (view_) {
+        NSRect bounds = [view_ bounds];
+        NSRect backing = [view_ convertRectToBacking:bounds];
+        return static_cast<uint32_t>(backing.size.height);
+    }
+    return height_;
+}
+
 } // namespace jaeng::platform

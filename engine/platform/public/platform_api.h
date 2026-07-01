@@ -57,6 +57,8 @@ public:
     virtual void* get_native_handle() const = 0;
     virtual uint32_t get_width() const = 0;
     virtual uint32_t get_height() const = 0;
+    virtual uint32_t get_physical_width() const { return get_width(); }
+    virtual uint32_t get_physical_height() const { return get_height(); }
     virtual bool is_open() const = 0;
 };
 

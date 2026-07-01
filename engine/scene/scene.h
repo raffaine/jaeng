@@ -43,7 +43,7 @@ public:
     void processCommands(const std::vector<RenderCommand>& queue);
 
     // Creates the needed passes on Render Graph
-    void renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer, uint32_t width, uint32_t height);
+    void renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle depthBuffer, uint32_t width, uint32_t height, float scaleX = 1.0f, float scaleY = 1.0f);
 
     // Access partitioner for queries
     ISpatialPartitioner* getPartitioner() const { return partitioner.get(); }
