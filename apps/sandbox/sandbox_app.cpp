@@ -4,16 +4,11 @@
 #include "pix3.h"
 #endif
 
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
+#include "common/math/math.h"
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
 #include <cstring>
 
 #include <thread>
@@ -410,7 +405,7 @@ bool SandboxApp::app_init() {
     t.position = {3.0f, 3.0f, 3.0f}; // Restore original camera position
     
     // Look at origin (0,0,0)
-    glm::vec3 lookDir = glm::normalize(glm::vec3(0,0,0) - t.position);
+    jaeng::math::vec3 lookDir = jaeng::math::normalize(jaeng::math::vec3(0,0,0) - t.position);
     float yaw = std::atan2(lookDir.x, lookDir.z); 
     float pitch = std::asin(-lookDir.y); // Fix pitch inversion for LH rules
     
@@ -420,8 +415,8 @@ bool SandboxApp::app_init() {
         .pitch = pitch };
     
     // Initial orientation sync
-    glm::quat qYaw = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
-    glm::quat qPitch = glm::angleAxis(pitch, glm::vec3(1, 0, 0));
+    jaeng::math::quat qYaw = jaeng::math::angleAxis(yaw, jaeng::math::vec3(0, 1, 0));
+    jaeng::math::quat qPitch = jaeng::math::angleAxis(pitch, jaeng::math::vec3(1, 0, 0));
     t.rotation = qYaw * qPitch;
 
     auto camera = std::make_unique<PerspectiveCamera>(entityManager(), camEntity);
@@ -508,15 +503,15 @@ void SandboxApp::updateCamera(float dt) {
     if (!cam) return;
 
     float speed = 5.0f * dt;
-    glm::vec3 moveDir(0.0f);
+    jaeng::math::vec3 moveDir(0.0f);
 
     if (inputState_.keys[(uint32_t)KeyCode::W]) moveDir.z += 1.0f; 
     if (inputState_.keys[(uint32_t)KeyCode::S]) moveDir.z -= 1.0f;
     if (inputState_.keys[(uint32_t)KeyCode::A]) moveDir.x -= 1.0f;
     if (inputState_.keys[(uint32_t)KeyCode::D]) moveDir.x += 1.0f;
 
-    if (glm::length(moveDir) > 0.0001f) {
-        cam->movePlanar(glm::normalize(moveDir) * speed);
+    if (jaeng::math::length(moveDir) > 0.0001f) {
+        cam->movePlanar(jaeng::math::normalize(moveDir) * speed);
     }
 
     if (inputState_.keys[(uint32_t)KeyCode::E]) cam->moveVertical(speed);
@@ -540,8 +535,8 @@ void SandboxApp::updateCamera(float dt) {
                  jaeng::math::AABB box { .min = {-0.5f, -0.5f, -0.5f}, .max = {0.5f, 0.5f, 0.5f} };
                  auto* worldMat = entityManager().getComponent<WorldMatrix>(e);
                  if (worldMat) {
-                     box.min += glm::vec3(worldMat->value[3]);
-                     box.max += glm::vec3(worldMat->value[3]);
+                     box.min += jaeng::math::vec3(worldMat->value[3]);
+                     box.max += jaeng::math::vec3(worldMat->value[3]);
                  }
                  if (box.intersects(ray, t)) {
                      hitAny = true;
@@ -577,8 +572,8 @@ void SandboxApp::handleSelection(bool isLeftDown) {
             jaeng::math::AABB box { .min = {-0.5f, -0.5f, -0.5f}, .max = {0.5f, 0.5f, 0.5f} };
             auto* worldMat = entityManager().getComponent<WorldMatrix>(e);
             if (worldMat) {
-                 box.min += glm::vec3(worldMat->value[3]);
-                 box.max += glm::vec3(worldMat->value[3]);
+                 box.min += jaeng::math::vec3(worldMat->value[3]);
+                 box.max += jaeng::math::vec3(worldMat->value[3]);
             }
             float t;
             if (box.intersects(ray, t)) {
@@ -631,7 +626,7 @@ void SandboxApp::extract_render_state(std::vector<RenderCommand>& outQueue) {
     if (auto* scene = sceneManager().getScene("Test")) {
         SceneRenderSystem::extract(*scene, entityManager(), outQueue, [this](EntityID e, RenderProxy& proxy) {
             if (e == selectionState_.selectedEntity) {
-                proxy.color = glm::vec4(1, 0, 0, 1);
+                proxy.color = jaeng::math::vec4(1, 0, 0, 1);
             }
         });
     }
@@ -847,7 +842,7 @@ void SandboxApp::setupUI() {
             b.onHover([ecs, this, selectionBtnEntity](bool hovered) {
                     if (selectionBtnEntity == static_cast<EntityID>(-1)) return;
                     if (auto* ur = ecs->getComponent<UIRenderable>(selectionBtnEntity)) {
-                        ur->color = hovered ? glm::vec4(0.6f, 0.6f, 1.0f, 1.0f) : glm::vec4(0.4f, 0.4f, 0.8f, 1.0f);
+                        ur->color = hovered ? jaeng::math::vec4(0.6f, 0.6f, 1.0f, 1.0f) : jaeng::math::vec4(0.4f, 0.4f, 0.8f, 1.0f);
                     }
                 })
                 .begin("Selection_Text", &uiTextEntity_)
@@ -920,7 +915,7 @@ void SandboxApp::setupAnimation() {
     AnimationTrack sunTrack;
     for (int i = 0; i <= 4; ++i) {
         float ratio = (float)i / 4.0f;
-        sunTrack.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 2.0f * PI, glm::vec3(0, 0, 1)) });
+        sunTrack.rotationKeys.push_back({ ratio * duration, jaeng::math::angleAxis(ratio * 2.0f * PI, jaeng::math::vec3(0, 0, 1)) });
     }
     testClip_->tracks.push_back(std::move(sunTrack));
 
@@ -928,7 +923,7 @@ void SandboxApp::setupAnimation() {
     AnimationTrack planet2Track;
     for (int i = 0; i <= 16; ++i) {
         float ratio = (float)i / 16.0f;
-        planet2Track.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 8.0f * PI, glm::vec3(0, 0, 1)) });
+        planet2Track.rotationKeys.push_back({ ratio * duration, jaeng::math::angleAxis(ratio * 8.0f * PI, jaeng::math::vec3(0, 0, 1)) });
     }
     testClip_->tracks.push_back(std::move(planet2Track));
 
@@ -950,7 +945,7 @@ void SandboxApp::setupAnimation() {
     // Spin: 4 spins total
     for (int i = 0; i <= 16; ++i) {
         float ratio = (float)i / 16.0f;
-        moonTrack.rotationKeys.push_back({ ratio * duration, glm::angleAxis(ratio * 8.0f * PI, glm::vec3(0, 1, 0)) });
+        moonTrack.rotationKeys.push_back({ ratio * duration, jaeng::math::angleAxis(ratio * 8.0f * PI, jaeng::math::vec3(0, 1, 0)) });
     }
     testClip_->tracks.push_back(std::move(moonTrack));
 

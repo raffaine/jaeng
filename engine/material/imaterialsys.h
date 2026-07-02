@@ -4,7 +4,7 @@
 #include <vector>
 #include <unordered_map>
 
-#include <glm/glm.hpp>
+#include "common/math/math.h"
 
 #include "render/public/renderer_api.h"
 #include "common/result.h"
@@ -77,7 +77,7 @@ struct MaterialMetadata {
     } depthStencil;
     // --- Constant Buffers and Per Model Data ---
     std::unordered_map<std::string, float> scalarParams;
-    std::unordered_map<std::string, glm::vec4> vectorParams;
+    std::unordered_map<std::string, jaeng::math::vec4> vectorParams;
     std::vector<CBData> constantBuffers;
 };
 
@@ -108,7 +108,7 @@ public:
     // Runtime Material Mutations
     virtual void setTextureSlot(MaterialHandle material, uint32_t slotIndex, TextureHandle texture) = 0;
     virtual void setFloatParam(MaterialHandle material, const std::string& name, float value) = 0;
-    virtual void setVectorParam(MaterialHandle material, const std::string& name, const glm::vec4& value) = 0;
+    virtual void setVectorParam(MaterialHandle material, const std::string& name, const jaeng::math::vec4& value) = 0;
 
     // Query GPU bindings for rendering
     virtual result<const MaterialBindings*> getBindData(MaterialHandle handle) const = 0;

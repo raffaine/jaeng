@@ -2,10 +2,8 @@
 
 #include "entity/entity.h"
 #include <vector>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include "common/math/math.h"
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
 
 namespace jaeng {
 
@@ -33,7 +31,7 @@ public:
             auto* wm = ecs.getComponent<WorldMatrix>(curr);
             if (!wm) wm = &ecs.addComponent<WorldMatrix>(curr);
 
-            glm::mat4 local = glm::translate(glm::mat4(1.0f), t->position) * glm::toMat4(t->rotation) * glm::scale(glm::mat4(1.0f), t->scale);
+            jaeng::math::mat4 local = jaeng::math::translate(jaeng::math::mat4(1.0f), t->position) * jaeng::math::toMat4(t->rotation) * jaeng::math::scale(jaeng::math::mat4(1.0f), t->scale);
 
             auto* rel = ecs.getComponent<Relationship>(curr);
             if (rel && rel->parent != static_cast<EntityID>(-1)) {

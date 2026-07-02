@@ -3,19 +3,18 @@
 #include "entity/entity.h"
 #include <vector>
 #include <string>
-#include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
+#include "common/math/math.h"
 
 namespace jaeng {
 
 struct KeyframeV3 {
     float time;
-    glm::vec3 value;
+    jaeng::math::vec3 value;
 };
 
 struct KeyframeQuat {
     float time;
-    glm::quat value;
+    jaeng::math::quat value;
 };
 
 struct AnimationTrack {
@@ -23,9 +22,9 @@ struct AnimationTrack {
     std::vector<KeyframeQuat> rotationKeys;
     std::vector<KeyframeV3> scaleKeys;
 
-    glm::vec3 samplePosition(float time) const;
-    glm::quat sampleRotation(float time) const;
-    glm::vec3 sampleScale(float time) const;
+    jaeng::math::vec3 samplePosition(float time) const;
+    jaeng::math::quat sampleRotation(float time) const;
+    jaeng::math::vec3 sampleScale(float time) const;
 };
 
 struct AnimationClip {

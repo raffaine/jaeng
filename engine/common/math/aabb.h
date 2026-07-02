@@ -1,12 +1,12 @@
 #pragma once
 
-#include <glm/glm.hpp>
+#include "common/math/math.h"
 #include "ray.h"
 #include <algorithm>
 
 namespace jaeng::math {
     struct AABB {
-        glm::vec3 min, max;
+        jaeng::math::vec3 min, max;
 
         bool intersects(const AABB& other) {
             return  (min.x <= other.max.x && max.x >= other.min.x) &&
@@ -41,7 +41,7 @@ namespace jaeng::math {
             return true;
         }
 
-        bool contains(const glm::vec3& p) const {
+        bool contains(const jaeng::math::vec3& p) const {
             return p.x >= min.x && p.x <= max.x &&
                    p.y >= min.y && p.y <= max.y &&
                    p.z >= min.z && p.z <= max.z;

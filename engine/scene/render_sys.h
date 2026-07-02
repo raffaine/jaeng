@@ -4,7 +4,7 @@
 #include "scene/ipartition.h"
 #include <vector>
 #include <functional>
-#include <glm/glm.hpp>
+#include "common/math/math.h"
 
 namespace jaeng {
 

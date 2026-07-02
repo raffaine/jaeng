@@ -1,14 +1,14 @@
 #pragma once
 
-#include <glm/glm.hpp>
+#include "common/math/math.h"
 
 namespace jaeng::math {
 
 struct Ray {
-    glm::vec3 origin;
-    glm::vec3 direction;
+    jaeng::math::vec3 origin;
+    jaeng::math::vec3 direction;
 
-    Ray(glm::vec3 o, glm::vec3 d) : origin(o), direction(glm::normalize(d)) {}
+    Ray(jaeng::math::vec3 o, jaeng::math::vec3 d) : origin(o), direction(jaeng::math::normalize(d)) {}
 };
 
 } // namespace jaeng::math

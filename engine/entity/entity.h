@@ -6,8 +6,7 @@
 #include <memory>
 #include <algorithm>
 #include <mutex>
-#include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
+#include "common/math/math.h"
 
 namespace jaeng {
 
@@ -86,13 +85,13 @@ private:
 };
 
 struct Transform {
-    glm::vec3 position = {0, 0, 0};
-    glm::quat rotation = {1, 0, 0, 0};
-    glm::vec3 scale    = {1, 1, 1};
+    jaeng::math::vec3 position = {0, 0, 0};
+    jaeng::math::quat rotation = {1, 0, 0, 0};
+    jaeng::math::vec3 scale    = {1, 1, 1};
 };
 
 struct WorldMatrix {
-    glm::mat4 value{ 1.0f };
+    jaeng::math::mat4 value{ 1.0f };
 };
 
 struct Relationship {

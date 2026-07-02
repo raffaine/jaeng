@@ -1,8 +1,7 @@
 #include "scene.h"
 
-#include <glm/gtc/matrix_transform.hpp>
+#include "common/math/math.h"
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
 
 #include "render/graph/render_graph.h"
 #include "common/math/conventions.h"
@@ -150,8 +149,8 @@ void Scene::buildDrawList(const math::AABB& volume)
         // We assume the quad is centered at origin with size 1x1.
         // Transform the 1x1 quad (which extends from -0.5 to 0.5) to match the RectTransform which spans from 0 to W and 0 to H
         // By translating by (X + W/2, Y + H/2) and scaling by (W, H).
-        glm::mat4 worldMat = glm::translate(glm::mat4(1.0f), glm::vec3(proxy.x + proxy.w * 0.5f, proxy.y + proxy.h * 0.5f, 0.0f)) *
-                             glm::scale(glm::mat4(1.0f), glm::vec3(proxy.w, proxy.h, 1.0f));
+        jaeng::math::mat4 worldMat = jaeng::math::translate(jaeng::math::mat4(1.0f), jaeng::math::vec3(proxy.x + proxy.w * 0.5f, proxy.y + proxy.h * 0.5f, 0.0f)) *
+                             jaeng::math::scale(jaeng::math::mat4(1.0f), jaeng::math::vec3(proxy.w, proxy.h, 1.0f));
 
         DrawPacket dp{
             .entityId = static_cast<int>(proxy.id),
@@ -228,7 +227,7 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);
 
                 if (db.cbFrame) {
-                    ctx.gfx->update_buffer(db.cbFrame, 0, &cachedViewProj, sizeof(glm::mat4));
+                    ctx.gfx->update_buffer(db.cbFrame, 0, &cachedViewProj, sizeof(jaeng::math::mat4));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
 
@@ -253,7 +252,7 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                     }
                     
                     // Unified update for WorldMatrix + Color + UVRect
-                    struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
+                    struct { jaeng::math::mat4 w; jaeng::math::vec4 c; jaeng::math::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
                     auto cbToBind = (dp.constant != 0) ? dp.constant : db.constant;
                     ctx.gfx->update_buffer(cbToBind, 0, &cbData, sizeof(cbData));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, cbToBind, 0);
@@ -272,13 +271,13 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
             if (!matSysRef) return;
 
             // Simple ortho matrix using dynamic viewport dimensions.
-            glm::mat4 orthoProj = glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, -1.0f, 1.0f);
+            jaeng::math::mat4 orthoProj = jaeng::math::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, -1.0f, 1.0f);
 
             for (auto& db : uiDrawList) {
                 ctx.gfx->cmd_set_pipeline(ctx.cmd, db.pipeline);
 
                 if (db.cbFrame) {
-                    ctx.gfx->update_buffer(db.cbFrame, 0, &orthoProj, sizeof(glm::mat4));
+                    ctx.gfx->update_buffer(db.cbFrame, 0, &orthoProj, sizeof(jaeng::math::mat4));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 0, db.cbFrame, 0);
                 }
 
@@ -301,7 +300,7 @@ void Scene::renderScene(RenderGraph& rg, TextureHandle backbuffer, TextureHandle
                         ctx.gfx->cmd_push_constants(ctx.cmd, 0, 2, indices);
                     }
                     
-                    struct { glm::mat4 w; glm::vec4 c; glm::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
+                    struct { jaeng::math::mat4 w; jaeng::math::vec4 c; jaeng::math::vec4 uv; } cbData { dp.worldMatrix, dp.color, dp.uvRect };
                     auto cbToBind = (dp.constant != 0) ? dp.constant : db.constant;
                     ctx.gfx->update_buffer(cbToBind, 0, &cbData, sizeof(cbData));
                     ctx.gfx->cmd_bind_uniform(ctx.cmd, 1, cbToBind, 0);

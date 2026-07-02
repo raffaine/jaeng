@@ -1,7 +1,6 @@
 #include "perspective_cam.h"
-#include <glm/gtc/matrix_transform.hpp>
+#include "common/math/math.h"
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 
 namespace jaeng {
@@ -21,25 +20,25 @@ PerspectiveCamera::PerspectiveCamera(EntityManager& ecs, EntityID entity)
     }
 }
 
-glm::mat4 PerspectiveCamera::getViewProj() const 
+jaeng::math::mat4 PerspectiveCamera::getViewProj() const 
 {
     auto* t = ecs.getComponent<Transform>(entity);
     auto* c = ecs.getComponent<CameraComponent>(entity);
-    if (!t || !c) return glm::mat4(1.0f);
+    if (!t || !c) return jaeng::math::mat4(1.0f);
 
-    glm::mat4 worldMatrix;
+    jaeng::math::mat4 worldMatrix;
     if (auto* wm = ecs.getComponent<WorldMatrix>(entity)) {
         worldMatrix = wm->value;
     } else {
-        worldMatrix = glm::translate(glm::mat4(1.0f), t->position) * 
-                      glm::toMat4(t->rotation) * 
-                      glm::scale(glm::mat4(1.0f), t->scale);
+        worldMatrix = jaeng::math::translate(jaeng::math::mat4(1.0f), t->position) * 
+                      jaeng::math::toMat4(t->rotation) * 
+                      jaeng::math::scale(jaeng::math::mat4(1.0f), t->scale);
     }
 
     // View matrix is the inverse of the camera's world matrix
     // In LH, inverse(Translate * Rotate) works correctly for View
-    glm::mat4 V = glm::inverse(worldMatrix);
-    glm::mat4 P = glm::perspectiveLH_ZO(glm::radians(c->fov), c->aspect, c->znear, c->zfar);
+    jaeng::math::mat4 V = jaeng::math::inverse(worldMatrix);
+    jaeng::math::mat4 P = jaeng::math::perspectiveLH_ZO(jaeng::math::radians(c->fov), c->aspect, c->znear, c->zfar);
 
     return P * V;
 }
@@ -51,33 +50,33 @@ math::AABB PerspectiveCamera::getViewedVolume() const
 
 math::Ray PerspectiveCamera::getRay(float x, float y) const
 {
-    glm::mat4 invVP = glm::inverse(getViewProj());
+    jaeng::math::mat4 invVP = jaeng::math::inverse(getViewProj());
     
     float nx = 2.0f * x - 1.0f;
     float ny = 1.0f - 2.0f * y;
     
-    glm::vec4 nearPoint = invVP * glm::vec4(nx, ny, 0.0f, 1.0f);
-    glm::vec4 farPoint  = invVP * glm::vec4(nx, ny, 1.0f, 1.0f);
+    jaeng::math::vec4 nearPoint = invVP * jaeng::math::vec4(nx, ny, 0.0f, 1.0f);
+    jaeng::math::vec4 farPoint  = invVP * jaeng::math::vec4(nx, ny, 1.0f, 1.0f);
     
     nearPoint /= nearPoint.w;
     farPoint  /= farPoint.w;
     
-    return math::Ray(glm::vec3(nearPoint), glm::vec3(farPoint - nearPoint));
+    return math::Ray(jaeng::math::vec3(nearPoint), jaeng::math::vec3(farPoint - nearPoint));
 }
 
-void PerspectiveCamera::movePlanar(glm::vec3 direction)
+void PerspectiveCamera::movePlanar(jaeng::math::vec3 direction)
 {
     auto* t = ecs.getComponent<Transform>(entity);
     if (!t) return;
 
     // LH: Forward is Z+
-    glm::vec3 forward = t->rotation * glm::vec3(0, 0, 1);
-    glm::vec3 right = t->rotation * glm::vec3(1, 0, 0);
+    jaeng::math::vec3 forward = t->rotation * jaeng::math::vec3(0, 0, 1);
+    jaeng::math::vec3 right = t->rotation * jaeng::math::vec3(1, 0, 0);
 
     forward.y = 0;
     right.y = 0;
-    if (glm::length(forward) > 0.0001f) forward = glm::normalize(forward);
-    if (glm::length(right) > 0.0001f) right = glm::normalize(right);
+    if (jaeng::math::length(forward) > 0.0001f) forward = jaeng::math::normalize(forward);
+    if (jaeng::math::length(right) > 0.0001f) right = jaeng::math::normalize(right);
 
     // direction.z: + is forward (W), - is backward (S)
     // direction.x: + is right (D), - is left (A)
@@ -90,7 +89,7 @@ void PerspectiveCamera::moveVertical(float delta)
     if (t) t->position.y += delta;
 }
 
-void PerspectiveCamera::rotate(glm::vec2 delta)
+void PerspectiveCamera::rotate(jaeng::math::vec2 delta)
 {
     auto* t = ecs.getComponent<Transform>(entity);
     auto* c = ecs.getComponent<CameraComponent>(entity);
@@ -98,13 +97,13 @@ void PerspectiveCamera::rotate(glm::vec2 delta)
 
     // Update spherical angles
     c->yaw += delta.x;
-    c->pitch = std::clamp(c->pitch + delta.y, -glm::half_pi<float>() + 0.1f, glm::half_pi<float>() - 0.1f);
+    c->pitch = std::clamp(c->pitch + delta.y, -jaeng::math::half_pi<float>() + 0.1f, jaeng::math::half_pi<float>() - 0.1f);
 
     // LH Orientation: 
     // Moving mouse RIGHT should increase YAW (rotate around Y axis).
     // Moving mouse DOWN should increase PITCH (rotate around X axis).
-    glm::quat qYaw = glm::angleAxis(c->yaw, glm::vec3(0, 1, 0));
-    glm::quat qPitch = glm::angleAxis(c->pitch, glm::vec3(1, 0, 0));
+    jaeng::math::quat qYaw = jaeng::math::angleAxis(c->yaw, jaeng::math::vec3(0, 1, 0));
+    jaeng::math::quat qPitch = jaeng::math::angleAxis(c->pitch, jaeng::math::vec3(1, 0, 0));
     t->rotation = qYaw * qPitch;
 }
 

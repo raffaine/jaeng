@@ -6,7 +6,7 @@
 #include <map>
 #include <cstring>
 #include <mutex>
-#include <glm/glm.hpp>
+#include "common/math/math.h"
 
 namespace jaeng::renderer::metal {
 
