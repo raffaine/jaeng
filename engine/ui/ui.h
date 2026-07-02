@@ -48,10 +48,13 @@ struct UIRenderable {
 };
 
 struct UIText {
+    enum class Alignment { Left, Center, Right };
+
     std::string text;
     uint32_t fontHandle = 0;
     glm::vec4 color{1.0f};
     float fontSize = 32.0f;
+    Alignment alignment = Alignment::Left;
 };
 
 struct UIInteractable {
@@ -129,7 +132,7 @@ public:
     UIBuilder& withColor(glm::vec4 color);
     UIBuilder& withTexture(uint32_t textureHandle);
     UIBuilder& withUVRect(glm::vec4 uvRect);
-    UIBuilder& withText(const std::string& text, float fontSize, uint32_t fontHandle, glm::vec4 color = {1,1,1,1});
+    UIBuilder& withText(const std::string& text, float fontSize, uint32_t fontHandle, glm::vec4 color = {1,1,1,1}, UIText::Alignment alignment = UIText::Alignment::Left);
     
     UIBuilder& withMaterial(MaterialHandle handle);
     UIBuilder& withMesh(MeshHandle handle);

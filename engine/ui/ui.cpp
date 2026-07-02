@@ -349,18 +349,43 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                 if (!fontData) continue;
 
                 float fontScale = ut->fontSize / fontData->pixelHeight;
-                float startX = rt->worldRect.x;
-                float x = startX;
+                auto getLineWidth = [&](size_t startIndex, size_t& nextIndex) {
+                    float width = 0.0f;
+                    size_t i = startIndex;
+                    for (; i < ut->text.size(); ++i) {
+                        char c = ut->text[i];
+                        if (c == '\n') {
+                            nextIndex = i + 1;
+                            return width;
+                        }
+                        if (static_cast<unsigned char>(c) >= 32 && static_cast<unsigned char>(c) < 128) {
+                            width += fontData->cdata[c - 32].xadvance * fontScale;
+                        }
+                    }
+                    nextIndex = i;
+                    return width;
+                };
+
+                size_t lineStart = 0;
                 float y = rt->worldRect.y + fontData->ascent * fontScale;
                 float lineHeight = (fontData->ascent - fontData->descent + fontData->lineGap) * fontScale;
 
-                for (size_t i = 0; i < ut->text.size(); ++i) {
-                    char c = ut->text[i];
-                    if (c == '\n') {
-                        x = startX;
-                        y += lineHeight;
-                        continue;
+                while (lineStart < ut->text.size()) {
+                    size_t nextLine = 0;
+                    float lineWidth = getLineWidth(lineStart, nextLine);
+                    
+                    float startX = rt->worldRect.x;
+                    if (ut->alignment == UIText::Alignment::Center) {
+                        startX += (rt->worldRect.w - lineWidth) * 0.5f;
+                    } else if (ut->alignment == UIText::Alignment::Right) {
+                        startX += (rt->worldRect.w - lineWidth);
                     }
+
+                    float x = startX;
+
+                    for (size_t i = lineStart; i < nextLine; ++i) {
+                        char c = ut->text[i];
+                        if (c == '\n') continue;
                     if (static_cast<unsigned char>(c) >= 32 && static_cast<unsigned char>(c) < 128) {
                         const auto& glyph = fontData->cdata[c - 32];
                         
@@ -394,6 +419,10 @@ void UIRenderSystem::extract(EntityManager& ecs, IFontSystem& fontSys, std::vect
                         x += glyph.xadvance * fontScale;
                     }
                 }
+                
+                y += lineHeight;
+                lineStart = nextLine;
+            }
             }
         }
     }
@@ -493,12 +522,13 @@ UIBuilder& UIBuilder::withUVRect(glm::vec4 uvRect) {
     return *this;
 }
 
-UIBuilder& UIBuilder::withText(const std::string& text, float fontSize, uint32_t fontHandle, glm::vec4 color) {
+UIBuilder& UIBuilder::withText(const std::string& text, float fontSize, uint32_t fontHandle, glm::vec4 color, UIText::Alignment alignment) {
     auto& ut = ecs_.addComponent<UIText>(current_);
     ut.text = text;
     ut.fontSize = fontSize;
     ut.fontHandle = fontHandle;
     ut.color = color;
+    ut.alignment = alignment;
     return *this;
 }
 
